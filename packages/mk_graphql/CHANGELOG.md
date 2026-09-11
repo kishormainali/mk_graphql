@@ -1,3 +1,9 @@
+## 1.0.1
+
+- **Pagination**: added `GraphQLPaginator` with `offset`/`page`/`cursor` factories, a reactive `PaginationState` (`items`, `isLoading`, `isLoadingMore`, `hasMore`, `error`), and `GraphQLClient`/`GraphQLRequest` extension methods (`paginate`, `paginateOffset`, `paginatePage`, `paginateCursor`) for building infinite lists without hand-rolled pagination state.
+- Added an optional `requestId` override on `GraphQLRequest`, enabling cross-instance optimistic-response coalescing (used internally by `CompositeGraphQLRequest`).
+- Repository moved into the unified `mk_graphql` monorepo alongside `mk_graphql_generator`; no API changes from the move itself.
+
 ## 1.0.0
 
 - Initial release of `mk_graphql`.

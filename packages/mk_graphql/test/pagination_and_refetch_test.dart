@@ -69,13 +69,6 @@ void main() {
         'client.refetch executes with FetchPolicy.networkOnly and updates cache',
         () async {
       final cache = InMemoryCache();
-      var networkCalls = 0;
-
-      // Create a mock-capable client or test with cache
-      final client = GraphQLClient(
-        url: 'https://example.com/graphql',
-        cache: cache,
-      );
 
       final req = _PageReq(
         const _PageVars(offset: 0, limit: 10),

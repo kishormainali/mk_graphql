@@ -1,0 +1,17 @@
+# Files and directories created by pub.
+.dart_tool/
+.packages
+build/
+
+# Conventional directory for build outputs.
+pubspec.lock
+
+# mk_graphql_generator output (regenerate with `dart run build_runner build`).
+**/generated/
+
+# IDE
+.idea/
+*.iml
+
+# macOS
+.DS_Store

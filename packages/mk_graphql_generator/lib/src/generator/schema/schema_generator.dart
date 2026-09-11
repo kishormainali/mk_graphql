@@ -1,0 +1,469 @@
+import 'package:gql/ast.dart';
+import 'package:recase/recase.dart';
+
+/// Builds an import for a file that lives at
+/// `<generatedDir>/<targetSubDir>/<targetFile>`, importing it from a file
+/// that lives at `<generatedDir>/<fromSubDir>/...`.
+///
+/// When [packageName] is known and [generatedDir] sits under `lib/`, this
+/// returns a `package:` import (stable regardless of how deeply nested the
+/// importing file is). Otherwise it falls back to a relative import between
+/// the two sibling subdirectories.
+String resolveGeneratedImport({
+  required String? packageName,
+  required String generatedDir,
+  required String targetSubDir,
+  required String targetFile,
+  required String fromSubDir,
+}) {
+  final normalizedGeneratedDir = generatedDir.replaceAll('\\', '/');
+  if (packageName != null && normalizedGeneratedDir.startsWith('lib/')) {
+    final packageRelativeDir = normalizedGeneratedDir.substring('lib/'.length);
+    return 'package:$packageName/$packageRelativeDir/$targetSubDir/$targetFile';
+  }
+  if (targetSubDir == fromSubDir) return targetFile;
+  return '../$targetSubDir/$targetFile';
+}
+
+class FieldTypeInfo {
+  final String dartType;
+  final bool isRequired;
+
+  const FieldTypeInfo({
+    required this.dartType,
+    required this.isRequired,
+  });
+}
+
+class SchemaGenerator {
+  static Map<String, String> generateEnums(List<EnumTypeDefinitionNode> enums) {
+    final result = <String, String>{};
+    final enumExports = <String>[];
+
+    for (final enumDef in enums) {
+      final name = enumDef.name.value.pascalCase;
+      final fileName = '${enumDef.name.value.snakeCase}_enum.dart';
+      final buffer = StringBuffer();
+
+      buffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
+      buffer.writeln('// ignore_for_file: type=lint');
+      buffer.writeln(
+          "import 'package:freezed_annotation/freezed_annotation.dart';");
+      buffer.writeln();
+      buffer.writeln('@JsonEnum()');
+      buffer.writeln('enum $name {');
+      for (final val in enumDef.values) {
+        final wireValue = val.name.value; // e.g. ADMIN_USER
+        final dartName = _toDartEnumValue(wireValue); // e.g. adminUser
+        buffer.writeln('  @JsonValue("$wireValue")');
+        buffer.writeln('  $dartName,');
+      }
+      buffer.writeln('}');
+
+      result['enums/$fileName'] = buffer.toString();
+      enumExports.add("export '$fileName';");
+    }
+
+    if (enumExports.isNotEmpty) {
+      final barrelBuffer = StringBuffer();
+      barrelBuffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
+      barrelBuffer.writeln('// ignore_for_file: type=lint');
+      for (final exp in enumExports) {
+        barrelBuffer.writeln(exp);
+      }
+      result['enums/enums.dart'] = barrelBuffer.toString();
+    }
+
+    return result;
+  }
+
+  static Map<String, String> generateInputs(
+    List<InputObjectTypeDefinitionNode> inputs,
+    Set<String> enumNames,
+    Set<String> inputNames, {
+    Set<String> scalarNames = const {},
+    String? packageName,
+    String generatedDir = '',
+  }) {
+    final result = <String, String>{};
+    final inputExports = <String>[];
+
+    for (final inputDef in inputs) {
+      final name = inputDef.name.value.pascalCase;
+      final fileName = '${inputDef.name.value.snakeCase}.dart';
+      final buffer = StringBuffer();
+
+      final fields = <String, FieldTypeInfo>{};
+      var needsEnumImport = false;
+      var needsInputImport = false;
+      for (final field in inputDef.fields) {
+        final rawFieldName = field.name.value;
+        final typeInfo = parseFieldType(field.type,
+            enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+        fields[rawFieldName] = typeInfo;
+        final baseType = _unwrapDartType(typeInfo.dartType);
+        if (enumNames.contains(baseType)) needsEnumImport = true;
+        if (inputNames.contains(baseType) && baseType != name)
+          needsInputImport = true;
+      }
+
+      buffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
+      buffer.writeln('// ignore_for_file: type=lint');
+      buffer.writeln(
+          "import 'package:freezed_annotation/freezed_annotation.dart';");
+      if (needsInputImport) {
+        buffer.writeln("import '${resolveGeneratedImport(
+          packageName: packageName,
+          generatedDir: generatedDir,
+          targetSubDir: 'inputs',
+          targetFile: 'inputs.dart',
+          fromSubDir: 'inputs',
+        )}';");
+      }
+      if (needsEnumImport) {
+        buffer.writeln("import '${resolveGeneratedImport(
+          packageName: packageName,
+          generatedDir: generatedDir,
+          targetSubDir: 'enums',
+          targetFile: 'enums.dart',
+          fromSubDir: 'inputs',
+        )}';");
+      }
+      buffer.writeln();
+      buffer.writeln("part '${inputDef.name.value.snakeCase}.freezed.dart';");
+      buffer.writeln("part '${inputDef.name.value.snakeCase}.g.dart';");
+      buffer.writeln();
+
+      _generateFreezedClass(
+          className: name, fields: fields, buffer: buffer, isInput: true);
+
+      result['inputs/$fileName'] = buffer.toString();
+      inputExports.add("export '$fileName';");
+    }
+
+    if (inputExports.isNotEmpty) {
+      final barrelBuffer = StringBuffer();
+      barrelBuffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
+      barrelBuffer.writeln('// ignore_for_file: type=lint');
+      for (final exp in inputExports) {
+        barrelBuffer.writeln(exp);
+      }
+      result['inputs/inputs.dart'] = barrelBuffer.toString();
+    }
+
+    return result;
+  }
+
+  static Map<String, String> generateObjectTypes(
+    List<ObjectTypeDefinitionNode> objects,
+    Set<String> enumNames,
+    Set<String> inputNames, {
+    Set<String> scalarNames = const {},
+    String? packageName,
+    String generatedDir = '',
+  }) {
+    final result = <String, String>{};
+    final modelExports = <String>[];
+
+    for (final obj in objects) {
+      if (obj.name.value == 'Query' ||
+          obj.name.value == 'Mutation' ||
+          obj.name.value == 'Subscription') {
+        continue;
+      }
+
+      final rawName = obj.name.value;
+      final className = '${rawName.pascalCase}Model';
+      final fileName = '${rawName.snakeCase}_model.dart';
+      final buffer = StringBuffer();
+
+      final fields = <String, FieldTypeInfo>{};
+      var needsEnumImport = false;
+      var needsInputImport = false;
+      var needsModelImport = false;
+      for (final field in obj.fields) {
+        final rawFieldName = field.name.value;
+        final typeInfo = parseFieldType(field.type,
+            enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+        fields[rawFieldName] = typeInfo;
+        final baseType = _unwrapDartType(typeInfo.dartType);
+        if (enumNames.contains(baseType)) needsEnumImport = true;
+        if (inputNames.contains(baseType)) needsInputImport = true;
+        if (baseType.endsWith('Model') && baseType != className)
+          needsModelImport = true;
+      }
+
+      buffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
+      buffer.writeln('// ignore_for_file: type=lint');
+      buffer.writeln(
+          "import 'package:freezed_annotation/freezed_annotation.dart';");
+      if (needsModelImport) {
+        buffer.writeln("import '${resolveGeneratedImport(
+          packageName: packageName,
+          generatedDir: generatedDir,
+          targetSubDir: 'models',
+          targetFile: 'models.dart',
+          fromSubDir: 'models',
+        )}';");
+      }
+      if (needsEnumImport) {
+        buffer.writeln("import '${resolveGeneratedImport(
+          packageName: packageName,
+          generatedDir: generatedDir,
+          targetSubDir: 'enums',
+          targetFile: 'enums.dart',
+          fromSubDir: 'models',
+        )}';");
+      }
+      if (needsInputImport) {
+        buffer.writeln("import '${resolveGeneratedImport(
+          packageName: packageName,
+          generatedDir: generatedDir,
+          targetSubDir: 'inputs',
+          targetFile: 'inputs.dart',
+          fromSubDir: 'models',
+        )}';");
+      }
+      buffer.writeln();
+      buffer.writeln("part '${rawName.snakeCase}_model.freezed.dart';");
+      buffer.writeln("part '${rawName.snakeCase}_model.g.dart';");
+      buffer.writeln();
+
+      _generateFreezedClass(
+          className: className, fields: fields, buffer: buffer);
+
+      result['models/$fileName'] = buffer.toString();
+      modelExports.add("export '$fileName';");
+    }
+
+    if (modelExports.isNotEmpty) {
+      final barrelBuffer = StringBuffer();
+      barrelBuffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
+      barrelBuffer.writeln('// ignore_for_file: type=lint');
+      for (final exp in modelExports) {
+        barrelBuffer.writeln(exp);
+      }
+      result['models/models.dart'] = barrelBuffer.toString();
+    }
+
+    return result;
+  }
+
+  static FieldTypeInfo parseFieldType(
+    TypeNode type, {
+    required Set<String> enumNames,
+    required Set<String> inputNames,
+    Set<String> scalarNames = const {},
+  }) {
+    final isRequired = type.isNonNull;
+    final innerType = _formatTypeNode(type,
+        enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+    return FieldTypeInfo(dartType: innerType, isRequired: isRequired);
+  }
+
+  static String _formatTypeNode(
+    TypeNode type, {
+    required Set<String> enumNames,
+    required Set<String> inputNames,
+    Set<String> scalarNames = const {},
+  }) {
+    if (type is NamedTypeNode) {
+      return formatNamedType(type.name.value,
+          enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+    } else if (type is ListTypeNode) {
+      final elementType = type.type;
+      final inner = _formatTypeNode(elementType,
+          enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+      return 'List<$inner>';
+    }
+    return 'dynamic';
+  }
+
+  /// Public — also used by [GeneratorOrchestrator] for schema-aware type resolution.
+  static String formatNamedType(
+    String rawName, {
+    required Set<String> enumNames,
+    required Set<String> inputNames,
+    Set<String> scalarNames = const {},
+  }) {
+    switch (rawName) {
+      case 'String':
+      case 'ID':
+      case 'ObjectID':
+        return 'String';
+      case 'Int':
+        return 'int';
+      case 'Float':
+      case 'Double':
+        return 'double';
+      case 'Boolean':
+        return 'bool';
+      case 'DateTime':
+      case 'Date':
+      case 'Timestamp':
+        return 'DateTime';
+      case 'Upload':
+        return 'MultipartFile';
+      case 'JSON':
+      case 'JsonObject':
+        return 'Map<String, dynamic>';
+      default:
+        final pascal = rawName.pascalCase;
+        if (scalarNames.contains(rawName) || scalarNames.contains(pascal)) {
+          return 'String';
+        }
+        if (enumNames.contains(pascal) ||
+            inputNames.contains(pascal) ||
+            pascal.endsWith('Input') ||
+            pascal.endsWith('Model') ||
+            _isPrimitive(pascal)) {
+          return pascal;
+        }
+        return '${pascal}Model';
+    }
+  }
+
+  /// Unwraps NonNull and List wrappers to get the base named type (e.g. `[User!]!` → `'User'`).
+  static String unwrapTypeName(TypeNode type) {
+    if (type is NamedTypeNode) return type.name.value;
+    if (type is ListTypeNode) return unwrapTypeName(type.type);
+    return 'dynamic';
+  }
+
+  /// Returns true if the outermost (after stripping NonNull) type node is a list.
+  static bool isListType(TypeNode type) => type is ListTypeNode;
+
+  static const _dartKeywords = {
+    'abstract',
+    'as',
+    'assert',
+    'async',
+    'await',
+    'break',
+    'case',
+    'catch',
+    'class',
+    'const',
+    'continue',
+    'default',
+    'do',
+    'dynamic',
+    'else',
+    'enum',
+    'export',
+    'extends',
+    'extension',
+    'factory',
+    'false',
+    'final',
+    'finally',
+    'for',
+    'get',
+    'if',
+    'implements',
+    'import',
+    'in',
+    'interface',
+    'is',
+    'late',
+    'library',
+    'mixin',
+    'new',
+    'null',
+    'on',
+    'operator',
+    'part',
+    'required',
+    'rethrow',
+    'return',
+    'set',
+    'static',
+    'super',
+    'switch',
+    'this',
+    'throw',
+    'true',
+    'try',
+    'typedef',
+    'var',
+    'void',
+    'while',
+    'with',
+    'yield',
+  };
+
+  static String safeIdentifier(String name) {
+    final camel = name.camelCase;
+    return _dartKeywords.contains(camel) ? '${camel}_' : camel;
+  }
+
+  /// Converts a SCREAMING_SNAKE_CASE GraphQL enum value to a Dart camelCase identifier.
+  /// e.g. `ADMIN_USER` → `adminUser`, `ADMIN` → `admin`.
+  static String _toDartEnumValue(String wireValue) {
+    return safeIdentifier(wireValue);
+  }
+
+  static void _generateFreezedClass({
+    required String className,
+    required Map<String, FieldTypeInfo> fields,
+    required StringBuffer buffer,
+    bool isInput = false,
+  }) {
+    buffer.writeln('@freezed');
+    buffer.writeln('abstract class $className with _\$$className {');
+
+    if (fields.isEmpty) {
+      buffer.writeln('  const factory $className() = _$className;');
+    } else {
+      buffer.writeln('  const factory $className({');
+      fields.forEach((rawName, typeInfo) {
+        final dartName = safeIdentifier(rawName);
+        // Input objects are sent to the server, so an unset optional field
+        // must be omitted from toJson() rather than sent as explicit `null`
+        // — some servers treat the two differently (e.g. an omitted filter
+        // field is ignored, an explicit `field: null` can exclude matches).
+        final keyArgs = <String>[
+          if (dartName != rawName) "name: '$rawName'",
+          if (isInput && !typeInfo.isRequired) 'includeIfNull: false',
+        ];
+        if (keyArgs.isNotEmpty) {
+          buffer.writeln('    @JsonKey(${keyArgs.join(', ')})');
+        }
+        if (typeInfo.isRequired) {
+          buffer.writeln('    required ${typeInfo.dartType} $dartName,');
+        } else {
+          buffer.writeln('    ${typeInfo.dartType}? $dartName,');
+        }
+      });
+      buffer.writeln('  }) = _$className;');
+    }
+
+    buffer.writeln();
+    buffer.writeln(
+        '  factory $className.fromJson(Map<String, dynamic> json) => _\$${className}FromJson(json);');
+    buffer.writeln('}');
+    buffer.writeln();
+  }
+
+  /// Strips `List<...>` wrappers and a trailing `?` to get the base type
+  /// name, e.g. `List<UserRole?>` → `UserRole`.
+  static String _unwrapDartType(String dartType) {
+    var t = dartType;
+    while (t.startsWith('List<') && t.endsWith('>')) {
+      t = t.substring(5, t.length - 1);
+    }
+    if (t.endsWith('?')) t = t.substring(0, t.length - 1);
+    return t;
+  }
+
+  static bool _isPrimitive(String type) {
+    return type == 'String' ||
+        type == 'int' ||
+        type == 'double' ||
+        type == 'bool' ||
+        type == 'DateTime' ||
+        type == 'MultipartFile' ||
+        type == 'Map<String, dynamic>' ||
+        type == 'dynamic';
+  }
+}

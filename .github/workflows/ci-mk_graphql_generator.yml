@@ -1,0 +1,46 @@
+name: CI (mk_graphql_generator)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/mk_graphql_generator/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/ci-mk_graphql_generator.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/mk_graphql_generator/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/ci-mk_graphql_generator.yml'
+
+jobs:
+  test:
+    name: Format, analyze & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # mk_graphql_generator is pure Dart, but it's a member of a workspace
+      # that also contains the Flutter-dependent mk_graphql package and the
+      # example app — resolving the workspace therefore requires Flutter's
+      # pub (which bundles a full Dart SDK, so `dart` is still available
+      # below), not the standalone Dart SDK.
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install workspace dependencies
+        run: flutter pub get
+
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed packages/mk_graphql_generator
+
+      - name: Analyze
+        working-directory: packages/mk_graphql_generator
+        run: dart analyze --fatal-infos
+
+      - name: Test
+        working-directory: packages/mk_graphql_generator
+        run: dart test

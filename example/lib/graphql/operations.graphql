@@ -1,0 +1,71 @@
+fragment ContinentBasic on Continent {
+  code
+  name
+}
+
+query GetCountries($filter: CountryFilterInput) {
+  countries(filter: $filter) {
+    code
+    name
+    capital
+    emoji
+    currency
+    continent {
+      ...ContinentBasic
+    }
+  }
+}
+
+query GetCountryDetails($code: ID!) {
+  country(code: $code) {
+    code
+    name
+    native
+    capital
+    emoji
+    currency
+    currencies
+    phone
+    phones
+    awsRegion
+    continent {
+      ...ContinentBasic
+    }
+    languages {
+      code
+      name
+      native
+      rtl
+    }
+    states {
+      code
+      name
+    }
+    subdivisions {
+      code
+      name
+      emoji
+    }
+  }
+}
+
+query GetContinents {
+  continents {
+    code
+    name
+    countries {
+      code
+      name
+      emoji
+    }
+  }
+}
+
+query GetLanguages {
+  languages {
+    code
+    name
+    native
+    rtl
+  }
+}

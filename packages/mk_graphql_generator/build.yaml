@@ -1,0 +1,19 @@
+builders:
+  mk_graphql_builder:
+    import: "package:mk_graphql_generator/mk_graphql_generator.dart"
+    builder_factories: ["mkGraphQLBuilder"]
+    build_extensions:
+      .graphql:
+        - .gql.dart
+      .gql:
+        - .gql.dart
+    auto_apply: dependents
+    build_to: source
+    runs_before:
+      - "freezed:freezed"
+      - "json_serializable:json_serializable"
+    defaults:
+      options:
+        schema_path: null
+        shared_dir: null
+        cache: true

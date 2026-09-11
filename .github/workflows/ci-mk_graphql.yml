@@ -1,0 +1,41 @@
+name: CI (mk_graphql)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/mk_graphql/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/ci-mk_graphql.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/mk_graphql/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/ci-mk_graphql.yml'
+
+jobs:
+  test:
+    name: Format, analyze & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install workspace dependencies
+        run: flutter pub get
+
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed packages/mk_graphql
+
+      - name: Analyze
+        working-directory: packages/mk_graphql
+        run: flutter analyze
+
+      - name: Test
+        working-directory: packages/mk_graphql
+        run: flutter test

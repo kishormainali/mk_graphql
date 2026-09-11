@@ -1,0 +1,48 @@
+name: Publish mk_graphql to pub.dev
+
+on:
+  push:
+    tags:
+      - 'mk_graphql-v[0-9]+.[0-9]+.[0-9]+*'
+
+permissions:
+  id-token: write # Required for pub.dev OIDC authentication
+  contents: read
+
+jobs:
+  publish:
+    name: Publish Package
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for pub.dev OIDC authentication
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Set up Dart (for OIDC auth with pub.dev)
+        uses: dart-lang/setup-dart@v1
+
+      - name: Install workspace dependencies
+        run: flutter pub get
+
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed packages/mk_graphql
+
+      - name: Analyze code
+        working-directory: packages/mk_graphql
+        run: flutter analyze
+
+      - name: Run tests
+        working-directory: packages/mk_graphql
+        run: flutter test
+
+      - name: Publish to pub.dev
+        working-directory: packages/mk_graphql
+        run: dart pub publish --force

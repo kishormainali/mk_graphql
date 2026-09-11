@@ -1,0 +1,8 @@
+targets:
+  $default:
+    builders:
+      mk_graphql_generator:mk_graphql_builder:
+        options:
+          schema_path: lib/graphql/schema.graphql
+          shared_dir: lib/graphql/generated
+          cache: true

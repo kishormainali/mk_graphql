@@ -1,0 +1,116 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:gql/language.dart';
+import 'package:gql_exec/gql_exec.dart';
+import 'package:gql_link/gql_link.dart';
+import 'package:http/http.dart' as http;
+
+class _BatchItem {
+  final Request request;
+  final Completer<Map<String, dynamic>> completer;
+  _BatchItem(this.request, this.completer);
+}
+
+/// Terminating [Link] that batches multiple concurrent GraphQL HTTP POST
+/// queries into a single HTTP array payload.
+class BatchLink extends Link {
+  final Uri uri;
+  final http.Client _client;
+  final Map<String, String> defaultHeaders;
+  final Duration batchTimeout;
+  final int maxBatchSize;
+
+  final _queue = <_BatchItem>[];
+  Timer? _timer;
+
+  BatchLink(
+    String url, {
+    http.Client? client,
+    this.defaultHeaders = const {},
+    this.batchTimeout = const Duration(milliseconds: 10),
+    this.maxBatchSize = 10,
+  })  : uri = Uri.parse(url),
+        _client = client ?? http.Client();
+
+  @override
+  Stream<Response> request(Request req, [NextLink? forward]) async* {
+    final completer = Completer<Map<String, dynamic>>();
+    _queue.add(_BatchItem(req, completer));
+
+    if (_queue.length >= maxBatchSize) {
+      _dispatchBatch();
+    } else {
+      _timer ??= Timer(batchTimeout, _dispatchBatch);
+    }
+
+    try {
+      final bodyJson = await completer.future;
+      yield Response(
+        data: bodyJson['data'] as Map<String, dynamic>?,
+        errors: (bodyJson['errors'] as List<dynamic>?)
+            ?.map((e) => GraphQLError(
+                  message: (e as Map<String, dynamic>)['message'] as String,
+                ))
+            .toList(),
+        response: bodyJson,
+      );
+    } catch (e, stack) {
+      throw ServerException(
+        originalException: e,
+        originalStackTrace: stack,
+      );
+    }
+  }
+
+  void _dispatchBatch() async {
+    _timer?.cancel();
+    _timer = null;
+    if (_queue.isEmpty) return;
+
+    final batch = List<_BatchItem>.from(_queue);
+    _queue.clear();
+
+    final payload = batch.map((item) {
+      return {
+        'query': printNode(item.request.operation.document),
+        'operationName': item.request.operation.operationName,
+        'variables': item.request.variables,
+      };
+    }).toList();
+
+    try {
+      final response = await _client.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          ...defaultHeaders,
+        },
+        body: jsonEncode(payload),
+      );
+
+      if (response.statusCode >= 400) {
+        final ex = ServerException(statusCode: response.statusCode);
+        for (final item in batch) {
+          item.completer.completeError(ex);
+        }
+        return;
+      }
+
+      final List<dynamic> listJson = jsonDecode(response.body) as List<dynamic>;
+      for (int i = 0; i < batch.length; i++) {
+        if (i < listJson.length) {
+          batch[i].completer.complete(listJson[i] as Map<String, dynamic>);
+        } else {
+          batch[i].completer.completeError(const ServerException());
+        }
+      }
+    } catch (e, stack) {
+      final ex =
+          ServerException(originalException: e, originalStackTrace: stack);
+      for (final item in batch) {
+        item.completer.completeError(ex);
+      }
+    }
+  }
+}

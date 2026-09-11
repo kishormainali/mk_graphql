@@ -103,8 +103,10 @@ class SchemaUtilityGenerator {
           '  Map<String, dynamic> toJsonVars($varsClassName vars) => (vars as dynamic).toJson();');
       buffer.writeln();
       buffer.writeln('  @override');
-      buffer.writeln('  $modelClassName parseData(Map<String, dynamic> json) =>');
-      buffer.writeln('      ${_generateParseDataExpr(modelClassName, rawName)};');
+      buffer
+          .writeln('  $modelClassName parseData(Map<String, dynamic> json) =>');
+      buffer
+          .writeln('      ${_generateParseDataExpr(modelClassName, rawName)};');
       buffer.writeln();
       buffer.writeln('  @override');
       buffer.writeln('  $reqClassName copyWithRequest({');
@@ -119,7 +121,8 @@ class SchemaUtilityGenerator {
       buffer.writeln('        fetchPolicy: fetchPolicy ?? this.fetchPolicy,');
       buffer.writeln('        headers: headers ?? this.headers,');
       buffer.writeln('        cancelToken: cancelToken ?? this.cancelToken,');
-      buffer.writeln('        optimisticResponse: optimisticResponse ?? this.optimisticResponse,');
+      buffer.writeln(
+          '        optimisticResponse: optimisticResponse ?? this.optimisticResponse,');
       buffer.writeln('      );');
       buffer.writeln('}');
       buffer.writeln();
@@ -213,7 +216,8 @@ class SchemaUtilityGenerator {
 
       // Refetch method
       final refetchMethodName = 'refetch$opName';
-      buffer.writeln('  /// Refetch execution for $methodName (bypasses cache with FetchPolicy.networkOnly)');
+      buffer.writeln(
+          '  /// Refetch execution for $methodName (bypasses cache with FetchPolicy.networkOnly)');
       buffer.writeln('  Future<$returnTypeModel> $refetchMethodName({');
       for (final arg in field.args) {
         final argTypeInfo = SchemaGenerator.parseFieldType(arg.type,
@@ -265,8 +269,10 @@ class SchemaUtilityGenerator {
   static String _generateParseDataExpr(String modelClassName, String rawName) {
     if (_isPrimitive(modelClassName)) {
       return '(json["$rawName"] ?? json) as $modelClassName';
-    } else if (modelClassName.startsWith('List<') && modelClassName.endsWith('>')) {
-      final inner = modelClassName.substring(5, modelClassName.length - 1).trim();
+    } else if (modelClassName.startsWith('List<') &&
+        modelClassName.endsWith('>')) {
+      final inner =
+          modelClassName.substring(5, modelClassName.length - 1).trim();
       if (_isPrimitive(inner)) {
         return '((json["$rawName"] as List<dynamic>?) ?? (json is List ? json as List<dynamic> : null))?.map((e) => e as $inner).toList() ?? <$inner>[]';
       } else {

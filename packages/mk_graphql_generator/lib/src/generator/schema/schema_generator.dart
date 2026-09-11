@@ -99,7 +99,9 @@ class SchemaGenerator {
       for (final field in inputDef.fields) {
         final rawFieldName = field.name.value;
         final typeInfo = parseFieldType(field.type,
-            enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+            enumNames: enumNames,
+            inputNames: inputNames,
+            scalarNames: scalarNames);
         fields[rawFieldName] = typeInfo;
         final baseType = _unwrapDartType(typeInfo.dartType);
         if (enumNames.contains(baseType)) needsEnumImport = true;
@@ -184,7 +186,9 @@ class SchemaGenerator {
       for (final field in obj.fields) {
         final rawFieldName = field.name.value;
         final typeInfo = parseFieldType(field.type,
-            enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+            enumNames: enumNames,
+            inputNames: inputNames,
+            scalarNames: scalarNames);
         fields[rawFieldName] = typeInfo;
         final baseType = _unwrapDartType(typeInfo.dartType);
         if (enumNames.contains(baseType)) needsEnumImport = true;
@@ -269,11 +273,15 @@ class SchemaGenerator {
   }) {
     if (type is NamedTypeNode) {
       return formatNamedType(type.name.value,
-          enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+          enumNames: enumNames,
+          inputNames: inputNames,
+          scalarNames: scalarNames);
     } else if (type is ListTypeNode) {
       final elementType = type.type;
       final inner = _formatTypeNode(elementType,
-          enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+          enumNames: enumNames,
+          inputNames: inputNames,
+          scalarNames: scalarNames);
       return 'List<$inner>';
     }
     return 'dynamic';

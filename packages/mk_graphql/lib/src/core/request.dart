@@ -64,4 +64,3 @@ abstract class GraphQLRequest<TData, TVars> {
   GraphQLRequest<TData, TVars> copyWithFetchPolicy(FetchPolicy policy) =>
       copyWithRequest(fetchPolicy: policy);
 }
-

@@ -244,7 +244,8 @@ class GraphQLPaginator<TData, TVars, TItem> {
     if (_state.isLoading) return;
     _emit(_state.copyWith(isLoading: true, error: null));
 
-    final refreshReq = initialRequest.copyWithFetchPolicy(FetchPolicy.networkOnly);
+    final refreshReq =
+        initialRequest.copyWithFetchPolicy(FetchPolicy.networkOnly);
     _currentRequest = refreshReq;
 
     try {

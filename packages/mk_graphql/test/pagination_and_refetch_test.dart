@@ -32,7 +32,8 @@ class _PageReq extends GraphQLRequest<_PageData, _PageVars> {
   });
 
   @override
-  String get document => 'query GetItems(\$offset: Int, \$limit: Int) { items }';
+  String get document =>
+      'query GetItems(\$offset: Int, \$limit: Int) { items }';
 
   @override
   String get operationName => 'GetItems';
@@ -64,7 +65,8 @@ class _PageReq extends GraphQLRequest<_PageData, _PageVars> {
 
 void main() {
   group('Refetch Tests', () {
-    test('client.refetch executes with FetchPolicy.networkOnly and updates cache',
+    test(
+        'client.refetch executes with FetchPolicy.networkOnly and updates cache',
         () async {
       final cache = InMemoryCache();
       var networkCalls = 0;

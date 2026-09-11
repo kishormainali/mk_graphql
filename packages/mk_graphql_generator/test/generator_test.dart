@@ -970,8 +970,7 @@ void main() {
         inputPath: 'lib/graphql/schema.graphql',
       );
 
-      final countryModel =
-          bundle.files['generated/models/country_model.dart']!;
+      final countryModel = bundle.files['generated/models/country_model.dart']!;
       expect(countryModel, contains('required String code'));
       expect(countryModel, contains('required String name'));
       expect(countryModel, contains('required String native'));
@@ -998,8 +997,8 @@ void main() {
         schemaPath: 'lib/graphql/schema.graphql',
       );
 
-      final opModel = bundle
-          .files['generated/get_countries_basic/get_countries_basic_model.dart']!;
+      final opModel = bundle.files[
+          'generated/get_countries_basic/get_countries_basic_model.dart']!;
       // Should generate its own path-named class, not reuse/derive from
       // the shared CountryModel.
       expect(opModel, contains('class GetCountriesBasicCountriesModel'));
@@ -1083,8 +1082,7 @@ void main() {
         schemaPath: 'lib/graphql/schema.graphql',
       );
 
-      expect(bundle.files.keys,
-          contains('generated/fragments/fragments.dart'));
+      expect(bundle.files.keys, contains('generated/fragments/fragments.dart'));
       final fragmentsFile = bundle.files['generated/fragments/fragments.dart']!;
       expect(fragmentsFile, contains('class CountryFieldsFragment'));
       expect(fragmentsFile, contains('required String code'));
@@ -1092,10 +1090,10 @@ void main() {
 
       // Neither operation should generate its own inline class for
       // `countries` — both reuse CountryFieldsFragment.
-      final modelA = bundle
-          .files['generated/get_countries_a/get_countries_a_model.dart']!;
-      final modelB = bundle
-          .files['generated/get_countries_b/get_countries_b_model.dart']!;
+      final modelA =
+          bundle.files['generated/get_countries_a/get_countries_a_model.dart']!;
+      final modelB =
+          bundle.files['generated/get_countries_b/get_countries_b_model.dart']!;
       expect(modelA, contains('List<CountryFieldsFragment> countries'));
       expect(modelB, contains('List<CountryFieldsFragment> countries'));
       expect(modelA, isNot(contains('class GetCountriesACountriesModel')));
@@ -1130,8 +1128,8 @@ void main() {
         schemaPath: 'lib/graphql/schema.graphql',
       );
 
-      final opModel = bundle
-          .files['generated/get_country_details/get_country_details_model.dart']!;
+      final opModel = bundle.files[
+          'generated/get_country_details/get_country_details_model.dart']!;
       // Mixed selections flatten the fragment's fields into the
       // operation-scoped class rather than reusing the shared fragment
       // class outright.
@@ -1142,4 +1140,3 @@ void main() {
     });
   });
 }
-

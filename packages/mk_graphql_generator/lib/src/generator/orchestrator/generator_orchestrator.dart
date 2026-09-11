@@ -263,7 +263,9 @@ class GeneratorOrchestrator {
         for (final v in op.variableDefinitions) {
           final rawVarName = v.variable.name.value;
           varFields[rawVarName] = SchemaGenerator.parseFieldType(v.type,
-              enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+              enumNames: enumNames,
+              inputNames: inputNames,
+              scalarNames: scalarNames);
         }
         final varBodyBuffer = StringBuffer();
         _generateFreezedClassWithTypes(
@@ -457,7 +459,9 @@ class GeneratorOrchestrator {
         for (final v in op.variableDefinitions) {
           final varName = v.variable.name.value.camelCase;
           final typeInfo = SchemaGenerator.parseFieldType(v.type,
-              enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+              enumNames: enumNames,
+              inputNames: inputNames,
+              scalarNames: scalarNames);
           if (typeInfo.isRequired) {
             fileOpExtensions
                 .writeln('    required ${typeInfo.dartType} $varName,');
@@ -494,7 +498,9 @@ class GeneratorOrchestrator {
         for (final v in op.variableDefinitions) {
           final varName = v.variable.name.value.camelCase;
           final typeInfo = SchemaGenerator.parseFieldType(v.type,
-              enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+              enumNames: enumNames,
+              inputNames: inputNames,
+              scalarNames: scalarNames);
           if (typeInfo.isRequired) {
             fileOpExtensions
                 .writeln('    required ${typeInfo.dartType} $varName,');
@@ -525,12 +531,16 @@ class GeneratorOrchestrator {
 
         // Refetch method (bypasses cache with FetchPolicy.networkOnly)
         final refetchMethodName = 'refetch${rawName.pascalCase}';
-        fileOpExtensions.writeln('  /// Refetch execution for $methodName (bypasses cache with FetchPolicy.networkOnly)');
-        fileOpExtensions.writeln('  Future<$modelClassName> $refetchMethodName({');
+        fileOpExtensions.writeln(
+            '  /// Refetch execution for $methodName (bypasses cache with FetchPolicy.networkOnly)');
+        fileOpExtensions
+            .writeln('  Future<$modelClassName> $refetchMethodName({');
         for (final v in op.variableDefinitions) {
           final varName = v.variable.name.value.camelCase;
           final typeInfo = SchemaGenerator.parseFieldType(v.type,
-              enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+              enumNames: enumNames,
+              inputNames: inputNames,
+              scalarNames: scalarNames);
           if (typeInfo.isRequired) {
             fileOpExtensions
                 .writeln('    required ${typeInfo.dartType} $varName,');
@@ -576,10 +586,8 @@ class GeneratorOrchestrator {
             packageName,
             p.join(resolvedSharedDir, 'inputs', 'inputs.dart'),
             fragmentsDirPath);
-        final fragEnumsImport = _importFor(
-            packageName,
-            p.join(resolvedSharedDir, 'enums', 'enums.dart'),
-            fragmentsDirPath);
+        final fragEnumsImport = _importFor(packageName,
+            p.join(resolvedSharedDir, 'enums', 'enums.dart'), fragmentsDirPath);
         if (_referencesAny(fragmentsBody, inputNames))
           fragmentsFileBuffer.writeln("import '$fragInputsImport';");
         if (_referencesAny(fragmentsBody, enumNames))
@@ -1061,7 +1069,8 @@ class GeneratorOrchestrator {
         schemaTypeName != null ? schemaObjectTypesByName[schemaTypeName] : null;
     final fields = <String, FieldTypeInfo>{};
 
-    for (final child in _collectEffectiveFields(selectionSet, fragmentsByName)) {
+    for (final child
+        in _collectEffectiveFields(selectionSet, fragmentsByName)) {
       final childName = child.alias?.value ?? child.name.value;
       final childSchemaFieldDef = schemaType?.fields
           .where((f) => f.name.value == child.name.value)

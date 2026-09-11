@@ -47,14 +47,13 @@ void main() {
     final client = getIt<GraphQLClient>();
 
     final paginator = client.paginate(
-      initialRequest: const GetCountriesReq(
-        variables: GetCountriesVars(),
-      ),
+      initialRequest: const GetCountriesReq(variables: GetCountriesVars()),
       getItems: (data) => data.countries,
-      nextVariables: ({required lastData, required currentVars, required totalLoaded}) {
-        // Trevor Blades returns all countries in 1 page, so no next page
-        return null;
-      },
+      nextVariables:
+          ({required lastData, required currentVars, required totalLoaded}) {
+            // Trevor Blades returns all countries in 1 page, so no next page
+            return null;
+          },
     );
 
     await paginator.loadInitial();

@@ -10,121 +10,74 @@
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 
-import 'package:auto_route/auto_route.dart' as _i6;
-import 'package:example/features/continents/continents_page.dart' as _i1;
-import 'package:example/features/countries/countries_page.dart' as _i2;
-import 'package:example/features/countries/country_details_page.dart' as _i3;
-import 'package:example/features/home/home_page.dart' as _i4;
-import 'package:example/features/languages/languages_page.dart' as _i5;
-import 'package:flutter/material.dart' as _i7;
+import 'package:auto_route/auto_route.dart' as _i3;
+import 'package:example/features/anime/anime_details_page.dart' as _i1;
+import 'package:example/features/anime/anime_list_page.dart' as _i2;
+import 'package:flutter/material.dart' as _i4;
 
 /// generated route for
-/// [_i1.ContinentsPage]
-class ContinentsRoute extends _i6.PageRouteInfo<void> {
-  const ContinentsRoute({List<_i6.PageRouteInfo>? children})
-    : super(ContinentsRoute.name, initialChildren: children);
-
-  static const String name = 'ContinentsRoute';
-
-  static _i6.PageInfo page = _i6.PageInfo(
-    name,
-    builder: (data) {
-      return const _i1.ContinentsPage();
-    },
-  );
-}
-
-/// generated route for
-/// [_i2.CountriesPage]
-class CountriesRoute extends _i6.PageRouteInfo<void> {
-  const CountriesRoute({List<_i6.PageRouteInfo>? children})
-    : super(CountriesRoute.name, initialChildren: children);
-
-  static const String name = 'CountriesRoute';
-
-  static _i6.PageInfo page = _i6.PageInfo(
-    name,
-    builder: (data) {
-      return const _i2.CountriesPage();
-    },
-  );
-}
-
-/// generated route for
-/// [_i3.CountryDetailsPage]
-class CountryDetailsRoute extends _i6.PageRouteInfo<CountryDetailsRouteArgs> {
-  CountryDetailsRoute({
-    _i7.Key? key,
-    required String code,
-    List<_i6.PageRouteInfo>? children,
+/// [_i1.AnimeDetailsPage]
+class AnimeDetailsRoute extends _i3.PageRouteInfo<AnimeDetailsRouteArgs> {
+  AnimeDetailsRoute({
+    _i4.Key? key,
+    required int id,
+    List<_i3.PageRouteInfo>? children,
   }) : super(
-         CountryDetailsRoute.name,
-         args: CountryDetailsRouteArgs(key: key, code: code),
+         AnimeDetailsRoute.name,
+         args: AnimeDetailsRouteArgs(key: key, id: id),
+         rawPathParams: {'id': id},
          initialChildren: children,
        );
 
-  static const String name = 'CountryDetailsRoute';
+  static const String name = 'AnimeDetailsRoute';
 
-  static _i6.PageInfo page = _i6.PageInfo(
+  static _i3.PageInfo page = _i3.PageInfo(
     name,
     builder: (data) {
-      final args = data.argsAs<CountryDetailsRouteArgs>();
-      return _i3.CountryDetailsPage(key: args.key, code: args.code);
+      final pathParams = data.inheritedPathParams;
+      final args = data.argsAs<AnimeDetailsRouteArgs>(
+        orElse: () => AnimeDetailsRouteArgs(id: pathParams.getInt('id')),
+      );
+      return _i1.AnimeDetailsPage(key: args.key, id: args.id);
     },
   );
 }
 
-class CountryDetailsRouteArgs {
-  const CountryDetailsRouteArgs({this.key, required this.code});
+class AnimeDetailsRouteArgs {
+  const AnimeDetailsRouteArgs({this.key, required this.id});
 
-  final _i7.Key? key;
+  final _i4.Key? key;
 
-  final String code;
+  final int id;
 
   @override
   String toString() {
-    return 'CountryDetailsRouteArgs{key: $key, code: $code}';
+    return 'AnimeDetailsRouteArgs{key: $key, id: $id}';
   }
 
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
-    if (other is! CountryDetailsRouteArgs) return false;
-    return key == other.key && code == other.code;
+    if (other is! AnimeDetailsRouteArgs) return false;
+    return key == other.key && id == other.id;
   }
 
   @override
-  int get hashCode => key.hashCode ^ code.hashCode;
+  int get hashCode => key.hashCode ^ id.hashCode;
 }
 
 /// generated route for
-/// [_i4.HomePage]
-class HomeRoute extends _i6.PageRouteInfo<void> {
-  const HomeRoute({List<_i6.PageRouteInfo>? children})
-    : super(HomeRoute.name, initialChildren: children);
+/// [_i2.AnimeListPage]
+class AnimeListRoute extends _i3.PageRouteInfo<void> {
+  const AnimeListRoute({List<_i3.PageRouteInfo>? children})
+    : super(AnimeListRoute.name, initialChildren: children);
 
-  static const String name = 'HomeRoute';
+  static const String name = 'AnimeListRoute';
 
-  static _i6.PageInfo page = _i6.PageInfo(
+  static _i3.PageInfo page = _i3.PageInfo(
     name,
     builder: (data) {
-      return const _i4.HomePage();
-    },
-  );
-}
-
-/// generated route for
-/// [_i5.LanguagesPage]
-class LanguagesRoute extends _i6.PageRouteInfo<void> {
-  const LanguagesRoute({List<_i6.PageRouteInfo>? children})
-    : super(LanguagesRoute.name, initialChildren: children);
-
-  static const String name = 'LanguagesRoute';
-
-  static _i6.PageInfo page = _i6.PageInfo(
-    name,
-    builder: (data) {
-      return const _i5.LanguagesPage();
+      return const _i2.AnimeListPage();
     },
   );
 }

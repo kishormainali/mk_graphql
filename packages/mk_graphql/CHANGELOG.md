@@ -1,4 +1,14 @@
+## 1.1.0
+
+- **Dynamic Pagination Variables**: Added `applyVariables()` and `updateVariables()` to `GraphQLPaginator` to dynamically update active variables (e.g. search queries, genre/status filters, sorting) on page 1 without recreating the paginator or wiping other active filter criteria.
+- **Refetch & Pagination Reset Lifecycle**: `refetch()` resets `_baseRequest = initialRequest`, restoring page 1 and clearing active filters/search to defaults, while `loadNext()` persists and accumulates items across pages.
+- **Fine-Grained Page Tracking**: Added optional `getPage` and `hasNextPage` callbacks to `GraphQLPaginator.page(...)` to allow authoritative backend pagination metadata (such as `PageInfo.hasNextPage`) to govern whether subsequent pages exist.
+- **`ErrorPolicy` Support**: Added `ErrorPolicy.none`, `ErrorPolicy.ignore`, and `ErrorPolicy.all` across requests, client executions, copy constructors, and client defaults.
+- **Performance & Cache Optimization**: Added deterministic canonical JSON variable cache key sorting and Document AST caching.
+- **Documentation**: Updated comprehensive guides for client requests, caching, links, and Flutter BLoC `emit.forEach` pagination patterns.
+
 ## 1.0.1
+
 
 - **Pagination**: added `GraphQLPaginator` with `offset`/`page`/`cursor` factories, a reactive `PaginationState` (`items`, `isLoading`, `isLoadingMore`, `hasMore`, `error`), and `GraphQLClient`/`GraphQLRequest` extension methods (`paginate`, `paginateOffset`, `paginatePage`, `paginateCursor`) for building infinite lists without hand-rolled pagination state.
 - Added an optional `requestId` override on `GraphQLRequest`, enabling cross-instance optimistic-response coalescing (used internally by `CompositeGraphQLRequest`).

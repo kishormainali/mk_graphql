@@ -7,6 +7,7 @@ class SchemaUtilityGenerator {
     required List<ObjectTypeDefinitionNode> objectTypes,
     required Set<String> enumNames,
     required Set<String> inputNames,
+    Map<String, String> customScalars = const {},
   }) {
     final buffer = StringBuffer();
     final queryType = objectTypes.firstWhere((o) => o.name.value == 'Query',
@@ -35,7 +36,9 @@ class SchemaUtilityGenerator {
       final reqClassName = '${name}Req';
       final varsClassName = '${name}Vars';
       final returnTypeInfo = SchemaGenerator.parseFieldType(field.type,
-          enumNames: enumNames, inputNames: inputNames);
+          enumNames: enumNames,
+          inputNames: inputNames,
+          customScalars: customScalars);
       final modelClassName = returnTypeInfo.dartType;
       final opType = isMutation ? 'mutation' : 'query';
 
@@ -48,16 +51,28 @@ class SchemaUtilityGenerator {
         buffer.writeln('  const factory $varsClassName({');
         for (final arg in field.args) {
           final argTypeInfo = SchemaGenerator.parseFieldType(arg.type,
-              enumNames: enumNames, inputNames: inputNames);
-          final argName = arg.name.value.camelCase;
-          if (argTypeInfo.isRequired) {
+              enumNames: enumNames,
+              inputNames: inputNames,
+              customScalars: customScalars);
+          final rawArgName = arg.name.value;
+          final argName = SchemaGenerator.safeIdentifier(rawArgName);
+          final defaultValueStr = SchemaGenerator.formatDefaultValue(
+              arg.defaultValue,
+              dartType: argTypeInfo.dartType);
+          final keyArgs = <String>[
+            if (argName != rawArgName) "name: '$rawArgName'",
+            if (!argTypeInfo.isRequired && defaultValueStr == null)
+              'includeIfNull: false',
+          ];
+          if (keyArgs.isNotEmpty) {
+            buffer.writeln('    @JsonKey(${keyArgs.join(', ')})');
+          }
+          if (defaultValueStr != null) {
+            buffer.writeln(
+                '    @Default($defaultValueStr) ${argTypeInfo.dartType} $argName,');
+          } else if (argTypeInfo.isRequired) {
             buffer.writeln('    required ${argTypeInfo.dartType} $argName,');
           } else {
-            // Omit unset optional args from toJson() rather than sending
-            // them as explicit `null` — some GraphQL servers treat the two
-            // differently (e.g. an omitted filter returns everything, an
-            // explicit `filter: null` can resolve to no results).
-            buffer.writeln('    @JsonKey(includeIfNull: false)');
             buffer.writeln('    ${argTypeInfo.dartType}? $argName,');
           }
         }
@@ -85,6 +100,7 @@ class SchemaUtilityGenerator {
       buffer.writeln('  const factory $reqClassName({');
       buffer.writeln('    required $varsClassName variables,');
       buffer.writeln('    FetchPolicy? fetchPolicy,');
+      buffer.writeln('    ErrorPolicy? errorPolicy,');
       buffer.writeln('    Map<String, String>? headers,');
       buffer.writeln('    CancelToken? cancelToken,');
       buffer.writeln('    $modelClassName? optimisticResponse,');
@@ -112,6 +128,7 @@ class SchemaUtilityGenerator {
       buffer.writeln('  $reqClassName copyWithRequest({');
       buffer.writeln('    $varsClassName? variables,');
       buffer.writeln('    FetchPolicy? fetchPolicy,');
+      buffer.writeln('    ErrorPolicy? errorPolicy,');
       buffer.writeln('    Map<String, String>? headers,');
       buffer.writeln('    CancelToken? cancelToken,');
       buffer.writeln('    $modelClassName? optimisticResponse,');
@@ -119,6 +136,7 @@ class SchemaUtilityGenerator {
       buffer.writeln('      copyWith(');
       buffer.writeln('        variables: variables ?? this.variables,');
       buffer.writeln('        fetchPolicy: fetchPolicy ?? this.fetchPolicy,');
+      buffer.writeln('        errorPolicy: errorPolicy ?? this.errorPolicy,');
       buffer.writeln('        headers: headers ?? this.headers,');
       buffer.writeln('        cancelToken: cancelToken ?? this.cancelToken,');
       buffer.writeln(
@@ -140,7 +158,9 @@ class SchemaUtilityGenerator {
       final reqClassName = '${opName}Req';
       final varsClassName = '${opName}Vars';
       final returnTypeInfo = SchemaGenerator.parseFieldType(field.type,
-          enumNames: enumNames, inputNames: inputNames);
+          enumNames: enumNames,
+          inputNames: inputNames,
+          customScalars: customScalars);
       final returnTypeModel = returnTypeInfo.dartType;
       final hasArgs = field.args.isNotEmpty;
 
@@ -149,15 +169,25 @@ class SchemaUtilityGenerator {
       buffer.writeln('  Future<$returnTypeModel> $methodName({');
       for (final arg in field.args) {
         final argTypeInfo = SchemaGenerator.parseFieldType(arg.type,
-            enumNames: enumNames, inputNames: inputNames);
-        final argName = arg.name.value.camelCase;
-        if (argTypeInfo.isRequired) {
+            enumNames: enumNames,
+            inputNames: inputNames,
+            customScalars: customScalars);
+        final rawArgName = arg.name.value;
+        final argName = SchemaGenerator.safeIdentifier(rawArgName);
+        final defaultValueStr = SchemaGenerator.formatDefaultValue(
+            arg.defaultValue,
+            dartType: argTypeInfo.dartType);
+        if (defaultValueStr != null) {
+          buffer.writeln(
+              '    ${argTypeInfo.dartType} $argName = $defaultValueStr,');
+        } else if (argTypeInfo.isRequired) {
           buffer.writeln('    required ${argTypeInfo.dartType} $argName,');
         } else {
           buffer.writeln('    ${argTypeInfo.dartType}? $argName,');
         }
       }
       buffer.writeln('    FetchPolicy? fetchPolicy,');
+      buffer.writeln('    ErrorPolicy? errorPolicy,');
       buffer.writeln('    Map<String, String>? headers,');
       buffer.writeln('    CancelToken? cancelToken,');
       buffer.writeln('  }) {');
@@ -165,7 +195,7 @@ class SchemaUtilityGenerator {
       if (hasArgs) {
         buffer.writeln('      variables: $varsClassName(');
         for (final arg in field.args) {
-          final argName = arg.name.value.camelCase;
+          final argName = SchemaGenerator.safeIdentifier(arg.name.value);
           buffer.writeln('        $argName: $argName,');
         }
         buffer.writeln('      ),');
@@ -173,6 +203,7 @@ class SchemaUtilityGenerator {
         buffer.writeln('      variables: const $varsClassName(),');
       }
       buffer.writeln('      fetchPolicy: fetchPolicy,');
+      buffer.writeln('      errorPolicy: errorPolicy,');
       buffer.writeln('      headers: headers,');
       buffer.writeln('      cancelToken: cancelToken,');
       buffer.writeln('    ));');
@@ -184,15 +215,25 @@ class SchemaUtilityGenerator {
       buffer.writeln('  Stream<$returnTypeModel> ${methodName}Stream({');
       for (final arg in field.args) {
         final argTypeInfo = SchemaGenerator.parseFieldType(arg.type,
-            enumNames: enumNames, inputNames: inputNames);
-        final argName = arg.name.value.camelCase;
-        if (argTypeInfo.isRequired) {
+            enumNames: enumNames,
+            inputNames: inputNames,
+            customScalars: customScalars);
+        final rawArgName = arg.name.value;
+        final argName = SchemaGenerator.safeIdentifier(rawArgName);
+        final defaultValueStr = SchemaGenerator.formatDefaultValue(
+            arg.defaultValue,
+            dartType: argTypeInfo.dartType);
+        if (defaultValueStr != null) {
+          buffer.writeln(
+              '    ${argTypeInfo.dartType} $argName = $defaultValueStr,');
+        } else if (argTypeInfo.isRequired) {
           buffer.writeln('    required ${argTypeInfo.dartType} $argName,');
         } else {
           buffer.writeln('    ${argTypeInfo.dartType}? $argName,');
         }
       }
       buffer.writeln('    FetchPolicy? fetchPolicy,');
+      buffer.writeln('    ErrorPolicy? errorPolicy,');
       buffer.writeln('    Map<String, String>? headers,');
       buffer.writeln('    CancelToken? cancelToken,');
       buffer.writeln('  }) {');
@@ -200,7 +241,7 @@ class SchemaUtilityGenerator {
       if (hasArgs) {
         buffer.writeln('      variables: $varsClassName(');
         for (final arg in field.args) {
-          final argName = arg.name.value.camelCase;
+          final argName = SchemaGenerator.safeIdentifier(arg.name.value);
           buffer.writeln('        $argName: $argName,');
         }
         buffer.writeln('      ),');
@@ -208,6 +249,7 @@ class SchemaUtilityGenerator {
         buffer.writeln('      variables: const $varsClassName(),');
       }
       buffer.writeln('      fetchPolicy: fetchPolicy,');
+      buffer.writeln('      errorPolicy: errorPolicy,');
       buffer.writeln('      headers: headers,');
       buffer.writeln('      cancelToken: cancelToken,');
       buffer.writeln('    ));');
@@ -221,14 +263,24 @@ class SchemaUtilityGenerator {
       buffer.writeln('  Future<$returnTypeModel> $refetchMethodName({');
       for (final arg in field.args) {
         final argTypeInfo = SchemaGenerator.parseFieldType(arg.type,
-            enumNames: enumNames, inputNames: inputNames);
-        final argName = arg.name.value.camelCase;
-        if (argTypeInfo.isRequired) {
+            enumNames: enumNames,
+            inputNames: inputNames,
+            customScalars: customScalars);
+        final rawArgName = arg.name.value;
+        final argName = SchemaGenerator.safeIdentifier(rawArgName);
+        final defaultValueStr = SchemaGenerator.formatDefaultValue(
+            arg.defaultValue,
+            dartType: argTypeInfo.dartType);
+        if (defaultValueStr != null) {
+          buffer.writeln(
+              '    ${argTypeInfo.dartType} $argName = $defaultValueStr,');
+        } else if (argTypeInfo.isRequired) {
           buffer.writeln('    required ${argTypeInfo.dartType} $argName,');
         } else {
           buffer.writeln('    ${argTypeInfo.dartType}? $argName,');
         }
       }
+      buffer.writeln('    ErrorPolicy? errorPolicy,');
       buffer.writeln('    Map<String, String>? headers,');
       buffer.writeln('    CancelToken? cancelToken,');
       buffer.writeln('  }) {');
@@ -236,13 +288,14 @@ class SchemaUtilityGenerator {
       if (hasArgs) {
         buffer.writeln('      variables: $varsClassName(');
         for (final arg in field.args) {
-          final argName = arg.name.value.camelCase;
+          final argName = SchemaGenerator.safeIdentifier(arg.name.value);
           buffer.writeln('        $argName: $argName,');
         }
         buffer.writeln('      ),');
       } else {
         buffer.writeln('      variables: const $varsClassName(),');
       }
+      buffer.writeln('      errorPolicy: errorPolicy,');
       buffer.writeln('      headers: headers,');
       buffer.writeln('      cancelToken: cancelToken,');
       buffer.writeln('    ));');

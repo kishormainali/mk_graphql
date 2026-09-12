@@ -3,9 +3,9 @@
 [![pub package](https://img.shields.io/pub/v/mk_graphql.svg)](https://pub.dev/packages/mk_graphql)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A clean, modern, simplified GraphQL client for Dart and Flutter with normalized caching, composable links, typed operation execution, file uploads, SSE, and WebSockets.
+A clean, modern, simplified GraphQL client for Dart and Flutter with normalized caching, composable links, typed operation execution, file uploads, SSE, WebSockets, automatic pagination, refetch, and granular validation error handling.
 
-📖 **[Full documentation](../../docs/mk_graphql/getting-started.md)** — client API, link pipeline, caching internals, and pagination guides.
+📖 **[Full documentation](../../docs/README.md)** — client API, link pipeline, caching internals, and pagination guides.
 
 ---
 
@@ -19,8 +19,11 @@ A clean, modern, simplified GraphQL client for Dart and Flutter with normalized 
   - **WebSockets**: `WebSocketLink` supporting modern subscriptions.
 - 📁 **Multipart File Uploads**: Seamless GraphQL Multipart Request specification compliance for `Upload` / `MultipartFile`.
 - 🛑 **Request Cancellation**: Direct integration with Dio's `CancelToken`.
-- 💾 **Normalized Caching**: Fast in-memory cache with configurable fetch policies (`cacheFirst`, `networkOnly`, `cacheAndNetwork`, `cacheOnly`, `noCache`).
-- ⚡ **Stream & Future APIs**: Choose between single-shot `client.future()` or reactive `client.stream()`.
+- 💾 **Normalized Caching**: Fast in-memory cache with canonical JSON key ordering, optimistic responses, and configurable fetch policies (`cacheFirst`, `networkOnly`, `cacheAndNetwork`, `cacheOnly`, `noCache`).
+- ⚡ **Stream & Future APIs**: Single-shot `client.future()` or reactive `client.stream()`.
+- 🔄 **Direct Refetching**: `client.refetch(req)` and `req.refetch(client)` with immediate cache synchronization.
+- 📑 **Automatic Pagination (Zero Manual Append)**: `client.fetchMore` and `req.fetchMore` automatically merge lists and Relay connections; `GraphQLPaginator` manages reactive infinite scroll.
+- 🛡️ **Validation Errors**: Specialized `ValidationException` extracting field-level validation messages across Apollo, Laravel/Lighthouse, NestJS, and Spring DGS.
 - 🪵 **Built-in Logging**: Pretty console logging with custom options and privacy masking.
 
 ---
@@ -31,8 +34,9 @@ Add `mk_graphql` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  mk_graphql: ^1.0.0
+  mk_graphql: ^1.1.0
 ```
+
 
 Then run:
 
@@ -42,23 +46,37 @@ flutter pub get
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Step-by-Step Integration
 
-### 1. Initialize the Client
+### 1. Initialize `GraphQLClient`
 
 ```dart
 import 'package:mk_graphql/mk_graphql.dart';
 
 final client = GraphQLClient(
   url: 'https://api.example.com/graphql',
+
+  // Optional: SSE or WebSocket URL for subscriptions
+  sseUrl: 'https://api.example.com/graphql/sse',
+  // wsUrl: 'wss://api.example.com/graphql',
+
+  // Attach dynamic authentication token to every outgoing request
   tokenHeader: () async {
     final token = await getStoredToken();
     return token != null ? {'Authorization': 'Bearer $token'} : {};
   },
+
+  // Called automatically on 401 responses to refresh token and retry
   onTokenRefresh: (dioLink) async {
     final newToken = await refreshUserToken();
     return newToken != null ? {'Authorization': 'Bearer $newToken'} : null;
   },
+
+  // Default caching policy: cacheFirst, networkOnly, cacheAndNetwork, cacheOnly, noCache
+  defaultFetchPolicy: FetchPolicy.cacheFirst,
+
+  // Default error policy: none (throw if errors), ignore (return partial data), all (return data with errors)
+  defaultErrorPolicy: ErrorPolicy.none,
 );
 ```
 
@@ -66,22 +84,159 @@ final client = GraphQLClient(
 
 ### 2. Execute Queries & Mutations
 
-```dart
-// Using generated or custom GraphQLRequest
-final response = await client.future(myRequest);
+`client.future(req)` executes the operation once, handles caching according to `fetchPolicy`, and returns typed `TData` directly (or throws a typed `GraphQLException`):
 
-if (response.hasErrors) {
-  print('Errors: ${response.errors}');
-} else {
-  print('Data: ${response.data}');
+```dart
+try {
+  // Using a generated or custom GraphQLRequest
+  final data = await client.future(getUserReq);
+  print('User: ${data.user.name}');
+} on ValidationException catch (e) {
+  // Field-specific validation failures
+  print('Field errors: ${e.validationErrors}');
+  if (e.hasError('email')) {
+    print('Email error: ${e.getFirstError('email')}');
+  }
+} on UnAuthorizedException {
+  // Session expired or unauthenticated
+  navigateToLogin();
+} on GraphQLException catch (e) {
+  // Network, server, or execution error
+  print('GraphQL Error: ${e.message}');
 }
+```
+
+Or execute directly on the request object:
+```dart
+final data = await getUserReq.execute(client);
 ```
 
 ---
 
-### 3. Subscriptions (SSE or WebSockets)
+### 3. Reactive Streams & Cache Watching
 
-For Server-Sent Events (SSE):
+Watch cache updates reactively:
+
+```dart
+// Stream network emissions according to FetchPolicy (e.g. cacheAndNetwork emits cache then network)
+final subscription = client.stream(getUserReq).listen((data) {
+  print('Received data: ${data.user.name}');
+});
+
+// Or watch normalized cache directly whenever any operation updates it
+client.watchQuery(getUserReq).listen((cachedData) {
+  print('Cache updated: ${cachedData?.user.name}');
+});
+```
+
+---
+
+### 4. Refetching Queries
+
+Bypass cache with `FetchPolicy.networkOnly`, retrieve fresh network data, and update the cache in-place:
+
+```dart
+// Using client:
+final freshData = await client.refetch(getUserReq);
+
+// Using request extension:
+final freshData2 = await getUserReq.refetch(client);
+```
+
+---
+
+### 5. Automatic Pagination (Zero Manual Append Required)
+
+You do not need to manually concatenate lists (`[...previous, ...incoming]`).
+
+#### Option A: `client.fetchMore` / `req.fetchMore`
+Automatically merges response JSON trees (concatenating list fields and merging Relay connections) and updates the cache under the initial request:
+
+```dart
+// Fetch next page and merge automatically:
+final mergedData = await client.fetchMore(
+  originalRequest: page1Req,
+  nextRequest: page2Req,
+);
+
+// Or via request extension:
+final mergedData2 = await page1Req.fetchMore(client, nextRequest: page2Req);
+
+// Active listeners on page1Req automatically emit the accumulated data!
+```
+
+#### Option B: `GraphQLPaginator`
+For infinite scroll lists with reactive state management:
+
+```dart
+// 1. Create a paginator (page-number, offset/limit, or Relay cursor):
+final paginator = client.paginatePage(
+  initialRequest: GetAnimePageReq(
+    variables: const GetAnimePageVars(page: 1, perPage: 20),
+  ),
+  getItems: (data) => data.page?.media ?? [],
+  updatePage: (vars, nextPage) => vars.copyWith(page: nextPage),
+  pageSize: 20,
+  getPage: (data) => data.page?.pageInfo?.currentPage,
+  hasNextPage: (data) => data.page?.pageInfo?.hasNextPage ?? false,
+);
+
+// 2. Load initial page (returns List<TItem> directly)
+final firstPageItems = await paginator.loadInitial();
+
+// 3. Load next page (automatically accumulates and returns complete list)
+final accumulatedItems = await paginator.loadNext();
+
+// 4. Dynamically apply search queries or filters (restarts page 1 without wiping other criteria):
+paginator.applyVariables((currentVars) => currentVars.copyWith(
+  search: 'Naruto',
+  genre: 'Action',
+));
+
+// 5. Pull-to-refresh (resets query back to initialRequest):
+await paginator.refetch();
+
+// 6. Reactive State Stream:
+paginator.stream.listen((state) {
+  print('Items: ${state.items.length}, LoadingMore: ${state.isLoadingMore}');
+});
+```
+
+##### Flutter BLoC Integration (`emit.forEach`):
+Pipe `paginator.stream` directly into BLoC state without manual subscriptions:
+
+```dart
+class AnimeListBloc extends Bloc<AnimeListEvent, AnimeListState> {
+  final GraphQLPaginator _paginator;
+
+  AnimeListBloc(this._paginator) : super(const AnimeListState()) {
+    on<AnimeListStarted>((event, emit) async {
+      await emit.forEach<PaginationState<MediaPartialModel>>(
+        _paginator.stream,
+        onData: (pState) => state.copyWith(
+          items: pState.items,
+          isLoading: pState.isLoading,
+          isLoadingMore: pState.isLoadingMore,
+          hasMore: pState.hasMore,
+          error: pState.error,
+        ),
+      );
+    });
+
+    on<SearchChanged>((event, emit) {
+      _paginator.applyVariables((v) => v.copyWith(search: event.query));
+    });
+
+    on<FetchNextPage>((event, emit) => _paginator.loadNext());
+    on<Refreshed>((event, emit) => _paginator.refetch());
+  }
+}
+```
+
+
+---
+
+### 6. Subscriptions (SSE or WebSockets)
 
 ```dart
 final client = GraphQLClient(
@@ -90,20 +245,25 @@ final client = GraphQLClient(
   tokenHeader: () async => {'Authorization': 'Bearer $token'},
 );
 
-client.stream(mySubscriptionRequest).listen((response) {
-  print('Real-time event: ${response.data}');
+client.stream(mySubscriptionRequest).listen((data) {
+  print('Real-time event: $data');
 });
 ```
 
 ---
 
-### 4. Multipart File Uploads
+### 7. Multipart File Uploads
+
+Conforms to the standard GraphQL Multipart Request specification:
 
 ```dart
 import 'package:dio/dio.dart';
 import 'package:mk_graphql/mk_graphql.dart';
 
-final file = MultipartFile.fromFileSync('/path/to/avatar.png', filename: 'avatar.png');
+final file = MultipartFile.fromFileSync(
+  '/path/to/avatar.png',
+  filename: 'avatar.png',
+);
 
 final uploadReq = UploadAvatarReq(
   variables: UploadAvatarVars(file: file),
@@ -114,20 +274,20 @@ final result = await client.future(uploadReq);
 
 ---
 
-### 5. Request Cancellation with `CancelToken`
+### 8. Request Cancellation with `CancelToken`
 
 ```dart
 final cancelToken = CancelToken();
 
-// Cancel after 2 seconds or when user navigates away
-Future.delayed(const Duration(seconds: 2), () {
+// Cancel request when user navigates away
+void onDispose() {
   cancelToken.cancel('User navigated away');
-});
+}
 
 try {
-  final response = await client.future(myRequest, cancelToken: cancelToken);
+  final data = await client.future(myRequest, cancelToken: cancelToken);
 } on RequestCancelledException catch (e) {
-  print('Request was cancelled: ${e.message}');
+  print('Request cancelled: ${e.message}');
 }
 ```
 
@@ -135,7 +295,11 @@ try {
 
 ## 📚 Full Documentation
 
-See [docs/mk_graphql](../../docs/mk_graphql/getting-started.md) for the client API, link pipeline, caching, and pagination guides — and [docs/mk_graphql_generator](../../docs/mk_graphql_generator/getting-started.md) for the code generator.
+- [Client, Requests & ErrorPolicy](../../docs/mk_graphql/client-and-requests.md)
+- [Normalized Cache & Optimistic UI](../../docs/mk_graphql/caching.md)
+- [Link Pipeline (Auth, SSE, WS, Uploads)](../../docs/mk_graphql/links.md)
+- [Pagination Guide](../../docs/mk_graphql/pagination.md)
+- [Code Generator (`mk_graphql_generator`)](../../docs/mk_graphql_generator/getting-started.md)
 
 ---
 

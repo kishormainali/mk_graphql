@@ -36,6 +36,7 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
     super.requestId,
     super.cancelToken,
     super.fetchPolicy,
+    super.errorPolicy,
     super.headers,
     super.optimisticResponse,
   });
@@ -56,6 +57,7 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
   _TestReq copyWithRequest({
     _TestVars? variables,
     FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
     Map<String, String>? headers,
     dio.CancelToken? cancelToken,
     _TestData? optimisticResponse,
@@ -63,6 +65,7 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
       _TestReq(
         variables ?? this.variables,
         fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+        errorPolicy: errorPolicy ?? this.errorPolicy,
         headers: headers ?? this.headers,
         cancelToken: cancelToken ?? this.cancelToken,
         optimisticResponse: optimisticResponse ?? this.optimisticResponse,
@@ -117,8 +120,8 @@ void main() {
       final cache = InMemoryCache();
       final req = _TestReq(const _TestVars('123'));
       cache.writeQuery(req, const _TestData(id: '123', name: 'Alice'));
-      cache.evict(
-          'ROOT_QUERY:${req.operationName}:${req.document.hashCode}:${req.variables.toJson()}');
+      expect(cache.readQuery(req), isNotNull);
+      cache.evictQuery(req);
       expect(cache.readQuery(req), isNull);
     });
 
@@ -511,6 +514,142 @@ void main() {
       expect(formData.files.first.value.filename, equals('avatar.png'));
     });
   });
+
+  group('GraphQL Conventions & Optimizations', () {
+    test('ErrorPolicy.none throws when response has errors even if data is present', () async {
+      final client = GraphQLClient.fromLink(
+        const _DataAndErrorLink(
+          data: {'id': '123', 'name': 'Alice'},
+          errors: [
+            gql.GraphQLError(message: 'Non-fatal field error'),
+          ],
+        ),
+        defaultErrorPolicy: ErrorPolicy.none,
+      );
+
+      expect(
+        () => client.future(_TestReq(const _TestVars('123'))),
+        throwsA(isA<GraphQLException>()),
+      );
+    });
+
+    test('ErrorPolicy.ignore returns data when partial errors are present', () async {
+      final client = GraphQLClient.fromLink(
+        const _DataAndErrorLink(
+          data: {'id': '123', 'name': 'Alice'},
+          errors: [
+            gql.GraphQLError(message: 'Non-fatal field error'),
+          ],
+        ),
+        defaultErrorPolicy: ErrorPolicy.ignore,
+      );
+
+      final result = await client.future(_TestReq(const _TestVars('123')));
+      expect(result.id, '123');
+      expect(result.name, 'Alice');
+    });
+
+    test('ErrorPolicy.all returns data without throwing when partial errors are present', () async {
+      final client = GraphQLClient.fromLink(
+        const _DataAndErrorLink(
+          data: {'id': '123', 'name': 'Alice'},
+          errors: [
+            gql.GraphQLError(message: 'Non-fatal field error'),
+          ],
+        ),
+      );
+
+      // Per-request override
+      final result = await client.future(
+        _TestReq(const _TestVars('123'), errorPolicy: ErrorPolicy.all),
+      );
+      expect(result.id, '123');
+      expect(result.name, 'Alice');
+    });
+
+    test('ErrorPolicy.all still throws when data is null', () async {
+      final client = GraphQLClient.fromLink(
+        const _ErrorLink(
+          errors: [
+            gql.GraphQLError(message: 'Fatal error'),
+          ],
+        ),
+      );
+
+      expect(
+        () => client.future(
+          _TestReq(const _TestVars('123'), errorPolicy: ErrorPolicy.all),
+        ),
+        throwsA(isA<GraphQLException>()),
+      );
+    });
+
+    test('Deterministic canonical cache key ordering for variables', () {
+      final cache = InMemoryCache();
+      // Test two requests whose variables maps have different key insertion order
+      final req1 = _CustomVarsReq({'b': '2', 'a': '1'});
+      final req2 = _CustomVarsReq({'a': '1', 'b': '2'});
+
+      cache.writeQuery(req1, const _TestData(id: '123', name: 'Cached'));
+
+      // Reading with differently-ordered keys must hit the exact same cache record
+      final read = cache.readQuery(req2);
+      expect(read, isNotNull);
+      expect(read?.name, 'Cached');
+    });
+
+    test('Document AST caching reuses parsed DocumentNode across requests', () {
+      const doc = 'query GetCachedDoc { user { id } }';
+      final node1 = GraphQLClient.getParsedDocument(doc);
+      final node2 = GraphQLClient.getParsedDocument(doc);
+      expect(identical(node1, node2), isTrue);
+    });
+  });
+}
+
+class _DataAndErrorLink extends Link {
+  final Map<String, dynamic> data;
+  final List<gql.GraphQLError> errors;
+  const _DataAndErrorLink({required this.data, required this.errors});
+
+  @override
+  Stream<gql.Response> request(gql.Request req, [NextLink? forward]) async* {
+    yield gql.Response(data: data, errors: errors, response: const {});
+  }
+}
+
+class _CustomVarsReq extends GraphQLRequest<_TestData, Map<String, dynamic>> {
+  @override
+  final Map<String, dynamic> variables;
+
+  _CustomVarsReq(this.variables, {super.fetchPolicy, super.errorPolicy});
+
+  @override
+  String get document => 'query TestCustom { user { id name } }';
+
+  @override
+  String get operationName => 'TestCustom';
+
+  @override
+  Map<String, dynamic> toJsonVars(Map<String, dynamic> vars) => vars;
+
+  @override
+  _TestData parseData(Map<String, dynamic> json) => _TestData.fromJson(json);
+
+  @override
+  _CustomVarsReq copyWithRequest({
+    Map<String, dynamic>? variables,
+    FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
+    Map<String, String>? headers,
+    dio.CancelToken? cancelToken,
+    _TestData? optimisticResponse,
+  }) =>
+      _CustomVarsReq(
+        variables ?? this.variables,
+        fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+        errorPolicy: errorPolicy ?? this.errorPolicy,
+      );
 }
 
 class _MockUploadAdapter implements dio.HttpClientAdapter {

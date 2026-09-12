@@ -15,6 +15,8 @@ import 'package:get_it/get_it.dart' as _i174;
 import 'package:injectable/injectable.dart' as _i526;
 import 'package:mk_graphql/mk_graphql.dart' as _i901;
 
+import '../features/anime/bloc/anime_details_cubit.dart' as _i256;
+import '../features/anime/bloc/anime_list_bloc.dart' as _i960;
 import 'network_module.dart' as _i567;
 
 extension GetItInjectableX on _i174.GetIt {
@@ -28,6 +30,12 @@ extension GetItInjectableX on _i174.GetIt {
     gh.lazySingleton<_i361.Dio>(() => networkModule.provideDio());
     gh.lazySingleton<_i901.GraphQLClient>(
       () => networkModule.provideGraphQLClient(gh<_i361.Dio>()),
+    );
+    gh.factory<_i256.AnimeDetailsCubit>(
+      () => _i256.AnimeDetailsCubit(gh<_i901.GraphQLClient>()),
+    );
+    gh.factory<_i960.AnimeListBloc>(
+      () => _i960.AnimeListBloc(gh<_i901.GraphQLClient>()),
     );
     return this;
   }

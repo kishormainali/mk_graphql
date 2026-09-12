@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:gql/ast.dart';
 import 'package:recase/recase.dart';
 
@@ -28,10 +29,12 @@ String resolveGeneratedImport({
 class FieldTypeInfo {
   final String dartType;
   final bool isRequired;
+  final String? defaultValue;
 
   const FieldTypeInfo({
     required this.dartType,
     required this.isRequired,
+    this.defaultValue,
   });
 }
 
@@ -82,6 +85,7 @@ class SchemaGenerator {
     Set<String> enumNames,
     Set<String> inputNames, {
     Set<String> scalarNames = const {},
+    Map<String, String> customScalars = const {},
     String? packageName,
     String generatedDir = '',
   }) {
@@ -101,8 +105,15 @@ class SchemaGenerator {
         final typeInfo = parseFieldType(field.type,
             enumNames: enumNames,
             inputNames: inputNames,
-            scalarNames: scalarNames);
-        fields[rawFieldName] = typeInfo;
+            scalarNames: scalarNames,
+            customScalars: customScalars);
+        final defaultValueStr = formatDefaultValue(field.defaultValue,
+            dartType: typeInfo.dartType);
+        fields[rawFieldName] = FieldTypeInfo(
+          dartType: typeInfo.dartType,
+          isRequired: defaultValueStr == null && typeInfo.isRequired,
+          defaultValue: defaultValueStr,
+        );
         final baseType = _unwrapDartType(typeInfo.dartType);
         if (enumNames.contains(baseType)) needsEnumImport = true;
         if (inputNames.contains(baseType) && baseType != name)
@@ -161,6 +172,7 @@ class SchemaGenerator {
     Set<String> enumNames,
     Set<String> inputNames, {
     Set<String> scalarNames = const {},
+    Map<String, String> customScalars = const {},
     String? packageName,
     String generatedDir = '',
   }) {
@@ -188,7 +200,8 @@ class SchemaGenerator {
         final typeInfo = parseFieldType(field.type,
             enumNames: enumNames,
             inputNames: inputNames,
-            scalarNames: scalarNames);
+            scalarNames: scalarNames,
+            customScalars: customScalars);
         fields[rawFieldName] = typeInfo;
         final baseType = _unwrapDartType(typeInfo.dartType);
         if (enumNames.contains(baseType)) needsEnumImport = true;
@@ -258,10 +271,14 @@ class SchemaGenerator {
     required Set<String> enumNames,
     required Set<String> inputNames,
     Set<String> scalarNames = const {},
+    Map<String, String> customScalars = const {},
   }) {
     final isRequired = type.isNonNull;
     final innerType = _formatTypeNode(type,
-        enumNames: enumNames, inputNames: inputNames, scalarNames: scalarNames);
+        enumNames: enumNames,
+        inputNames: inputNames,
+        scalarNames: scalarNames,
+        customScalars: customScalars);
     return FieldTypeInfo(dartType: innerType, isRequired: isRequired);
   }
 
@@ -270,18 +287,21 @@ class SchemaGenerator {
     required Set<String> enumNames,
     required Set<String> inputNames,
     Set<String> scalarNames = const {},
+    Map<String, String> customScalars = const {},
   }) {
     if (type is NamedTypeNode) {
       return formatNamedType(type.name.value,
           enumNames: enumNames,
           inputNames: inputNames,
-          scalarNames: scalarNames);
+          scalarNames: scalarNames,
+          customScalars: customScalars);
     } else if (type is ListTypeNode) {
       final elementType = type.type;
       final inner = _formatTypeNode(elementType,
           enumNames: enumNames,
           inputNames: inputNames,
-          scalarNames: scalarNames);
+          scalarNames: scalarNames,
+          customScalars: customScalars);
       return 'List<$inner>';
     }
     return 'dynamic';
@@ -293,11 +313,20 @@ class SchemaGenerator {
     required Set<String> enumNames,
     required Set<String> inputNames,
     Set<String> scalarNames = const {},
+    Map<String, String> customScalars = const {},
   }) {
+    if (customScalars.containsKey(rawName)) {
+      return customScalars[rawName]!;
+    }
+    if (customScalars.containsKey(rawName.pascalCase)) {
+      return customScalars[rawName.pascalCase]!;
+    }
+
     switch (rawName) {
       case 'String':
       case 'ID':
       case 'ObjectID':
+      case 'UUID':
         return 'String';
       case 'Int':
         return 'int';
@@ -310,6 +339,12 @@ class SchemaGenerator {
       case 'Date':
       case 'Timestamp':
         return 'DateTime';
+      case 'URI':
+      case 'Url':
+      case 'URL':
+        return 'Uri';
+      case 'BigInt':
+        return 'BigInt';
       case 'Upload':
         return 'MultipartFile';
       case 'JSON':
@@ -353,7 +388,9 @@ class SchemaGenerator {
     'class',
     'const',
     'continue',
+    'covariant',
     'default',
+    'deferred',
     'do',
     'dynamic',
     'else',
@@ -361,12 +398,15 @@ class SchemaGenerator {
     'export',
     'extends',
     'extension',
+    'external',
     'factory',
     'false',
     'final',
     'finally',
     'for',
+    'function',
     'get',
+    'hide',
     'if',
     'implements',
     'import',
@@ -376,8 +416,10 @@ class SchemaGenerator {
     'late',
     'library',
     'mixin',
+    'native',
     'new',
     'null',
+    'of',
     'on',
     'operator',
     'part',
@@ -385,9 +427,11 @@ class SchemaGenerator {
     'rethrow',
     'return',
     'set',
+    'show',
     'static',
     'super',
     'switch',
+    'sync',
     'this',
     'throw',
     'true',
@@ -402,13 +446,37 @@ class SchemaGenerator {
 
   static String safeIdentifier(String name) {
     final camel = name.camelCase;
-    return _dartKeywords.contains(camel) ? '${camel}_' : camel;
+    return _dartKeywords.contains(camel) ? 'g${camel.pascalCase}' : camel;
   }
 
   /// Converts a SCREAMING_SNAKE_CASE GraphQL enum value to a Dart camelCase identifier.
   /// e.g. `ADMIN_USER` → `adminUser`, `ADMIN` → `admin`.
   static String _toDartEnumValue(String wireValue) {
     return safeIdentifier(wireValue);
+  }
+
+  static String? formatDefaultValue(ValueNode? node, {String? dartType}) {
+    if (node == null) return null;
+    if (node is IntValueNode) return node.value;
+    if (node is FloatValueNode) return node.value;
+    if (node is StringValueNode) return jsonEncode(node.value);
+    if (node is BooleanValueNode) return node.value ? 'true' : 'false';
+    if (node is EnumValueNode) {
+      final val = node.name.value;
+      if (dartType != null && dartType.isNotEmpty) {
+        final cleanType = dartType.endsWith('?')
+            ? dartType.substring(0, dartType.length - 1)
+            : dartType;
+        return '$cleanType.${safeIdentifier(val)}';
+      }
+      return safeIdentifier(val);
+    }
+    if (node is NullValueNode) return 'null';
+    if (node is ListValueNode) {
+      final items = node.values.map((v) => formatDefaultValue(v)).join(', ');
+      return 'const [$items]';
+    }
+    return null;
   }
 
   static void _generateFreezedClass({
@@ -432,12 +500,16 @@ class SchemaGenerator {
         // field is ignored, an explicit `field: null` can exclude matches).
         final keyArgs = <String>[
           if (dartName != rawName) "name: '$rawName'",
-          if (isInput && !typeInfo.isRequired) 'includeIfNull: false',
+          if (isInput && !typeInfo.isRequired && typeInfo.defaultValue == null)
+            'includeIfNull: false',
         ];
         if (keyArgs.isNotEmpty) {
           buffer.writeln('    @JsonKey(${keyArgs.join(', ')})');
         }
-        if (typeInfo.isRequired) {
+        if (typeInfo.defaultValue != null) {
+          buffer.writeln(
+              '    @Default(${typeInfo.defaultValue}) ${typeInfo.dartType} $dartName,');
+        } else if (typeInfo.isRequired) {
           buffer.writeln('    required ${typeInfo.dartType} $dartName,');
         } else {
           buffer.writeln('    ${typeInfo.dartType}? $dartName,');

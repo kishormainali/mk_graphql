@@ -81,6 +81,7 @@ class MkGraphQLBuilder implements Builder {
       sharedDir: sharedDir,
       schemaContent: schemaContent,
       packageName: inputId.package,
+      customScalars: config.scalars,
       useCache: config.cache,
     );
 

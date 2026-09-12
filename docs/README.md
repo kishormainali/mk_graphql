@@ -16,11 +16,11 @@ This repository is a monorepo with two published packages:
 
 ## mk_graphql (client)
 
-- [Getting Started](mk_graphql/getting-started.md) — installing, constructing a `GraphQLClient`, running your first request.
-- [Client, Requests & Responses](mk_graphql/client-and-requests.md) — `GraphQLClient` API, `FetchPolicy`, `GraphQLRequest`, `GraphQLResponse`, error types.
-- [Link Pipeline](mk_graphql/links.md) — how `AuthLink`, `TypenameLink`, `LoggerLink`, and the transport links (`DioLink`, `HttpLink`, `SseLink`, `WebSocketLink`, `BatchLink`) compose.
-- [Caching](mk_graphql/caching.md) — the normalized `Cache` interface, `InMemoryCache`, optimistic responses, `watchQuery`.
-- [Pagination](mk_graphql/pagination.md) — `GraphQLPaginator` and its offset/page/cursor factories.
+- [Getting Started](mk_graphql/getting-started.md) — step-by-step integration: installing, configuring `GraphQLClient`, executing operations, and handling validation errors.
+- [Client, Requests & Responses](mk_graphql/client-and-requests.md) — `GraphQLClient` API, `FetchPolicy`, `ErrorPolicy`, `GraphQLRequest`, `GraphQLResponse`, and `ValidationException`.
+- [Link Pipeline](mk_graphql/links.md) — how `AuthLink`, `TypenameLink`, `LoggerLink`, and transport links (`DioLink`, `HttpLink`, `SseLink`, `WebSocketLink`, `BatchLink`) compose.
+- [Caching](mk_graphql/caching.md) — normalized in-memory cache, deterministic canonical key sorting, optimistic responses, `watchQuery`.
+- [Pagination](mk_graphql/pagination.md) — automatic list and Relay connection merging with `client.fetchMore` / `req.fetchMore`, and reactive `GraphQLPaginator`.
 
 ## mk_graphql_generator (codegen)
 

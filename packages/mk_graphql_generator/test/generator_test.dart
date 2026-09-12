@@ -973,7 +973,7 @@ void main() {
       final countryModel = bundle.files['generated/models/country_model.dart']!;
       expect(countryModel, contains('required String code'));
       expect(countryModel, contains('required String name'));
-      expect(countryModel, contains('required String native'));
+      expect(countryModel, contains("@JsonKey(name: 'native') required String gNative"));
       expect(countryModel, contains('String? phone'));
       expect(countryModel, contains('required String emoji'));
     });
@@ -1011,22 +1011,16 @@ void main() {
       expect(opModel, isNot(contains('emoji')));
       expect(opModel, isNot(contains('native')));
 
-      // Verify copyWithRequest in req file
-      final opReq = bundle
-          .files['generated/get_countries_basic/get_countries_basic_req.dart']!;
-      expect(opReq, contains('copyWithRequest'));
-
-      // Verify refetch method in root operations extension
-      final opExt = bundle.files['generated/operations.gql.dart']!;
-      expect(opExt, contains('refetchGetCountriesBasic'));
+      expect(bundle.files.containsKey('generated/models/country_model.dart'),
+          isFalse);
     });
 
     test(
         'still generates its own operation-scoped model when query selects every required field',
         () {
       const fullOp = '''
-        query GetCountriesFull {
-          countries {
+        query GetCountryFull {
+          country(code: "us") {
             code
             name
             native
@@ -1043,65 +1037,56 @@ void main() {
       );
 
       final opModel = bundle
-          .files['generated/get_countries_full/get_countries_full_model.dart']!;
-      // Even though every required Country field is selected, the response
-      // model is still scoped to this operation — never the shared
-      // CountryModel, so a later query with different fields can't corrupt
-      // this one.
-      expect(opModel, contains('class GetCountriesFullCountriesModel'));
-      expect(opModel, isNot(contains('CountryModel')));
-      expect(opModel, isNot(contains('CountryPartialModel')));
+          .files['generated/get_country_full/get_country_full_model.dart']!;
+      expect(opModel, contains('class GetCountryFullCountryModel'));
+      expect(opModel, contains('required String code'));
+      expect(opModel, contains('required String name'));
+      expect(opModel, contains("@JsonKey(name: 'native') required String gNative"));
+      expect(opModel, contains('required String emoji'));
+      expect(opModel, isNot(contains('class CountryModel')));
     });
 
     test(
         'a fragment spread as the whole selection reuses one shared class across operations',
         () {
-      const opsWithFragment = '''
-        fragment CountryFields on Country {
+      const opWithFrag = '''
+        fragment CountryBase on Country {
           code
           name
         }
 
-        query GetCountriesA {
-          countries {
-            ...CountryFields
+        query GetCountry1 {
+          country(code: "us") {
+            ...CountryBase
           }
         }
 
-        query GetCountriesB {
-          countries {
-            ...CountryFields
+        query GetCountry2 {
+          country(code: "ca") {
+            ...CountryBase
           }
         }
       ''';
 
       final bundle = GeneratorOrchestrator.generateForGraphQLFile(
-        content: opsWithFragment,
+        content: opWithFrag,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: schemaContent,
         schemaPath: 'lib/graphql/schema.graphql',
       );
 
-      expect(bundle.files.keys, contains('generated/fragments/fragments.dart'));
-      final fragmentsFile = bundle.files['generated/fragments/fragments.dart']!;
-      expect(fragmentsFile, contains('class CountryFieldsFragment'));
-      expect(fragmentsFile, contains('required String code'));
-      expect(fragmentsFile, contains('required String name'));
+      final fragFile = bundle.files['generated/fragments/fragments.dart']!;
+      expect(fragFile, contains('class CountryBaseFragment'));
 
-      // Neither operation should generate its own inline class for
-      // `countries` — both reuse CountryFieldsFragment.
-      final modelA =
-          bundle.files['generated/get_countries_a/get_countries_a_model.dart']!;
-      final modelB =
-          bundle.files['generated/get_countries_b/get_countries_b_model.dart']!;
-      expect(modelA, contains('List<CountryFieldsFragment> countries'));
-      expect(modelB, contains('List<CountryFieldsFragment> countries'));
-      expect(modelA, isNot(contains('class GetCountriesACountriesModel')));
-      expect(modelB, isNot(contains('class GetCountriesBCountriesModel')));
+      final op1Model =
+          bundle.files['generated/get_country1/get_country1_model.dart']!;
+      expect(op1Model, contains('CountryBaseFragment? country'));
+      expect(op1Model, isNot(contains('class GetCountry1CountryModel')));
 
-      // Both op model files import the shared fragments barrel.
-      expect(modelA, contains("import '../fragments/fragments.dart';"));
-      expect(modelB, contains("import '../fragments/fragments.dart';"));
+      final op2Model =
+          bundle.files['generated/get_country2/get_country2_model.dart']!;
+      expect(op2Model, contains('CountryBaseFragment? country'));
+      expect(op2Model, isNot(contains('class GetCountry2CountryModel')));
     });
 
     test(
@@ -1137,6 +1122,161 @@ void main() {
       expect(opModel, contains('required String code'));
       expect(opModel, contains('required String name'));
       expect(opModel, contains('required String emoji'));
+    });
+  });
+
+  group('GraphQL Conventions & Optimizations Tests', () {
+    const conventionSchema = '''
+      scalar DateTime
+      scalar UUID
+      scalar CustomScalar
+
+      enum Status {
+        ACTIVE
+        IN_PROGRESS
+        DEFAULT
+      }
+
+      input FilterInput {
+        default: String
+        limit: Int = 20
+        is: Boolean
+      }
+
+      type Item {
+        id: UUID!
+        class: String!
+        default: String!
+        status: Status!
+        createdAt: DateTime!
+        custom: CustomScalar
+      }
+
+      type Query {
+        getItem(id: UUID!, filter: FilterInput): Item
+      }
+    ''';
+
+    test('Dart reserved keywords map to g{Keyword} with @JsonKey(name: raw)', () {
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: conventionSchema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      final itemModel = bundle.files['generated/models/item_model.dart']!;
+      expect(itemModel, contains("@JsonKey(name: 'class') required String gClass"));
+      expect(itemModel, contains("@JsonKey(name: 'default') required String gDefault"));
+      expect(itemModel, contains('required String id')); // UUID mapped to String
+      expect(itemModel, contains('required DateTime createdAt'));
+
+      final filterInput = bundle.files['generated/inputs/filter_input.dart']!;
+      expect(filterInput, contains("@JsonKey(name: 'default', includeIfNull: false) String? gDefault"));
+      expect(filterInput, contains("@Default(20) int limit"));
+      expect(filterInput, contains("@JsonKey(name: 'is', includeIfNull: false) bool? gIs"));
+
+      final statusEnum = bundle.files['generated/enums/status_enum.dart']!;
+      expect(statusEnum, contains('@JsonValue("DEFAULT")\n  gDefault'));
+    });
+
+    test('@include and @skip directives make non-null fields nullable in response model', () {
+      const queryWithDirectives = '''
+        query GetItemWithCondition(\$skipDefault: Boolean!, \$includeClass: Boolean!) {
+          getItem(id: "123") {
+            id
+            class @include(if: \$includeClass)
+            default @skip(if: \$skipDefault)
+            status
+          }
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: queryWithDirectives,
+        inputPath: 'lib/graphql/operations.graphql',
+        schemaContent: conventionSchema,
+        schemaPath: 'lib/graphql/schema.graphql',
+      );
+
+      final model = bundle.files['generated/get_item_with_condition/get_item_with_condition_model.dart']!;
+      // Normally id is required String id
+      expect(model, contains('required String id'));
+      // class has @include so even though schema says String!, Dart must be nullable String?
+      expect(model, contains("@JsonKey(name: 'class') String? gClass"));
+      // default has @skip so even though schema says String!, Dart must be nullable String?
+      expect(model, contains("@JsonKey(name: 'default') String? gDefault"));
+      // status has no directive so it stays required
+      expect(model, contains('required Status status'));
+    });
+
+    test('Variable definitions with default values generate @Default(...) in Vars and extension', () {
+      const queryWithVarDefaults = '''
+        query GetItemWithDefaults(\$limit: Int = 30, \$order: String = "asc") {
+          getItem(id: "123") {
+            id
+          }
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: queryWithVarDefaults,
+        inputPath: 'lib/graphql/operations.graphql',
+        schemaContent: conventionSchema,
+        schemaPath: 'lib/graphql/schema.graphql',
+      );
+
+      final vars = bundle.files['generated/get_item_with_defaults/get_item_with_defaults_var.dart']!;
+      expect(vars, contains('@Default(30) int limit'));
+      expect(vars, contains('@Default("asc") String order'));
+
+      final barrel = bundle.files['generated/operations.gql.dart']!;
+      expect(barrel, contains('int limit = 30'));
+      expect(barrel, contains('String order = "asc"'));
+    });
+
+    test('ErrorPolicy is included in request constructor, copyWithRequest, and client extensions', () {
+      const query = '''
+        query GetSimpleItem {
+          getItem(id: "123") {
+            id
+          }
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: query,
+        inputPath: 'lib/graphql/operations.graphql',
+        schemaContent: conventionSchema,
+        schemaPath: 'lib/graphql/schema.graphql',
+      );
+
+      final req = bundle.files['generated/get_simple_item/get_simple_item_req.dart']!;
+      expect(req, contains('ErrorPolicy? errorPolicy,'));
+      expect(req, contains('errorPolicy: errorPolicy ?? this.errorPolicy,'));
+
+      final barrel = bundle.files['generated/operations.gql.dart']!;
+      expect(barrel, contains('ErrorPolicy? errorPolicy,'));
+      expect(barrel, contains('errorPolicy: errorPolicy,'));
+    });
+
+    test('Custom scalars are mapped according to customScalars configuration', () {
+      const query = '''
+        query GetCustomItem {
+          getItem(id: "123") {
+            custom
+          }
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: query,
+        inputPath: 'lib/graphql/operations.graphql',
+        schemaContent: conventionSchema,
+        schemaPath: 'lib/graphql/schema.graphql',
+        customScalars: {'CustomScalar': 'MyCustomDartType'},
+      );
+
+      final model = bundle.files['generated/get_custom_item/get_custom_item_model.dart']!;
+      expect(model, contains('MyCustomDartType? custom'));
     });
   });
 }

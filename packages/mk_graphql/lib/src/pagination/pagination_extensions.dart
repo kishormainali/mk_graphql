@@ -48,6 +48,8 @@ extension GraphQLClientPaginationExtension on GraphQLClient {
     required TVars Function(TVars currentVars, int nextPage) updatePage,
     int initialPage = 1,
     int pageSize = 20,
+    int? Function(TData data)? getPage,
+    bool Function(TData data)? hasNextPage,
     ItemMerger<TItem>? mergeItems,
   }) {
     return GraphQLPaginator.page(
@@ -57,6 +59,8 @@ extension GraphQLClientPaginationExtension on GraphQLClient {
       updatePage: updatePage,
       initialPage: initialPage,
       pageSize: pageSize,
+      getPage: getPage,
+      hasNextPage: hasNextPage,
       mergeItems: mergeItems,
     );
   }
@@ -98,6 +102,23 @@ extension GraphQLRequestExecutionExtension<TData, TVars>
     CancelToken? cancelToken,
   }) =>
       client.refetch(this, cancelToken: cancelToken);
+
+  /// Fetches the next page of results for this request, automatically merging
+  /// the items and updating the client cache under this request.
+  Future<TData> fetchMore(
+    GraphQLClient client, {
+    required GraphQLRequest<TData, TVars> nextRequest,
+    TData? previousData,
+    TData Function(TData previousData, TData incomingData)? updateQuery,
+    CancelToken? cancelToken,
+  }) =>
+      client.fetchMore(
+        originalRequest: this,
+        nextRequest: nextRequest,
+        previousData: previousData,
+        updateQuery: updateQuery,
+        cancelToken: cancelToken,
+      );
 
   /// Streams this request's responses on [client].
   Stream<TData> stream(
@@ -147,6 +168,8 @@ extension GraphQLRequestExecutionExtension<TData, TVars>
     required TVars Function(TVars currentVars, int nextPage) updatePage,
     int initialPage = 1,
     int pageSize = 20,
+    int? Function(TData data)? getPage,
+    bool Function(TData data)? hasNextPage,
     ItemMerger<TItem>? mergeItems,
   }) =>
       client.paginatePage(
@@ -155,6 +178,8 @@ extension GraphQLRequestExecutionExtension<TData, TVars>
         updatePage: updatePage,
         initialPage: initialPage,
         pageSize: pageSize,
+        getPage: getPage,
+        hasNextPage: hasNextPage,
         mergeItems: mergeItems,
       );
 

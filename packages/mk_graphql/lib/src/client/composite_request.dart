@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import '../core/error_policy.dart';
 import '../core/fetch_policy.dart';
 import '../core/request.dart';
 
@@ -13,9 +14,11 @@ class CompositeGraphQLRequest
   CompositeGraphQLRequest(
     this.requests, {
     FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
     Map<String, String>? headers,
   }) : super(
           fetchPolicy: fetchPolicy,
+          errorPolicy: errorPolicy,
           headers: headers,
           requestId: requests.map((r) => r.requestId).join('_'),
         );
@@ -48,6 +51,7 @@ class CompositeGraphQLRequest
   CompositeGraphQLRequest copyWithRequest({
     Map<String, dynamic>? variables,
     FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
     Map<String, String>? headers,
     CancelToken? cancelToken,
     Map<String, dynamic>? optimisticResponse,
@@ -55,6 +59,7 @@ class CompositeGraphQLRequest
     return CompositeGraphQLRequest(
       requests,
       fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+      errorPolicy: errorPolicy ?? this.errorPolicy,
       headers: headers ?? this.headers,
     );
   }

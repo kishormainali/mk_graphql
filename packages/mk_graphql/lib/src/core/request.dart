@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'error_policy.dart';
 import 'fetch_policy.dart';
 
 /// Represents an immutable typed GraphQL request.
@@ -29,6 +30,10 @@ abstract class GraphQLRequest<TData, TVars> {
   /// When null the client's [defaultFetchPolicy] is used.
   final FetchPolicy? fetchPolicy;
 
+  /// Error policy override for this specific request.
+  /// When null the client's [defaultErrorPolicy] is used.
+  final ErrorPolicy? errorPolicy;
+
   /// Additional HTTP headers to attach to this request only.
   final Map<String, String>? headers;
 
@@ -45,6 +50,7 @@ abstract class GraphQLRequest<TData, TVars> {
 
   const GraphQLRequest({
     this.fetchPolicy,
+    this.errorPolicy,
     this.headers,
     this.optimisticResponse,
     this.cancelToken,
@@ -55,6 +61,7 @@ abstract class GraphQLRequest<TData, TVars> {
   GraphQLRequest<TData, TVars> copyWithRequest({
     TVars? variables,
     FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
     Map<String, String>? headers,
     CancelToken? cancelToken,
     TData? optimisticResponse,
@@ -63,4 +70,8 @@ abstract class GraphQLRequest<TData, TVars> {
   /// Convenient helper to copy this request with a new [fetchPolicy].
   GraphQLRequest<TData, TVars> copyWithFetchPolicy(FetchPolicy policy) =>
       copyWithRequest(fetchPolicy: policy);
+
+  /// Convenient helper to copy this request with a new [errorPolicy].
+  GraphQLRequest<TData, TVars> copyWithErrorPolicy(ErrorPolicy policy) =>
+      copyWithRequest(errorPolicy: policy);
 }

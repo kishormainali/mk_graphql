@@ -14,10 +14,14 @@ class MkGraphQLConfig {
   /// Whether to cache generated artifacts to avoid re-generating. Defaults to `true`.
   final bool cache;
 
+  /// Custom scalar type mappings from GraphQL scalar names to Dart types.
+  final Map<String, String> scalars;
+
   const MkGraphQLConfig({
     this.schemaPath,
     this.sharedDir,
     this.cache = true,
+    this.scalars = const {},
   });
 
   factory MkGraphQLConfig.fromOptions(BuilderOptions options) {
@@ -47,10 +51,20 @@ class MkGraphQLConfig {
     // 3. Cache flag (defaults to true)
     final cache = cfg['cache'] is bool ? cfg['cache'] as bool : true;
 
+    // 4. Custom scalars mapping
+    final rawScalars = cfg['scalars'];
+    final scalars = <String, String>{};
+    if (rawScalars is Map) {
+      rawScalars.forEach((k, v) {
+        if (k != null && v != null) scalars[k.toString()] = v.toString();
+      });
+    }
+
     return MkGraphQLConfig(
       schemaPath: schemaPath,
       sharedDir: sharedDir,
       cache: cache,
+      scalars: Map.unmodifiable(scalars),
     );
   }
 

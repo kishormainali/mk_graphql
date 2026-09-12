@@ -17,8 +17,12 @@ abstract class NetworkModule {
   @lazySingleton
   GraphQLClient provideGraphQLClient(Dio dio) {
     return GraphQLClient(
-      url: 'https://countries.trevorblades.com/graphql',
+      url: 'https://graphql.anilist.co',
       dio: dio,
+      defaultHeaders: const {
+        'Referer': 'https://anilist.co/graphiql',
+        'Origin': 'https://anilist.co',
+      },
       cache: InMemoryCache(),
       defaultFetchPolicy: FetchPolicy.cacheFirst,
       loggerOptions: const LoggerOptions(

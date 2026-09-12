@@ -138,7 +138,8 @@ class DioLink extends Link {
         await _executeDioRequest(
       request: request,
       headers: <String, String>{
-        dio.Headers.acceptHeader: '*/*',
+        dio.Headers.acceptHeader:
+            'application/graphql-response+json, application/json, */*',
         dio.Headers.contentTypeHeader: dio.Headers.jsonContentType,
         ...defaultHeaders,
         ..._getHttpLinkHeaders(request),

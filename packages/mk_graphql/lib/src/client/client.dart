@@ -12,6 +12,7 @@ import '../link/logging/logger_options.dart';
 import '../cache/cache.dart';
 import '../cache/in_memory_cache.dart';
 import '../core/error.dart';
+import '../core/error_policy.dart';
 import '../core/fetch_policy.dart';
 import '../core/request.dart';
 import '../core/response.dart';
@@ -23,14 +24,22 @@ import '../link/transport/websocket_link.dart';
 
 /// Central GraphQL Client managing cache, links, and operation requests.
 ///
-/// Internally builds a composable [Link] pipeline:
-///
-///   [AuthLink]? → [TypenameLink]? → [LoggerLink] → (SubscriptionSplit: [WebSocketLink] / [SseLink] vs [DioLink])
+/// Combines an in-memory normalized cache, an extensible [Link] pipeline,
+/// proactive auth token management, automatic `__typename` injection,
+/// rich logging, and typed request execution.
 class GraphQLClient {
   final Link _pipeline;
   final Cache cache;
   final FetchPolicy defaultFetchPolicy;
+  final ErrorPolicy defaultErrorPolicy;
   final LoggerOptions loggerOptions;
+
+  /// In-memory cache for parsed document ASTs to avoid redundant parseString overhead.
+  static final Map<String, DocumentNode> _documentCache = {};
+
+  /// Returns the cached [DocumentNode] AST for [document], parsing it only on first access.
+  static DocumentNode getParsedDocument(String document) =>
+      _documentCache.putIfAbsent(document, () => parseString(document));
 
   // ---------------------------------------------------------------------------
   // Static revoke-token listener delegates
@@ -84,6 +93,7 @@ class GraphQLClient {
     bool addTypename = true,
     Cache? cache,
     this.defaultFetchPolicy = FetchPolicy.noCache,
+    this.defaultErrorPolicy = ErrorPolicy.none,
     this.loggerOptions = const LoggerOptions(),
   })  : cache = cache ?? InMemoryCache(),
         _pipeline = _buildPipeline(
@@ -100,6 +110,16 @@ class GraphQLClient {
           onRevokeToken: onRevokeToken,
           addTypename: addTypename,
         );
+
+  /// Creates a [GraphQLClient] using a custom [Link] pipeline directly.
+  GraphQLClient.fromLink(
+    Link link, {
+    Cache? cache,
+    this.defaultFetchPolicy = FetchPolicy.noCache,
+    this.defaultErrorPolicy = ErrorPolicy.none,
+    this.loggerOptions = const LoggerOptions(),
+  })  : cache = cache ?? InMemoryCache(),
+        _pipeline = link;
 
   static Link _buildPipeline({
     required String url,
@@ -201,12 +221,14 @@ class GraphQLClient {
     CancelToken? cancelToken,
   }) async {
     try {
+      final effectiveErrorPolicy = req.errorPolicy ?? defaultErrorPolicy;
       final response = await request(req, cancelToken: cancelToken).firstWhere(
         (r) => !r.loading || r.data != null || r.hasErrors,
         orElse: () => throw const AppServerException(
             message: 'No response received from GraphQL server.'),
       );
-      if (response.hasErrors || response.data == null) {
+      if (response.data == null ||
+          (response.hasErrors && effectiveErrorPolicy == ErrorPolicy.none)) {
         _throwFromResponse(response);
       }
       return response.data!;
@@ -224,8 +246,10 @@ class GraphQLClient {
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
   }) {
+    final effectiveErrorPolicy = req.errorPolicy ?? defaultErrorPolicy;
     return request(req, cancelToken: cancelToken).map((response) {
-      if (response.hasErrors || response.data == null) {
+      if (response.data == null ||
+          (response.hasErrors && effectiveErrorPolicy == ErrorPolicy.none)) {
         _throwFromResponse(response);
       }
       return response.data!;
@@ -252,6 +276,38 @@ class GraphQLClient {
   }) {
     final refetchReq = req.copyWithFetchPolicy(FetchPolicy.networkOnly);
     return stream(refetchReq, cancelToken: cancelToken);
+  }
+
+  /// Fetches the next page of results for a query, automatically merging the results
+  /// with [previousData] (or the cached data for [originalRequest] if [previousData] is omitted),
+  /// updating the cache under [originalRequest], and returning the merged data.
+  ///
+  /// By default, lists in the response are automatically concatenated without manual intervention.
+  /// A custom [updateQuery] function may be provided to customize merging logic.
+  Future<TData> fetchMore<TData, TVars>({
+    required GraphQLRequest<TData, TVars> originalRequest,
+    required GraphQLRequest<TData, TVars> nextRequest,
+    TData? previousData,
+    TData Function(TData previousData, TData incomingData)? updateQuery,
+    CancelToken? cancelToken,
+  }) async {
+    final prev = previousData ?? cache.readQuery(originalRequest);
+    final incoming = await future(
+      nextRequest.copyWithFetchPolicy(FetchPolicy.networkOnly),
+      cancelToken: cancelToken,
+    );
+
+    if (prev == null) {
+      cache.writeQuery(originalRequest, incoming);
+      return incoming;
+    }
+
+    final merged = updateQuery != null
+        ? updateQuery(prev, incoming)
+        : autoMergeGraphQLData(originalRequest, prev, incoming);
+
+    cache.writeQuery(originalRequest, merged);
+    return merged;
   }
 
   /// Low-level: returns a [Stream] of raw [GraphQLResponse] for this request.
@@ -369,7 +425,7 @@ class GraphQLClient {
 
       final gqlReq = gql.Request(
         operation: gql.Operation(
-          document: parseString(req.document),
+          document: getParsedDocument(req.document),
           operationName: req.operationName,
         ),
         variables:
@@ -404,3 +460,67 @@ class GraphQLClient {
     }
   }
 }
+
+/// Helper to convert a typed data object (e.g. Freezed / JsonSerializable / Map) into a JSON map.
+Map<String, dynamic>? dataToMap(dynamic data) {
+  if (data == null) return null;
+  if (data is Map<String, dynamic>) return data;
+  if (data is Map) return Map<String, dynamic>.from(data);
+  try {
+    final dynamic res = (data as dynamic).toJson();
+    if (res is Map<String, dynamic>) return res;
+    if (res is Map) return Map<String, dynamic>.from(res);
+  } catch (_) {}
+  return null;
+}
+
+/// Recursively merges two JSON maps, automatically concatenating any matching List fields
+/// and merging nested Maps, while updating new page metadata (e.g. pageInfo, cursors).
+Map<String, dynamic> deepMergeJson(
+  Map<String, dynamic> prev,
+  Map<String, dynamic> incoming,
+) {
+  final result = Map<String, dynamic>.from(prev);
+  for (final entry in incoming.entries) {
+    final key = entry.key;
+    final nextVal = entry.value;
+    final prevVal = result[key];
+
+    if (prevVal == null) {
+      result[key] = nextVal;
+    } else if (prevVal is List && nextVal is List) {
+      result[key] = [...prevVal, ...nextVal];
+    } else if (prevVal is Map && nextVal is Map) {
+      result[key] = deepMergeJson(
+        Map<String, dynamic>.from(prevVal),
+        Map<String, dynamic>.from(nextVal),
+      );
+    } else {
+      result[key] = nextVal;
+    }
+  }
+  return result;
+}
+
+/// Automatically merges [previous] and [incoming] GraphQL query data objects by converting them
+/// to JSON, deeply concatenating list fields, and parsing back using [request.parseData].
+///
+/// If merging or parsing fails, [incoming] is returned as fallback.
+TData autoMergeGraphQLData<TData>(
+  GraphQLRequest<TData, dynamic> request,
+  TData previous,
+  TData incoming,
+) {
+  final prevMap = dataToMap(previous);
+  final nextMap = dataToMap(incoming);
+  if (prevMap == null || nextMap == null) {
+    return incoming;
+  }
+  try {
+    final mergedMap = deepMergeJson(prevMap, nextMap);
+    return request.parseData(mergedMap);
+  } catch (_) {
+    return incoming;
+  }
+}
+

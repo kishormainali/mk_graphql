@@ -41,6 +41,7 @@ class GeneratorOrchestrator {
     // between generated files are emitted as `package:$packageName/...`
     // instead of relative paths — stable regardless of nesting depth.
     String? packageName,
+    Map<String, String> customScalars = const {},
     bool useCache = true,
   }) {
     // Only process .graphql or .gql files
@@ -56,6 +57,7 @@ class GeneratorOrchestrator {
         schemaContent: schemaContent,
         sharedDir: sharedDir,
         packageName: packageName,
+        customScalars: customScalars,
       );
       final cached = GeneratorCache.get(cacheKey);
       if (cached != null) {
@@ -143,6 +145,7 @@ class GeneratorOrchestrator {
         enumNames,
         inputNames,
         scalarNames: scalarNames,
+        customScalars: customScalars,
         packageName: packageName,
         generatedDir: schemaGeneratedDir,
       );
@@ -177,6 +180,7 @@ class GeneratorOrchestrator {
         enumNames,
         inputNames,
         scalarNames: scalarNames,
+        customScalars: customScalars,
         packageName: packageName,
         generatedDir: schemaGeneratedDir,
       );
@@ -205,6 +209,7 @@ class GeneratorOrchestrator {
         objectTypes: parsed.objectTypes,
         enumNames: enumNames,
         inputNames: inputNames,
+        customScalars: customScalars,
       );
     }
 
@@ -262,10 +267,22 @@ class GeneratorOrchestrator {
         final varFields = <String, FieldTypeInfo>{};
         for (final v in op.variableDefinitions) {
           final rawVarName = v.variable.name.value;
-          varFields[rawVarName] = SchemaGenerator.parseFieldType(v.type,
-              enumNames: enumNames,
-              inputNames: inputNames,
-              scalarNames: scalarNames);
+          final typeInfo = SchemaGenerator.parseFieldType(
+            v.type,
+            enumNames: enumNames,
+            inputNames: inputNames,
+            scalarNames: scalarNames,
+            customScalars: customScalars,
+          );
+          final defVal = SchemaGenerator.formatDefaultValue(
+            v.defaultValue?.value,
+            dartType: typeInfo.dartType,
+          );
+          varFields[rawVarName] = FieldTypeInfo(
+            dartType: typeInfo.dartType,
+            isRequired: defVal == null && typeInfo.isRequired,
+            defaultValue: defVal,
+          );
         }
         final varBodyBuffer = StringBuffer();
         _generateFreezedClassWithTypes(
@@ -313,6 +330,8 @@ class GeneratorOrchestrator {
           final schemaFieldDef = schemaRootType?.fields
               .where((f) => f.name.value == sel.name.value)
               .firstOrNull;
+          final hasConditionalDirective = sel.directives.any(
+              (d) => d.name.value == 'include' || d.name.value == 'skip');
 
           if (sel.selectionSet != null) {
             final schemaTypeName = schemaFieldDef != null
@@ -328,6 +347,7 @@ class GeneratorOrchestrator {
               enumNames: enumNames,
               inputNames: inputNames,
               scalarNames: scalarNames,
+              customScalars: customScalars,
               schemaObjectTypesByName: schemaObjectTypesByName,
               fragmentsByName: fragmentsByName,
               fragmentModelCache: fragmentModelCache,
@@ -335,7 +355,8 @@ class GeneratorOrchestrator {
               fragmentsBuffer: fragmentsBuffer,
             );
 
-            final isRequired = schemaFieldDef?.type.isNonNull ?? false;
+            final isRequired = !hasConditionalDirective &&
+                (schemaFieldDef?.type.isNonNull ?? false);
             final dartType = schemaFieldDef != null
                 ? _formatTypeStructure(schemaFieldDef.type, targetModelName)
                 : targetModelName;
@@ -345,12 +366,16 @@ class GeneratorOrchestrator {
           } else {
             // Scalar / enum field at root level
             if (schemaFieldDef != null) {
-              rootFields[fieldName] = SchemaGenerator.parseFieldType(
+              final parsed = SchemaGenerator.parseFieldType(
                 schemaFieldDef.type,
                 enumNames: enumNames,
                 inputNames: inputNames,
                 scalarNames: scalarNames,
+                customScalars: customScalars,
               );
+              rootFields[fieldName] = hasConditionalDirective
+                  ? FieldTypeInfo(dartType: parsed.dartType, isRequired: false)
+                  : parsed;
             } else {
               rootFields[fieldName] = FieldTypeInfo(
                   dartType: _inferScalarType(fieldName), isRequired: false);
@@ -457,12 +482,21 @@ class GeneratorOrchestrator {
         fileOpExtensions.writeln('  /// Future execution for $methodName');
         fileOpExtensions.writeln('  Future<$modelClassName> $methodName({');
         for (final v in op.variableDefinitions) {
-          final varName = v.variable.name.value.camelCase;
+          final rawVarName = v.variable.name.value;
+          final varName = SchemaGenerator.safeIdentifier(rawVarName);
           final typeInfo = SchemaGenerator.parseFieldType(v.type,
               enumNames: enumNames,
               inputNames: inputNames,
-              scalarNames: scalarNames);
-          if (typeInfo.isRequired) {
+              scalarNames: scalarNames,
+              customScalars: customScalars);
+          final defVal = SchemaGenerator.formatDefaultValue(
+            v.defaultValue?.value,
+            dartType: typeInfo.dartType,
+          );
+          if (defVal != null) {
+            fileOpExtensions
+                .writeln('    ${typeInfo.dartType} $varName = $defVal,');
+          } else if (typeInfo.isRequired) {
             fileOpExtensions
                 .writeln('    required ${typeInfo.dartType} $varName,');
           } else {
@@ -470,6 +504,7 @@ class GeneratorOrchestrator {
           }
         }
         fileOpExtensions.writeln('    FetchPolicy? fetchPolicy,');
+        fileOpExtensions.writeln('    ErrorPolicy? errorPolicy,');
         fileOpExtensions.writeln('    Map<String, String>? headers,');
         fileOpExtensions.writeln('    CancelToken? cancelToken,');
         fileOpExtensions.writeln('  }) {');
@@ -477,7 +512,8 @@ class GeneratorOrchestrator {
         if (hasArgs) {
           fileOpExtensions.writeln('      variables: $varsClassName(');
           for (final v in op.variableDefinitions) {
-            final varName = v.variable.name.value.camelCase;
+            final varName =
+                SchemaGenerator.safeIdentifier(v.variable.name.value);
             fileOpExtensions.writeln('        $varName: $varName,');
           }
           fileOpExtensions.writeln('      ),');
@@ -485,6 +521,7 @@ class GeneratorOrchestrator {
           fileOpExtensions.writeln('      variables: const $varsClassName(),');
         }
         fileOpExtensions.writeln('      fetchPolicy: fetchPolicy,');
+        fileOpExtensions.writeln('      errorPolicy: errorPolicy,');
         fileOpExtensions.writeln('      headers: headers,');
         fileOpExtensions.writeln('      cancelToken: cancelToken,');
         fileOpExtensions.writeln('    ));');
@@ -496,12 +533,21 @@ class GeneratorOrchestrator {
         fileOpExtensions
             .writeln('  Stream<$modelClassName> ${methodName}Stream({');
         for (final v in op.variableDefinitions) {
-          final varName = v.variable.name.value.camelCase;
+          final rawVarName = v.variable.name.value;
+          final varName = SchemaGenerator.safeIdentifier(rawVarName);
           final typeInfo = SchemaGenerator.parseFieldType(v.type,
               enumNames: enumNames,
               inputNames: inputNames,
-              scalarNames: scalarNames);
-          if (typeInfo.isRequired) {
+              scalarNames: scalarNames,
+              customScalars: customScalars);
+          final defVal = SchemaGenerator.formatDefaultValue(
+            v.defaultValue?.value,
+            dartType: typeInfo.dartType,
+          );
+          if (defVal != null) {
+            fileOpExtensions
+                .writeln('    ${typeInfo.dartType} $varName = $defVal,');
+          } else if (typeInfo.isRequired) {
             fileOpExtensions
                 .writeln('    required ${typeInfo.dartType} $varName,');
           } else {
@@ -509,6 +555,7 @@ class GeneratorOrchestrator {
           }
         }
         fileOpExtensions.writeln('    FetchPolicy? fetchPolicy,');
+        fileOpExtensions.writeln('    ErrorPolicy? errorPolicy,');
         fileOpExtensions.writeln('    Map<String, String>? headers,');
         fileOpExtensions.writeln('    CancelToken? cancelToken,');
         fileOpExtensions.writeln('  }) {');
@@ -516,7 +563,8 @@ class GeneratorOrchestrator {
         if (hasArgs) {
           fileOpExtensions.writeln('      variables: $varsClassName(');
           for (final v in op.variableDefinitions) {
-            final varName = v.variable.name.value.camelCase;
+            final varName =
+                SchemaGenerator.safeIdentifier(v.variable.name.value);
             fileOpExtensions.writeln('        $varName: $varName,');
           }
           fileOpExtensions.writeln('      ),');
@@ -524,6 +572,7 @@ class GeneratorOrchestrator {
           fileOpExtensions.writeln('      variables: const $varsClassName(),');
         }
         fileOpExtensions.writeln('      fetchPolicy: fetchPolicy,');
+        fileOpExtensions.writeln('      errorPolicy: errorPolicy,');
         fileOpExtensions.writeln('      headers: headers,');
         fileOpExtensions.writeln('    ));');
         fileOpExtensions.writeln('  }');
@@ -536,18 +585,28 @@ class GeneratorOrchestrator {
         fileOpExtensions
             .writeln('  Future<$modelClassName> $refetchMethodName({');
         for (final v in op.variableDefinitions) {
-          final varName = v.variable.name.value.camelCase;
+          final rawVarName = v.variable.name.value;
+          final varName = SchemaGenerator.safeIdentifier(rawVarName);
           final typeInfo = SchemaGenerator.parseFieldType(v.type,
               enumNames: enumNames,
               inputNames: inputNames,
-              scalarNames: scalarNames);
-          if (typeInfo.isRequired) {
+              scalarNames: scalarNames,
+              customScalars: customScalars);
+          final defVal = SchemaGenerator.formatDefaultValue(
+            v.defaultValue?.value,
+            dartType: typeInfo.dartType,
+          );
+          if (defVal != null) {
+            fileOpExtensions
+                .writeln('    ${typeInfo.dartType} $varName = $defVal,');
+          } else if (typeInfo.isRequired) {
             fileOpExtensions
                 .writeln('    required ${typeInfo.dartType} $varName,');
           } else {
             fileOpExtensions.writeln('    ${typeInfo.dartType}? $varName,');
           }
         }
+        fileOpExtensions.writeln('    ErrorPolicy? errorPolicy,');
         fileOpExtensions.writeln('    Map<String, String>? headers,');
         fileOpExtensions.writeln('    CancelToken? cancelToken,');
         fileOpExtensions.writeln('  }) {');
@@ -555,13 +614,15 @@ class GeneratorOrchestrator {
         if (hasArgs) {
           fileOpExtensions.writeln('      variables: $varsClassName(');
           for (final v in op.variableDefinitions) {
-            final varName = v.variable.name.value.camelCase;
+            final varName =
+                SchemaGenerator.safeIdentifier(v.variable.name.value);
             fileOpExtensions.writeln('        $varName: $varName,');
           }
           fileOpExtensions.writeln('      ),');
         } else {
           fileOpExtensions.writeln('      variables: const $varsClassName(),');
         }
+        fileOpExtensions.writeln('      errorPolicy: errorPolicy,');
         fileOpExtensions.writeln('      headers: headers,');
         fileOpExtensions.writeln('      cancelToken: cancelToken,');
         fileOpExtensions.writeln('    ));');
@@ -859,12 +920,18 @@ class GeneratorOrchestrator {
         final dartName = SchemaGenerator.safeIdentifier(rawName);
         final keyArgs = <String>[
           if (dartName != rawName) "name: '$rawName'",
-          if (!includeIfNull && !typeInfo.isRequired) 'includeIfNull: false',
+          if (!includeIfNull &&
+              !typeInfo.isRequired &&
+              typeInfo.defaultValue == null)
+            'includeIfNull: false',
         ];
         if (keyArgs.isNotEmpty) {
           buffer.writeln('    @JsonKey(${keyArgs.join(', ')})');
         }
-        if (typeInfo.isRequired) {
+        if (typeInfo.defaultValue != null) {
+          buffer.writeln(
+              '    @Default(${typeInfo.defaultValue}) ${typeInfo.dartType} $dartName,');
+        } else if (typeInfo.isRequired) {
           buffer.writeln('    required ${typeInfo.dartType} $dartName,');
         } else {
           buffer.writeln('    ${typeInfo.dartType}? $dartName,');
@@ -895,6 +962,7 @@ class GeneratorOrchestrator {
     buffer.writeln('  const factory $reqClassName({');
     buffer.writeln('    required $varsClassName variables,');
     buffer.writeln('    FetchPolicy? fetchPolicy,');
+    buffer.writeln('    ErrorPolicy? errorPolicy,');
     buffer.writeln('    Map<String, String>? headers,');
     buffer.writeln('    CancelToken? cancelToken,');
     buffer.writeln('    $modelClassName? optimisticResponse,');
@@ -920,6 +988,7 @@ class GeneratorOrchestrator {
     buffer.writeln('  $reqClassName copyWithRequest({');
     buffer.writeln('    $varsClassName? variables,');
     buffer.writeln('    FetchPolicy? fetchPolicy,');
+    buffer.writeln('    ErrorPolicy? errorPolicy,');
     buffer.writeln('    Map<String, String>? headers,');
     buffer.writeln('    CancelToken? cancelToken,');
     buffer.writeln('    $modelClassName? optimisticResponse,');
@@ -927,6 +996,7 @@ class GeneratorOrchestrator {
     buffer.writeln('      copyWith(');
     buffer.writeln('        variables: variables ?? this.variables,');
     buffer.writeln('        fetchPolicy: fetchPolicy ?? this.fetchPolicy,');
+    buffer.writeln('        errorPolicy: errorPolicy ?? this.errorPolicy,');
     buffer.writeln('        headers: headers ?? this.headers,');
     buffer.writeln('        cancelToken: cancelToken ?? this.cancelToken,');
     buffer.writeln(
@@ -1036,6 +1106,7 @@ class GeneratorOrchestrator {
     required Set<String> enumNames,
     required Set<String> inputNames,
     required Set<String> scalarNames,
+    Map<String, String> customScalars = const {},
     required Map<String, ObjectTypeDefinitionNode> schemaObjectTypesByName,
     required Map<String, FragmentDefinitionNode> fragmentsByName,
     required Map<String, String> fragmentModelCache,
@@ -1052,6 +1123,7 @@ class GeneratorOrchestrator {
           enumNames: enumNames,
           inputNames: inputNames,
           scalarNames: scalarNames,
+          customScalars: customScalars,
           schemaObjectTypesByName: schemaObjectTypesByName,
           fragmentsByName: fragmentsByName,
           fragmentModelCache: fragmentModelCache,
@@ -1075,6 +1147,8 @@ class GeneratorOrchestrator {
       final childSchemaFieldDef = schemaType?.fields
           .where((f) => f.name.value == child.name.value)
           .firstOrNull;
+      final hasConditionalDirective = child.directives.any(
+          (d) => d.name.value == 'include' || d.name.value == 'skip');
 
       if (child.selectionSet != null) {
         final childSchemaTypeName = childSchemaFieldDef != null
@@ -1089,25 +1163,31 @@ class GeneratorOrchestrator {
           enumNames: enumNames,
           inputNames: inputNames,
           scalarNames: scalarNames,
+          customScalars: customScalars,
           schemaObjectTypesByName: schemaObjectTypesByName,
           fragmentsByName: fragmentsByName,
           fragmentModelCache: fragmentModelCache,
           fragmentClassNames: fragmentClassNames,
           fragmentsBuffer: fragmentsBuffer,
         );
-        final isRequired = childSchemaFieldDef?.type.isNonNull ?? false;
+        final isRequired = !hasConditionalDirective &&
+            (childSchemaFieldDef?.type.isNonNull ?? false);
         final dartType = childSchemaFieldDef != null
             ? _formatTypeStructure(childSchemaFieldDef.type, childModel)
             : childModel;
         fields[childName] =
             FieldTypeInfo(dartType: dartType, isRequired: isRequired);
       } else if (childSchemaFieldDef != null) {
-        fields[childName] = SchemaGenerator.parseFieldType(
+        final parsed = SchemaGenerator.parseFieldType(
           childSchemaFieldDef.type,
           enumNames: enumNames,
           inputNames: inputNames,
           scalarNames: scalarNames,
+          customScalars: customScalars,
         );
+        fields[childName] = hasConditionalDirective
+            ? FieldTypeInfo(dartType: parsed.dartType, isRequired: false)
+            : parsed;
       } else {
         fields[childName] = FieldTypeInfo(
             dartType: _inferScalarType(childName), isRequired: false);
@@ -1130,6 +1210,7 @@ class GeneratorOrchestrator {
     required Set<String> enumNames,
     required Set<String> inputNames,
     required Set<String> scalarNames,
+    Map<String, String> customScalars = const {},
     required Map<String, ObjectTypeDefinitionNode> schemaObjectTypesByName,
     required Map<String, FragmentDefinitionNode> fragmentsByName,
     required Map<String, String> fragmentModelCache,
@@ -1154,6 +1235,7 @@ class GeneratorOrchestrator {
       enumNames: enumNames,
       inputNames: inputNames,
       scalarNames: scalarNames,
+      customScalars: customScalars,
       schemaObjectTypesByName: schemaObjectTypesByName,
       fragmentsByName: fragmentsByName,
       fragmentModelCache: fragmentModelCache,

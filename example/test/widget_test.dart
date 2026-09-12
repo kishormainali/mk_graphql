@@ -7,8 +7,8 @@ void main() {
     await configureDependencies();
   });
 
-  testWidgets('CountriesApp mounts cleanly', (WidgetTester tester) async {
-    await tester.pumpWidget(const CountriesApp());
-    expect(find.byType(CountriesApp), findsOneWidget);
+  testWidgets('AniListApp mounts cleanly', (WidgetTester tester) async {
+    await tester.pumpWidget(const AniListApp());
+    expect(find.byType(AniListApp), findsOneWidget);
   });
 }

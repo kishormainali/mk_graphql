@@ -1,0 +1,67 @@
+query GetAnimePage(
+  $page: Int
+  $perPage: Int
+  $search: String
+  $sort: [MediaSort]
+  $genre: String
+) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo {
+      total
+      perPage
+      currentPage
+      lastPage
+      hasNextPage
+    }
+    media(type: ANIME, search: $search, sort: $sort, genre: $genre) {
+      id
+      title {
+        romaji
+        english
+        native
+      }
+      coverImage {
+        large
+        extraLarge
+        color
+      }
+      genres
+      averageScore
+      episodes
+      seasonYear
+      status
+      format
+    }
+  }
+}
+
+query GetAnimeDetails($id: Int) {
+  Media(id: $id, type: ANIME) {
+    id
+    title {
+      romaji
+      english
+      native
+    }
+    bannerImage
+    coverImage {
+      extraLarge
+      large
+      color
+    }
+    description(asHtml: false)
+    genres
+    averageScore
+    episodes
+    duration
+    status
+    season
+    seasonYear
+    popularity
+    favourites
+  }
+}
+
+query GetGenres {
+  GenreCollection
+}

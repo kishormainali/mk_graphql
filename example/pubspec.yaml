@@ -1,5 +1,5 @@
 name: example
-description: Complete SpaceX Flutter example for mk_graphql with auto_route and injectable.
+description: Complete AniList Flutter example for mk_graphql with auto_route and injectable.
 version: 1.0.0
 publish_to: none
 
@@ -19,10 +19,13 @@ dependencies:
   auto_route: ^11.1.0
   injectable: ^3.0.0
   get_it: ^9.2.1
+  flutter_bloc: ^9.1.1
+  bloc_concurrency: ^0.3.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  bloc_test: ^10.0.0
   mk_graphql_generator: ^1.0.0
   build_runner: ^2.16.1
   auto_route_generator: ^10.6.0

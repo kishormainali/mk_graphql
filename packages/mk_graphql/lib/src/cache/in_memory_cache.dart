@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import '../core/request.dart';
 import 'cache.dart';
 import 'record_source.dart';
@@ -29,7 +30,26 @@ class InMemoryCache implements Cache {
 
   String _requestKey(GraphQLRequest req) {
     final vars = req.toJsonVars(req.variables);
-    return '${req.operationName}:${req.document.hashCode}:${vars.toString()}';
+    final sortedVars = _canonicalJson(vars);
+    return '${req.operationName}:${req.document.hashCode}:$sortedVars';
+  }
+
+  static String _canonicalJson(dynamic value) {
+    if (value is Map) {
+      final sortedKeys = value.keys.map((e) => e.toString()).toList()..sort();
+      final buffer = StringBuffer('{');
+      for (var i = 0; i < sortedKeys.length; i++) {
+        if (i > 0) buffer.write(',');
+        final k = sortedKeys[i];
+        buffer.write('"${k}":${_canonicalJson(value[k])}');
+      }
+      buffer.write('}');
+      return buffer.toString();
+    } else if (value is List) {
+      return '[${value.map(_canonicalJson).join(',')}]';
+    } else {
+      return jsonEncode(value);
+    }
   }
 
   @override
@@ -83,6 +103,13 @@ class InMemoryCache implements Cache {
   @override
   void evict(String key) {
     _store.delete(key);
+  }
+
+  @override
+  void evictQuery<TData, TVars>(GraphQLRequest<TData, TVars> request) {
+    final queryKey = 'ROOT_QUERY:${_requestKey(request)}';
+    evict(queryKey);
+    _notifyWatchers(request);
   }
 
   @override

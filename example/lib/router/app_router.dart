@@ -9,15 +9,7 @@ class AppRouter extends RootStackRouter {
 
   @override
   List<AutoRoute> get routes => [
-    AutoRoute(
-      page: HomeRoute.page,
-      initial: true,
-      children: [
-        AutoRoute(page: CountriesRoute.page, initial: true),
-        AutoRoute(page: ContinentsRoute.page),
-        AutoRoute(page: LanguagesRoute.page),
-      ],
-    ),
-    AutoRoute(page: CountryDetailsRoute.page),
+    AutoRoute(page: AnimeListRoute.page, initial: true),
+    AutoRoute(page: AnimeDetailsRoute.page, path: '/anime/:id'),
   ];
 }

@@ -1,4 +1,14 @@
+## 1.1.0
+
+- **Schema Introspection CLI (`dart run mk_graphql_generator:introspect`)**: Built-in CLI command to introspect remote GraphQL endpoints via HTTP into clean, standard GraphQL SDL (`.graphql` or `.gql`).
+- **Automatic `build.yaml` Path Resolution**: When `--output` / `-o` is omitted, the introspection CLI automatically detects and uses the configured `schema_path` from `build.yaml`.
+- **AST-Based GraphQL Formatter (`GraphQLFormatter`)**: Added `formatGraphQL` and `formatGraphQLString` adhering strictly to GraphQL specifications and Prettier formatting rules (indented multiline arguments, clean descriptions, enums, interfaces, unions, directives, and operations).
+- **`ErrorPolicy` Code Generation**: Request classes, copy constructors, and typed client extensions now include `ErrorPolicy? errorPolicy`.
+- **Dart Reserved Keyword Mapping**: Automatically sanitizes field names colliding with Dart reserved keywords to `g{Keyword}` with `@JsonKey(name: raw)`.
+- **Directives & Default Values**: Handles `@include` and `@skip` directives in response models, making fields nullable, and emits `@Default(...)` in variables for arguments with default values.
+
 ## 1.0.1
+
 
 - **Breaking (generated output): response models are now always generated per-operation**, scoped to exactly the fields a query/mutation selected, instead of ever reusing a shared schema-wide `{Type}Model` for responses. Two operations selecting different fields of the same GraphQL type now reliably get correctly-shaped, independently-named classes (e.g. `GetUserModel`/`GetUserProfileModel`) rather than risking one operation's selection silently missing a field the shared model required.
 - **Fragments are now the sanctioned way to share a response model** across operations: a selection that is nothing but a named fragment spread (`{ ...UserFields }`) reuses one generated `{Fragment}Fragment` class everywhere it's spread; mixing a spread with extra fields flattens everything into that operation's own scoped model instead of silently dropping fields.

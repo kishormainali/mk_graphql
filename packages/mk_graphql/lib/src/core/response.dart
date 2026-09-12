@@ -34,6 +34,25 @@ class GraphQLResponse<TData> {
   bool get hasErrors =>
       (errors != null && errors!.isNotEmpty) || linkException != null;
 
+  /// Whether this response contains validation errors.
+  bool get hasValidationErrors => validationException != null;
+
+  /// Returns [ValidationException] if this response contains validation errors, or null.
+  ValidationException? get validationException {
+    if (errors != null && errors!.isNotEmpty) {
+      final ex = GraphQLExceptionExtension.fromGraphQLErrors(errors!);
+      if (ex is ValidationException) return ex;
+    }
+    if (linkException is ValidationException) {
+      return linkException as ValidationException;
+    }
+    return null;
+  }
+
+  /// Normalized map of validation errors by field, or null if no validation errors exist.
+  Map<String, List<String>>? get validationErrors =>
+      validationException?.validationErrors;
+
   GraphQLResponse<TData> copyWith({
     TData? data,
     List<GraphQLError>? errors,

@@ -24,6 +24,9 @@ abstract class Cache {
 
   void evict(String key);
 
+  /// Evicts the cached root query record corresponding to [request].
+  void evictQuery<TData, TVars>(GraphQLRequest<TData, TVars> request);
+
   void clear();
 
   Stream<TData?> watchQuery<TData, TVars>(GraphQLRequest<TData, TVars> request);

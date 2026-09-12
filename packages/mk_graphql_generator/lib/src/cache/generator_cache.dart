@@ -7,7 +7,7 @@ import '../generator/orchestrator/generator_orchestrator.dart';
 /// Cache manager for GraphQL code generation to avoid re-generating
 /// unchanged operations and schemas.
 class GeneratorCache {
-  static const String version = 'v8';
+  static const String version = 'v9';
   static String cacheDir = p.join('.dart_tool', 'mk_graphql_cache');
 
   static final Map<String, GeneratedBundle> _memory = {};
@@ -19,7 +19,12 @@ class GeneratorCache {
     String? schemaContent,
     String? sharedDir,
     String? packageName,
+    Map<String, String> customScalars = const {},
   }) {
+    final scalarsKey = customScalars.entries
+        .map((e) => '${e.key}:${e.value}')
+        .toList()
+      ..sort();
     final rawKey = [
       version,
       p.normalize(inputPath),
@@ -27,6 +32,7 @@ class GeneratorCache {
       schemaContent ?? '',
       sharedDir ?? '',
       packageName ?? '',
+      scalarsKey.join(','),
     ].join('::');
 
     final bytes = utf8.encode(rawKey);

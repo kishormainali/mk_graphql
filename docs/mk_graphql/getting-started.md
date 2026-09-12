@@ -1,21 +1,29 @@
 # mk_graphql — Getting Started
 
-`mk_graphql` is the runtime GraphQL client. It executes typed `GraphQLRequest`s (normally produced by [`mk_graphql_generator`](../mk_graphql_generator/getting-started.md)), manages a normalized cache, and composes a link pipeline for auth, logging, HTTP, SSE, and WebSocket transports.
+`mk_graphql` is the runtime GraphQL client for Dart & Flutter. It executes typed `GraphQLRequest`s (produced by [`mk_graphql_generator`](../mk_graphql_generator/getting-started.md)), manages a normalized cache with canonical key ordering, composes a link pipeline for auth, logging, HTTP, SSE, and WebSocket transports, and provides automatic pagination and validation error handling.
 
-## Install
+---
+
+## Step 1: Install Dependencies
+
+In your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  mk_graphql: ^1.0.0
+  flutter:
+    sdk: flutter
+  mk_graphql: ^1.1.0
 ```
 
+
+Run:
 ```bash
 flutter pub get
 ```
 
-You'll almost always pair this with the generator, so also see [mk_graphql_generator: Getting Started](../mk_graphql_generator/getting-started.md) unless you intend to hand-write `GraphQLRequest` subclasses.
+---
 
-## Create a client
+## Step 2: Create a `GraphQLClient`
 
 ```dart
 import 'package:mk_graphql/mk_graphql.dart';
@@ -23,58 +31,144 @@ import 'package:mk_graphql/mk_graphql.dart';
 final client = GraphQLClient(
   url: 'https://api.example.com/graphql',
 
-  // Optional: WebSocket or SSE endpoint for subscriptions.
-  wsUrl: 'wss://api.example.com/graphql',
-  // sseUrl: 'https://api.example.com/graphql/sse',
+  // Optional: WebSocket or SSE endpoint for subscriptions
+  sseUrl: 'https://api.example.com/graphql/sse',
+  // wsUrl: 'wss://api.example.com/graphql',
 
-  // Optional: auth headers attached to every request.
+  // Optional: auth headers attached to every request
   tokenHeader: () async {
     final token = await getStoredToken();
     return token != null ? {'Authorization': 'Bearer $token'} : {};
   },
 
-  // Optional: called on a 401 to refresh and retry once.
-  onTokenRefresh: (refreshLink) async {
+  // Optional: called on 401 response to refresh token and retry
+  onTokenRefresh: (dioLink) async {
     final newToken = await refreshUserToken();
     return newToken != null ? {'Authorization': 'Bearer $newToken'} : null;
   },
 
-  // Optional: default policy applied when a request doesn't set its own.
+  // Optional: default fetch policy (defaults to FetchPolicy.noCache)
   defaultFetchPolicy: FetchPolicy.cacheFirst,
+
+  // Optional: default error policy (defaults to ErrorPolicy.none)
+  defaultErrorPolicy: ErrorPolicy.none,
 );
 ```
 
-`GraphQLClient` internally builds this pipeline (skipping any stage whose inputs weren't provided):
+### Internal Link Pipeline
+
+`GraphQLClient` automatically composes the following link pipeline:
 
 ```
 AuthLink?  →  TypenameLink?  →  LoggerLink  →  split(subscription?, WebSocketLink|SseLink, DioLink)
 ```
 
-See [Link Pipeline](links.md) for what each stage does and how to replace pieces of it.
+See [Link Pipeline](links.md) for details on customizing links or using `GraphQLClient.fromLink(...)`.
 
-## Run a query
+---
 
-Given a generated request (see the generator docs for how `GetUserReq`/`GetUserVars` come to exist):
+## Step 3: Run Queries & Mutations
 
+### Using `client.future`
 ```dart
 final user = await client.future(
   GetUserReq(variables: const GetUserVars(id: '123')),
 );
+print(user.name);
 ```
 
-`future` throws a typed `GraphQLException` subclass on any error — see [Error Handling](client-and-requests.md#errors) — so a plain `try`/`catch` is all you need:
+### Direct Request Extension
+```dart
+final req = GetUserReq(variables: const GetUserVars(id: '123'));
+final user = await req.execute(client);
+```
+
+---
+
+## Step 4: Handle Errors & Validation
+
+`client.future` and `req.execute` throw a typed `GraphQLException` subclass on error:
 
 ```dart
 try {
-  final user = await client.future(GetUserReq(variables: const GetUserVars(id: '123')));
+  final user = await client.future(myReq);
+} on ValidationException catch (e) {
+  // Field-level validation errors from Apollo, Laravel Lighthouse, NestJS, Spring DGS
+  print('Errors: ${e.validationErrors}');
+  if (e.hasError('email')) {
+    showFieldError('email', e.getFirstError('email')!);
+  }
 } on UnAuthorizedException {
-  // redirect to login
+  redirectToLogin();
+} on NetworkException {
+  showOfflineBanner();
 } on GraphQLException catch (e) {
-  showError(e.message);
+  showToast(e.message);
 }
 ```
 
-## Stream a query or subscription
+See [Client, Requests & Responses](client-and-requests.md#errors) for all exception types.
+
+---
+
+## Step 5: Refetching Queries
+
+To bypass cache and fetch fresh network data (updating the cache in-place):
+
+```dart
+// Client API
+final freshData = await client.refetch(myReq);
+
+// Request API
+final freshData2 = await myReq.refetch(client);
+```
+
+---
+
+## Step 6: Automatic Pagination (No Manual Append Needed)
+
+### Using `client.fetchMore` / `req.fetchMore`
+Automatically merges response lists and Relay connections, updating the cache under the initial query:
+
+```dart
+final mergedData = await client.fetchMore(
+  originalRequest: page1Req,
+  nextRequest: page2Req,
+);
+
+// Any active watchers on page1Req immediately receive the combined dataset
+```
+
+### Using `GraphQLPaginator`
+```dart
+final paginator = client.paginatePage(
+  initialRequest: getItemsReq,
+  getItems: (data) => data.items,
+  updatePage: (vars, nextPage) => vars.copyWith(page: nextPage),
+  pageSize: 20,
+);
+
+// 1. Initial page
+final initialItems = await paginator.loadInitial();
+
+// 2. Next page (returns complete accumulated list)
+final allLoadedItems = await paginator.loadNext();
+
+// 3. Dynamically apply filters / search (restarts page 1 without tearing down streams)
+paginator.applyVariables((vars) => vars.copyWith(search: 'keyword'));
+
+// 4. Reactively stream items
+paginator.itemsStream.listen((items) {
+  print('Items count: ${items.length}');
+});
+```
+
+See [Pagination Guide](pagination.md) for Relay cursor, offset/limit patterns, and `flutter_bloc` integration (`emit.forEach`).
+
+
+---
+
+## Step 7: Stream Subscriptions
 
 ```dart
 client.stream(mySubscriptionRequest).listen((data) {
@@ -82,11 +176,11 @@ client.stream(mySubscriptionRequest).listen((data) {
 });
 ```
 
-`stream` is also how you observe policy-driven emissions (e.g. `FetchPolicy.cacheAndNetwork` emits the cached value first, then the network value).
+---
 
 ## Next
 
-- [Client, Requests & Responses](client-and-requests.md) — the full API surface, `FetchPolicy`, cancellation, optimistic responses.
+- [Client, Requests & Responses](client-and-requests.md) — the full API surface, `FetchPolicy`, `ErrorPolicy`, cancellation, optimistic responses.
 - [Caching](caching.md) — how `readQuery`/`writeQuery`/`watchQuery` work.
-- [Pagination](pagination.md) — `GraphQLPaginator` for infinite lists.
+- [Pagination](pagination.md) — `GraphQLPaginator` and `fetchMore` in depth.
 - [Link Pipeline](links.md) — auth refresh, logging, uploads, batching.

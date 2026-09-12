@@ -1,6 +1,7 @@
 library mk_graphql;
 
 export 'src/core/fetch_policy.dart';
+export 'src/core/error_policy.dart';
 export 'src/core/error.dart';
 export 'src/core/request.dart';
 export 'src/core/response.dart';

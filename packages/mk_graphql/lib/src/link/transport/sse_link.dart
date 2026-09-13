@@ -8,6 +8,7 @@ import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 import 'dio_link.dart';
 import '../auth/auth_link.dart';
+import '../../client/client.dart';
 import '../../core/error.dart';
 
 /// Terminating [Link] for GraphQL over Server-Sent Events (SSE).
@@ -23,6 +24,9 @@ class SseLink extends Link {
   final bool useGetForQueries;
   final ResponseParser parser;
 
+  /// Internal [GraphQLClient] (no auth link) used exclusively for refresh requests.
+  late final GraphQLClient _refreshClient;
+
   SseLink(
     this.url, {
     dio.Dio? client,
@@ -31,7 +35,9 @@ class SseLink extends Link {
     this.onTokenRefresh,
     this.useGetForQueries = false,
     this.parser = const ResponseParser(),
-  }) : client = client ?? dio.Dio();
+  }) : client = client ?? dio.Dio() {
+    _refreshClient = GraphQLClient.fromLink(DioLink(url, client: this.client));
+  }
 
   @override
   Stream<Response> request(Request req, [NextLink? forward]) async* {
@@ -101,8 +107,7 @@ class SseLink extends Link {
       try {
         dioResponse = await sendRequest(headers);
         if (dioResponse.statusCode == 401 && onTokenRefresh != null) {
-          final newHeaders =
-              await onTokenRefresh!(DioLink(url, client: client));
+          final newHeaders = await onTokenRefresh!(_refreshClient);
           if (newHeaders != null && newHeaders.isNotEmpty) {
             headers = {
               ...headers,
@@ -113,8 +118,7 @@ class SseLink extends Link {
         }
       } on dio.DioException catch (e) {
         if (e.response?.statusCode == 401 && onTokenRefresh != null) {
-          final newHeaders =
-              await onTokenRefresh!(DioLink(url, client: client));
+          final newHeaders = await onTokenRefresh!(_refreshClient);
           if (newHeaders != null && newHeaders.isNotEmpty) {
             headers = {
               ...headers,

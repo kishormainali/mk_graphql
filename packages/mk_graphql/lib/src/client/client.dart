@@ -83,7 +83,8 @@ class GraphQLClient {
     /// Returns whether the current token is expired. Triggers proactive refresh.
     IsTokenExpiredCallback? isTokenExpired,
 
-    /// Performs token refresh. Receives the refresh [DioLink], returns new headers.
+    /// Performs token refresh. Receives a plain [GraphQLClient] (no auth link
+    /// attached) that can be used to run the refresh request, and returns new headers.
     OnRefreshCallback? onTokenRefresh,
 
     /// Called when the token is revoked.

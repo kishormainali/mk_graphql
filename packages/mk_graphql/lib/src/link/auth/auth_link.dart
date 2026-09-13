@@ -6,6 +6,7 @@ import 'package:gql_link/gql_link.dart';
 import '../transport/dio_link.dart';
 import '../logging/logger.dart';
 
+import '../../client/client.dart';
 import '../../core/error.dart';
 
 /// Callback that supplies the current access-token headers (e.g. Authorization).
@@ -13,11 +14,12 @@ import '../../core/error.dart';
 typedef AccessTokenCallback = FutureOr<Map<String, String>?> Function();
 
 /// Callback invoked when the access token is expired.
-/// Receives the [DioLink] that can be used to perform the refresh request.
+/// Receives a plain [GraphQLClient] (no auth link attached) that can be used
+/// to perform the refresh request via its normal typed API (e.g. `refreshClient.future(...)`).
 /// Should return new headers to use (e.g. `{'Authorization': 'Bearer <newToken>'}`),
 /// or return null / throw to trigger token revocation.
 typedef OnRefreshCallback = FutureOr<Map<String, String>?> Function(
-    DioLink refreshLink);
+    GraphQLClient refreshClient);
 
 /// Optional callback that returns whether the current token is expired.
 /// If omitted, expiry is not checked proactively — only unauthorized responses trigger refresh.
@@ -31,7 +33,7 @@ typedef OnRevokeTokenCallback = void Function();
 /// A [Link] that injects authentication headers into every request.
 ///
 /// If the server responds with an unauthorized error and [onTokenRefresh] is
-/// provided, it will attempt to refresh the token via [_refreshLink] and retry
+/// provided, it will attempt to refresh the token via [_refreshClient] and retry
 /// the request once. If the refresh fails, [onRevokeToken] and all registered
 /// [_revokeTokenListeners] are called.
 ///
@@ -47,7 +49,8 @@ class AuthLink extends Link {
     this.isTokenExpired,
     this.onTokenRefresh,
     this.onRevokeToken,
-  }) : _refreshLink = DioLink(url, client: dio ?? Dio());
+  }) : _refreshClient =
+            GraphQLClient.fromLink(DioLink(url, client: dio ?? Dio()));
 
   /// The GraphQL endpoint URL — also used for token refresh requests.
   final String url;
@@ -64,8 +67,8 @@ class AuthLink extends Link {
   /// Called when the token is revoked.
   final OnRevokeTokenCallback? onRevokeToken;
 
-  /// Internal [DioLink] used exclusively for refresh requests.
-  late final DioLink _refreshLink;
+  /// Internal [GraphQLClient] (no auth link) used exclusively for refresh requests.
+  late final GraphQLClient _refreshClient;
 
   /// Concurrent-refresh lock.
   Future<Map<String, String>?>? _ongoingRefresh;
@@ -191,7 +194,7 @@ class AuthLink extends Link {
 
   Future<void> _runRefresh(Completer<Map<String, String>?> completer) async {
     try {
-      final newHeaders = await onTokenRefresh!(_refreshLink);
+      final newHeaders = await onTokenRefresh!(_refreshClient);
       Logger.s('Access token refreshed successfully.', tag: 'AuthLink');
       completer.complete(newHeaders);
     } catch (exception, stackTrace) {

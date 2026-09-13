@@ -1,3 +1,7 @@
+## 1.2.0
+
+- **Breaking**: `OnRefreshCallback` (used by `onTokenRefresh` on `GraphQLClient`, `AuthLink`, and `SseLink`) now receives a plain `GraphQLClient` (no auth link attached) instead of a raw `DioLink`, so refresh logic can use the typed client API (`refreshClient.future(...)`, `.stream(...)`) instead of hand-rolling a raw HTTP request.
+
 ## 1.1.0
 
 - **Dynamic Pagination Variables**: Added `applyVariables()` and `updateVariables()` to `GraphQLPaginator` to dynamically update active variables (e.g. search queries, genre/status filters, sorting) on page 1 without recreating the paginator or wiping other active filter criteria.

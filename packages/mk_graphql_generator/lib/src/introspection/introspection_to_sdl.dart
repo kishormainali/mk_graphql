@@ -2,7 +2,6 @@ import 'package:gql/ast.dart';
 import 'package:gql/language.dart';
 import 'package:mk_graphql_generator/src/formatter/graphql_formatter.dart';
 
-
 /// Converts a GraphQL introspection JSON result map into standard GraphQL SDL string.
 String introspectionToSdl(Map<String, dynamic> introspectionJson) {
   final dynamic root = introspectionJson['data'] ?? introspectionJson;
@@ -56,7 +55,8 @@ String introspectionToSdl(Map<String, dynamic> introspectionJson) {
   for (final rawType in rawTypes) {
     if (rawType is! Map<String, dynamic>) continue;
     final name = rawType['name'] as String?;
-    if (name == null || name.startsWith('__')) continue; // Skip introspection internals
+    if (name == null || name.startsWith('__'))
+      continue; // Skip introspection internals
 
     final kind = rawType['kind'] as String? ?? '';
     final description = _descriptionNode(rawType['description'] as String?);
@@ -140,7 +140,6 @@ String introspectionToSdl(Map<String, dynamic> introspectionJson) {
   final doc = DocumentNode(definitions: definitions);
   return formatGraphQL(doc);
 }
-
 
 StringValueNode? _descriptionNode(String? description) {
   if (description == null || description.trim().isEmpty) return null;

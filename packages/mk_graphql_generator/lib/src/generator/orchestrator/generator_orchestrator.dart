@@ -209,7 +209,10 @@ class GeneratorOrchestrator {
         objectTypes: parsed.objectTypes,
         enumNames: enumNames,
         inputNames: inputNames,
+        scalarNames: scalarNames,
         customScalars: customScalars,
+        unionTypes: parsed.unionTypes,
+        interfaceTypes: parsed.interfaceTypes,
       );
     }
 
@@ -321,17 +324,67 @@ class GeneratorOrchestrator {
         final schemaRootTypeName = isMutation ? 'Mutation' : 'Query';
         final schemaRootType = schemaObjectTypesByName[schemaRootTypeName];
 
+        // If an operation root field has no selection set but returns an object type,
+        // auto-synthesize the selection set so neither the query nor the client extension fails.
+        var effectiveOp = op;
+        if (schemaRootType != null) {
+          final updatedSelections = <SelectionNode>[];
+          var opUpdated = false;
+          for (final sel in op.selectionSet.selections) {
+            if (sel is FieldNode && sel.selectionSet == null) {
+              final schemaFieldDef = schemaRootType.fields
+                  .where((f) => f.name.value == sel.name.value)
+                  .firstOrNull;
+              final schemaTypeName = schemaFieldDef != null
+                  ? SchemaGenerator.unwrapTypeName(schemaFieldDef.type)
+                  : null;
+              if (schemaTypeName != null &&
+                  schemaObjectTypesByName.containsKey(schemaTypeName)) {
+                final autoSel = SchemaUtilityGenerator.buildSelectionSetNode(
+                  type: schemaFieldDef!.type,
+                  objectTypesByName: schemaObjectTypesByName,
+                  enumNames: enumNames,
+                  inputNames: inputNames,
+                  scalarNames: scalarNames,
+                  customScalars: customScalars,
+                );
+                if (autoSel != null) {
+                  updatedSelections.add(FieldNode(
+                    name: sel.name,
+                    alias: sel.alias,
+                    arguments: sel.arguments,
+                    directives: sel.directives,
+                    selectionSet: autoSel,
+                  ));
+                  opUpdated = true;
+                  continue;
+                }
+              }
+            }
+            updatedSelections.add(sel);
+          }
+          if (opUpdated) {
+            effectiveOp = OperationDefinitionNode(
+              type: op.type,
+              name: op.name,
+              variableDefinitions: op.variableDefinitions,
+              directives: op.directives,
+              selectionSet: SelectionSetNode(selections: updatedSelections),
+            );
+          }
+        }
+
         final selectionBuffer = StringBuffer();
         final rootFields = <String, FieldTypeInfo>{};
 
-        for (final sel
-            in _collectEffectiveFields(op.selectionSet, fragmentsByName)) {
+        for (final sel in _collectEffectiveFields(
+            effectiveOp.selectionSet, fragmentsByName)) {
           final fieldName = sel.alias?.value ?? sel.name.value;
           final schemaFieldDef = schemaRootType?.fields
               .where((f) => f.name.value == sel.name.value)
               .firstOrNull;
-          final hasConditionalDirective = sel.directives.any(
-              (d) => d.name.value == 'include' || d.name.value == 'skip');
+          final hasConditionalDirective = sel.directives
+              .any((d) => d.name.value == 'include' || d.name.value == 'skip');
 
           if (sel.selectionSet != null) {
             final schemaTypeName = schemaFieldDef != null
@@ -437,10 +490,10 @@ class GeneratorOrchestrator {
         // The request document sent over the wire must also carry the text
         // of every fragment this operation (transitively) spreads — the
         // server has no idea what `...ContinentBasic` means otherwise.
-        final usedFragmentNames =
-            _collectUsedFragmentNames(op.selectionSet, fragmentsByName);
+        final usedFragmentNames = _collectUsedFragmentNames(
+            effectiveOp.selectionSet, fragmentsByName);
         final opDoc = [
-          printNode(op),
+          printNode(effectiveOp),
           for (final fragName in usedFragmentNames)
             printNode(fragmentsByName[fragName]!),
         ].join('\n\n');
@@ -1147,8 +1200,8 @@ class GeneratorOrchestrator {
       final childSchemaFieldDef = schemaType?.fields
           .where((f) => f.name.value == child.name.value)
           .firstOrNull;
-      final hasConditionalDirective = child.directives.any(
-          (d) => d.name.value == 'include' || d.name.value == 'skip');
+      final hasConditionalDirective = child.directives
+          .any((d) => d.name.value == 'include' || d.name.value == 'skip');
 
       if (child.selectionSet != null) {
         final childSchemaTypeName = childSchemaFieldDef != null

@@ -75,7 +75,8 @@ class _GraphQLAstFormatter {
     }
   }
 
-  void _writeDescription(StringBuffer buf, StringValueNode? desc, int indentLevel) {
+  void _writeDescription(
+      StringBuffer buf, StringValueNode? desc, int indentLevel) {
     if (desc == null) return;
     final val = desc.value;
     if (val.trim().isEmpty) return;
@@ -110,7 +111,8 @@ class _GraphQLAstFormatter {
     _writeDescription(buf, node.description, 0);
     buf.write('type ${node.name.value}');
     if (node.interfaces.isNotEmpty) {
-      buf.write(' implements ${node.interfaces.map((i) => i.name.value).join(' & ')}');
+      buf.write(
+          ' implements ${node.interfaces.map((i) => i.name.value).join(' & ')}');
     }
     if (node.directives.isNotEmpty) {
       buf.write(' ${_formatDirectives(node.directives)}');
@@ -122,10 +124,12 @@ class _GraphQLAstFormatter {
     }
   }
 
-  void _formatObjectTypeExtension(StringBuffer buf, ObjectTypeExtensionNode node) {
+  void _formatObjectTypeExtension(
+      StringBuffer buf, ObjectTypeExtensionNode node) {
     buf.write('extend type ${node.name.value}');
     if (node.interfaces.isNotEmpty) {
-      buf.write(' implements ${node.interfaces.map((i) => i.name.value).join(' & ')}');
+      buf.write(
+          ' implements ${node.interfaces.map((i) => i.name.value).join(' & ')}');
     }
     if (node.directives.isNotEmpty) {
       buf.write(' ${_formatDirectives(node.directives)}');
@@ -137,11 +141,13 @@ class _GraphQLAstFormatter {
     }
   }
 
-  void _formatInterfaceType(StringBuffer buf, InterfaceTypeDefinitionNode node) {
+  void _formatInterfaceType(
+      StringBuffer buf, InterfaceTypeDefinitionNode node) {
     _writeDescription(buf, node.description, 0);
     buf.write('interface ${node.name.value}');
     if (node.interfaces.isNotEmpty) {
-      buf.write(' implements ${node.interfaces.map((i) => i.name.value).join(' & ')}');
+      buf.write(
+          ' implements ${node.interfaces.map((i) => i.name.value).join(' & ')}');
     }
     if (node.directives.isNotEmpty) {
       buf.write(' ${_formatDirectives(node.directives)}');
@@ -153,10 +159,12 @@ class _GraphQLAstFormatter {
     }
   }
 
-  void _formatInterfaceTypeExtension(StringBuffer buf, InterfaceTypeExtensionNode node) {
+  void _formatInterfaceTypeExtension(
+      StringBuffer buf, InterfaceTypeExtensionNode node) {
     buf.write('extend interface ${node.name.value}');
     if (node.interfaces.isNotEmpty) {
-      buf.write(' implements ${node.interfaces.map((i) => i.name.value).join(' & ')}');
+      buf.write(
+          ' implements ${node.interfaces.map((i) => i.name.value).join(' & ')}');
     }
     if (node.directives.isNotEmpty) {
       buf.write(' ${_formatDirectives(node.directives)}');
@@ -168,11 +176,15 @@ class _GraphQLAstFormatter {
     }
   }
 
-  void _formatFields(StringBuffer buf, List<FieldDefinitionNode> fields, int indentLevel) {
+  void _formatFields(
+      StringBuffer buf, List<FieldDefinitionNode> fields, int indentLevel) {
     for (var i = 0; i < fields.length; i++) {
       final field = fields[i];
-      final isComplex = (field.description != null && field.description!.value.trim().isNotEmpty) ||
-          field.args.any((a) => a.description != null && a.description!.value.trim().isNotEmpty) ||
+      final isComplex = (field.description != null &&
+              field.description!.value.trim().isNotEmpty) ||
+          field.args.any((a) =>
+              a.description != null &&
+              a.description!.value.trim().isNotEmpty) ||
           field.args.length > 2;
 
       if (i > 0 && isComplex) {
@@ -187,22 +199,25 @@ class _GraphQLAstFormatter {
     }
   }
 
-  void _formatFieldDefinition(StringBuffer buf, FieldDefinitionNode node, int indentLevel) {
+  void _formatFieldDefinition(
+      StringBuffer buf, FieldDefinitionNode node, int indentLevel) {
     _writeDescription(buf, node.description, indentLevel);
     final pad = _indent(indentLevel);
     buf.write('$pad${node.name.value}');
 
     if (node.args.isNotEmpty) {
-      final hasArgDescriptions =
-          node.args.any((a) => a.description != null && a.description!.value.trim().isNotEmpty);
+      final hasArgDescriptions = node.args.any((a) =>
+          a.description != null && a.description!.value.trim().isNotEmpty);
       final inlineArgs = node.args
-          .map((a) => _formatInputValue(a, indentLevel: 0, includeDescription: false))
+          .map((a) =>
+              _formatInputValue(a, indentLevel: 0, includeDescription: false))
           .join(', ');
       final inlineCandidate = '($inlineArgs)';
 
       if (!hasArgDescriptions &&
           node.args.length <= 2 &&
-          (pad.length + node.name.value.length + inlineCandidate.length <= 80)) {
+          (pad.length + node.name.value.length + inlineCandidate.length <=
+              80)) {
         buf.write(inlineCandidate);
       } else {
         buf.writeln('(');
@@ -249,7 +264,8 @@ class _GraphQLAstFormatter {
     }
   }
 
-  void _formatUnionTypeExtension(StringBuffer buf, UnionTypeExtensionNode node) {
+  void _formatUnionTypeExtension(
+      StringBuffer buf, UnionTypeExtensionNode node) {
     buf.write('extend union ${node.name.value}');
     if (node.directives.isNotEmpty) {
       buf.write(' ${_formatDirectives(node.directives)}');
@@ -267,8 +283,8 @@ class _GraphQLAstFormatter {
     }
     buf.writeln(' {');
 
-    final hasAnyDescriptions =
-        node.values.any((v) => v.description != null && v.description!.value.trim().isNotEmpty);
+    final hasAnyDescriptions = node.values.any(
+        (v) => v.description != null && v.description!.value.trim().isNotEmpty);
 
     for (var i = 0; i < node.values.length; i++) {
       final val = node.values[i];
@@ -303,7 +319,8 @@ class _GraphQLAstFormatter {
     buf.write('}');
   }
 
-  void _formatInputObjectType(StringBuffer buf, InputObjectTypeDefinitionNode node) {
+  void _formatInputObjectType(
+      StringBuffer buf, InputObjectTypeDefinitionNode node) {
     _writeDescription(buf, node.description, 0);
     buf.write('input ${node.name.value}');
     if (node.directives.isNotEmpty) {
@@ -311,8 +328,8 @@ class _GraphQLAstFormatter {
     }
     if (node.fields.isNotEmpty) {
       buf.writeln(' {');
-      final hasAnyDescriptions =
-          node.fields.any((f) => f.description != null && f.description!.value.trim().isNotEmpty);
+      final hasAnyDescriptions = node.fields.any((f) =>
+          f.description != null && f.description!.value.trim().isNotEmpty);
 
       for (var i = 0; i < node.fields.length; i++) {
         final field = node.fields[i];
@@ -334,7 +351,8 @@ class _GraphQLAstFormatter {
     }
   }
 
-  void _formatInputObjectTypeExtension(StringBuffer buf, InputObjectTypeExtensionNode node) {
+  void _formatInputObjectTypeExtension(
+      StringBuffer buf, InputObjectTypeExtensionNode node) {
     buf.write('extend input ${node.name.value}');
     if (node.directives.isNotEmpty) {
       buf.write(' ${_formatDirectives(node.directives)}');
@@ -361,14 +379,16 @@ class _GraphQLAstFormatter {
     }
   }
 
-  void _formatScalarTypeExtension(StringBuffer buf, ScalarTypeExtensionNode node) {
+  void _formatScalarTypeExtension(
+      StringBuffer buf, ScalarTypeExtensionNode node) {
     buf.write('extend scalar ${node.name.value}');
     if (node.directives.isNotEmpty) {
       buf.write(' ${_formatDirectives(node.directives)}');
     }
   }
 
-  void _formatDirectiveDefinition(StringBuffer buf, DirectiveDefinitionNode node) {
+  void _formatDirectiveDefinition(
+      StringBuffer buf, DirectiveDefinitionNode node) {
     _writeDescription(buf, node.description, 0);
     buf.write('directive @${node.name.value}');
     if (node.args.isNotEmpty) {
@@ -393,7 +413,9 @@ class _GraphQLAstFormatter {
 
   void _formatOperation(StringBuffer buf, OperationDefinitionNode node) {
     final opType = node.type.name;
-    if (node.name == null && node.variableDefinitions.isEmpty && node.directives.isEmpty) {
+    if (node.name == null &&
+        node.variableDefinitions.isEmpty &&
+        node.directives.isEmpty) {
       buf.writeln('{');
       _formatSelectionSet(buf, node.selectionSet, 1);
       buf.write('}');
@@ -406,7 +428,8 @@ class _GraphQLAstFormatter {
     }
     if (node.variableDefinitions.isNotEmpty) {
       if (node.variableDefinitions.length <= 2) {
-        final vars = node.variableDefinitions.map(_formatVariableDefinition).join(', ');
+        final vars =
+            node.variableDefinitions.map(_formatVariableDefinition).join(', ');
         if (vars.length <= 60) {
           buf.write('($vars)');
         } else {
@@ -433,7 +456,8 @@ class _GraphQLAstFormatter {
   }
 
   void _formatFragment(StringBuffer buf, FragmentDefinitionNode node) {
-    buf.write('fragment ${node.name.value} on ${node.typeCondition.on.name.value}');
+    buf.write(
+        'fragment ${node.name.value} on ${node.typeCondition.on.name.value}');
     if (node.directives.isNotEmpty) {
       buf.write(' ${_formatDirectives(node.directives)}');
     }
@@ -442,7 +466,8 @@ class _GraphQLAstFormatter {
     buf.write('}');
   }
 
-  void _formatSelectionSet(StringBuffer buf, SelectionSetNode set, int indentLevel) {
+  void _formatSelectionSet(
+      StringBuffer buf, SelectionSetNode set, int indentLevel) {
     for (final sel in set.selections) {
       if (sel is FieldNode) {
         final pad = _indent(indentLevel);
@@ -508,7 +533,8 @@ class _GraphQLAstFormatter {
   }
 
   String _formatVariableDefinition(VariableDefinitionNode node) {
-    final buf = StringBuffer('\$${node.variable.name.value}: ${_formatType(node.type)}');
+    final buf = StringBuffer(
+        '\$${node.variable.name.value}: ${_formatType(node.type)}');
     final defVal = node.defaultValue?.value;
     if (defVal != null) {
       buf.write(' = ${_formatValue(defVal)}');
@@ -518,7 +544,6 @@ class _GraphQLAstFormatter {
     }
     return buf.toString();
   }
-
 
   String _formatType(TypeNode node) {
     if (node is NamedTypeNode) {
@@ -566,7 +591,9 @@ class _GraphQLAstFormatter {
       if (d.arguments.isEmpty) {
         return '@${d.name.value}';
       }
-      final args = d.arguments.map((a) => '${a.name.value}: ${_formatValue(a.value)}').join(', ');
+      final args = d.arguments
+          .map((a) => '${a.name.value}: ${_formatValue(a.value)}')
+          .join(', ');
       return '@${d.name.value}($args)';
     }).join(' ');
   }

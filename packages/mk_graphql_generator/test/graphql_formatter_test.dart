@@ -90,7 +90,10 @@ enum MediaStatus {
       expect(formatted, contains('enum MediaStatus {'));
       expect(formatted, contains('  "Has completed airing"'));
       expect(formatted, contains('  FINISHED'));
-      expect(formatted, contains('  CANCELLED @deprecated(reason: "Use NOT_YET_RELEASED instead")'));
+      expect(
+          formatted,
+          contains(
+              '  CANCELLED @deprecated(reason: "Use NOT_YET_RELEASED instead")'));
 
       final doc = parseString(formatted);
       expect(doc.definitions, hasLength(1));
@@ -182,7 +185,8 @@ query GetAnime(\$id: Int, \$type: MediaType) {
 }
 ''';
       final formatted = formatGraphQLString(source);
-      expect(formatted, contains('query GetAnime(\$id: Int, \$type: MediaType) {'));
+      expect(formatted,
+          contains('query GetAnime(\$id: Int, \$type: MediaType) {'));
       expect(formatted, contains('  Media(id: \$id, type: \$type) {'));
       expect(formatted, contains('    id'));
       expect(formatted, contains('    title {'));

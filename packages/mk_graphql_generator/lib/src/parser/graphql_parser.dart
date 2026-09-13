@@ -9,6 +9,7 @@ class ParsedGraphQLDocument {
   final List<EnumTypeDefinitionNode> enumTypes;
   final List<InputObjectTypeDefinitionNode> inputTypes;
   final List<UnionTypeDefinitionNode> unionTypes;
+  final List<InterfaceTypeDefinitionNode> interfaceTypes;
   final List<ScalarTypeDefinitionNode> scalarTypes;
 
   ParsedGraphQLDocument({
@@ -19,6 +20,7 @@ class ParsedGraphQLDocument {
     required this.enumTypes,
     required this.inputTypes,
     required this.unionTypes,
+    this.interfaceTypes = const [],
     this.scalarTypes = const [],
   });
 
@@ -30,6 +32,7 @@ class ParsedGraphQLDocument {
     final enumTypes = <EnumTypeDefinitionNode>[];
     final inputTypes = <InputObjectTypeDefinitionNode>[];
     final unionTypes = <UnionTypeDefinitionNode>[];
+    final interfaceTypes = <InterfaceTypeDefinitionNode>[];
     final scalarTypes = <ScalarTypeDefinitionNode>[];
 
     for (final def in ast.definitions) {
@@ -45,6 +48,8 @@ class ParsedGraphQLDocument {
         inputTypes.add(def);
       } else if (def is UnionTypeDefinitionNode) {
         unionTypes.add(def);
+      } else if (def is InterfaceTypeDefinitionNode) {
+        interfaceTypes.add(def);
       } else if (def is ScalarTypeDefinitionNode) {
         scalarTypes.add(def);
       }
@@ -58,6 +63,7 @@ class ParsedGraphQLDocument {
       enumTypes: enumTypes,
       inputTypes: inputTypes,
       unionTypes: unionTypes,
+      interfaceTypes: interfaceTypes,
       scalarTypes: scalarTypes,
     );
   }

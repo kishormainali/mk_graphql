@@ -973,7 +973,8 @@ void main() {
       final countryModel = bundle.files['generated/models/country_model.dart']!;
       expect(countryModel, contains('required String code'));
       expect(countryModel, contains('required String name'));
-      expect(countryModel, contains("@JsonKey(name: 'native') required String gNative"));
+      expect(countryModel,
+          contains("@JsonKey(name: 'native') required String gNative"));
       expect(countryModel, contains('String? phone'));
       expect(countryModel, contains('required String emoji'));
     });
@@ -1041,7 +1042,8 @@ void main() {
       expect(opModel, contains('class GetCountryFullCountryModel'));
       expect(opModel, contains('required String code'));
       expect(opModel, contains('required String name'));
-      expect(opModel, contains("@JsonKey(name: 'native') required String gNative"));
+      expect(opModel,
+          contains("@JsonKey(name: 'native') required String gNative"));
       expect(opModel, contains('required String emoji'));
       expect(opModel, isNot(contains('class CountryModel')));
     });
@@ -1157,28 +1159,38 @@ void main() {
       }
     ''';
 
-    test('Dart reserved keywords map to g{Keyword} with @JsonKey(name: raw)', () {
+    test('Dart reserved keywords map to g{Keyword} with @JsonKey(name: raw)',
+        () {
       final bundle = GeneratorOrchestrator.generateForGraphQLFile(
         content: conventionSchema,
         inputPath: 'lib/graphql/schema.graphql',
       );
 
       final itemModel = bundle.files['generated/models/item_model.dart']!;
-      expect(itemModel, contains("@JsonKey(name: 'class') required String gClass"));
-      expect(itemModel, contains("@JsonKey(name: 'default') required String gDefault"));
-      expect(itemModel, contains('required String id')); // UUID mapped to String
+      expect(itemModel,
+          contains("@JsonKey(name: 'class') required String gClass"));
+      expect(itemModel,
+          contains("@JsonKey(name: 'default') required String gDefault"));
+      expect(
+          itemModel, contains('required String id')); // UUID mapped to String
       expect(itemModel, contains('required DateTime createdAt'));
 
       final filterInput = bundle.files['generated/inputs/filter_input.dart']!;
-      expect(filterInput, contains("@JsonKey(name: 'default', includeIfNull: false) String? gDefault"));
+      expect(
+          filterInput,
+          contains(
+              "@JsonKey(name: 'default', includeIfNull: false) String? gDefault"));
       expect(filterInput, contains("@Default(20) int limit"));
-      expect(filterInput, contains("@JsonKey(name: 'is', includeIfNull: false) bool? gIs"));
+      expect(filterInput,
+          contains("@JsonKey(name: 'is', includeIfNull: false) bool? gIs"));
 
       final statusEnum = bundle.files['generated/enums/status_enum.dart']!;
       expect(statusEnum, contains('@JsonValue("DEFAULT")\n  gDefault'));
     });
 
-    test('@include and @skip directives make non-null fields nullable in response model', () {
+    test(
+        '@include and @skip directives make non-null fields nullable in response model',
+        () {
       const queryWithDirectives = '''
         query GetItemWithCondition(\$skipDefault: Boolean!, \$includeClass: Boolean!) {
           getItem(id: "123") {
@@ -1197,7 +1209,8 @@ void main() {
         schemaPath: 'lib/graphql/schema.graphql',
       );
 
-      final model = bundle.files['generated/get_item_with_condition/get_item_with_condition_model.dart']!;
+      final model = bundle.files[
+          'generated/get_item_with_condition/get_item_with_condition_model.dart']!;
       // Normally id is required String id
       expect(model, contains('required String id'));
       // class has @include so even though schema says String!, Dart must be nullable String?
@@ -1208,7 +1221,9 @@ void main() {
       expect(model, contains('required Status status'));
     });
 
-    test('Variable definitions with default values generate @Default(...) in Vars and extension', () {
+    test(
+        'Variable definitions with default values generate @Default(...) in Vars and extension',
+        () {
       const queryWithVarDefaults = '''
         query GetItemWithDefaults(\$limit: Int = 30, \$order: String = "asc") {
           getItem(id: "123") {
@@ -1224,7 +1239,8 @@ void main() {
         schemaPath: 'lib/graphql/schema.graphql',
       );
 
-      final vars = bundle.files['generated/get_item_with_defaults/get_item_with_defaults_var.dart']!;
+      final vars = bundle.files[
+          'generated/get_item_with_defaults/get_item_with_defaults_var.dart']!;
       expect(vars, contains('@Default(30) int limit'));
       expect(vars, contains('@Default("asc") String order'));
 
@@ -1233,7 +1249,9 @@ void main() {
       expect(barrel, contains('String order = "asc"'));
     });
 
-    test('ErrorPolicy is included in request constructor, copyWithRequest, and client extensions', () {
+    test(
+        'ErrorPolicy is included in request constructor, copyWithRequest, and client extensions',
+        () {
       const query = '''
         query GetSimpleItem {
           getItem(id: "123") {
@@ -1249,7 +1267,8 @@ void main() {
         schemaPath: 'lib/graphql/schema.graphql',
       );
 
-      final req = bundle.files['generated/get_simple_item/get_simple_item_req.dart']!;
+      final req =
+          bundle.files['generated/get_simple_item/get_simple_item_req.dart']!;
       expect(req, contains('ErrorPolicy? errorPolicy,'));
       expect(req, contains('errorPolicy: errorPolicy ?? this.errorPolicy,'));
 
@@ -1258,7 +1277,8 @@ void main() {
       expect(barrel, contains('errorPolicy: errorPolicy,'));
     });
 
-    test('Custom scalars are mapped according to customScalars configuration', () {
+    test('Custom scalars are mapped according to customScalars configuration',
+        () {
       const query = '''
         query GetCustomItem {
           getItem(id: "123") {
@@ -1275,8 +1295,122 @@ void main() {
         customScalars: {'CustomScalar': 'MyCustomDartType'},
       );
 
-      final model = bundle.files['generated/get_custom_item/get_custom_item_model.dart']!;
+      final model =
+          bundle.files['generated/get_custom_item/get_custom_item_model.dart']!;
       expect(model, contains('MyCustomDartType? custom'));
+    });
+
+    test(
+        'Schema client extensions include subfield selection sets for mutations returning object types',
+        () {
+      const schema = '''
+        input RegisterInput {
+          email: String!
+          password: String!
+        }
+
+        type RegisterResponse {
+          message: String!
+        }
+
+        type Mutation {
+          register(input: RegisterInput!): RegisterResponse!
+          deleteUser(id: ID!): Boolean!
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'schema.graphql',
+      );
+
+      final barrel = bundle.files['generated/schema.gql.dart']!;
+      // register mutation must have selection set { message }
+      expect(
+          barrel,
+          contains(
+              r'r"""mutation Register($input: RegisterInput!) { register(input: $input) { message } }"""'));
+
+      // scalar mutation deleteUser must NOT have a selection set
+      expect(
+          barrel,
+          contains(
+              r'r"""mutation DeleteUser($id: ID!) { deleteUser(id: $id) }"""'));
+
+      // Extension method exists
+      expect(barrel, contains('Future<RegisterResponseModel> register({'));
+      expect(barrel, contains('RegisterReq('));
+      expect(barrel, contains('Future<bool> deleteUser({'));
+    });
+
+    test(
+        'Schema client extensions handle nested object selections and circular references',
+        () {
+      const schema = '''
+        type MobileNumber {
+          dialCode: String!
+          number: String!
+        }
+
+        type User {
+          id: ID!
+          name: String!
+          mobileNumber: MobileNumber
+          friend: User
+        }
+
+        type Query {
+          me: User!
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'schema.graphql',
+      );
+
+      final barrel = bundle.files['generated/schema.gql.dart']!;
+      // me query must include scalar fields and nested mobileNumber, while avoiding recursive friend cycle
+      expect(
+          barrel,
+          contains(
+              'query Me { me { id name mobileNumber { dialCode number } } }'));
+      expect(barrel, contains('Future<UserModel> me('));
+    });
+
+    test(
+        'Feature operation with missing selection set on object field has selection set auto-synthesized',
+        () {
+      const schema = '''
+        input RegisterInput {
+          email: String!
+        }
+
+        type RegisterResponse {
+          message: String!
+        }
+
+        type Mutation {
+          register(input: RegisterInput!): RegisterResponse!
+        }
+      ''';
+
+      const opContent = '''
+        mutation Register(\$input: RegisterInput!) {
+          register(input: \$input)
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: opContent,
+        inputPath: 'lib/features/auth/register.graphql',
+        schemaContent: schema,
+        schemaPath: 'schema.graphql',
+      );
+
+      final req = bundle.files['generated/register/register_req.dart']!;
+      expect(req, contains('register(input: \$input) {'));
+      expect(req, contains('message'));
     });
   });
 }

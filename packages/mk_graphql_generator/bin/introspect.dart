@@ -74,7 +74,8 @@ void main(List<String> arguments) async {
     final fromBuildYaml =
         findSchemaPathFromBuildYaml(buildYamlPath: buildYamlPath);
     if (fromBuildYaml != null) {
-      stdout.writeln('📋 Using schema path from $buildYamlPath: $fromBuildYaml');
+      stdout
+          .writeln('📋 Using schema path from $buildYamlPath: $fromBuildYaml');
       outputPath = fromBuildYaml;
     } else {
       final existing = _findExistingSchemaPath();
@@ -209,4 +210,3 @@ void _printUsage(ArgParser parser) {
   stdout.writeln(
       '  dart run mk_graphql_generator:introspect -u https://api.example.com/graphql -c custom_build.yaml');
 }
-

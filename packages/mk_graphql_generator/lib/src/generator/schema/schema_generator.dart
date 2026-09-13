@@ -107,8 +107,8 @@ class SchemaGenerator {
             inputNames: inputNames,
             scalarNames: scalarNames,
             customScalars: customScalars);
-        final defaultValueStr = formatDefaultValue(field.defaultValue,
-            dartType: typeInfo.dartType);
+        final defaultValueStr =
+            formatDefaultValue(field.defaultValue, dartType: typeInfo.dartType);
         fields[rawFieldName] = FieldTypeInfo(
           dartType: typeInfo.dartType,
           isRequired: defaultValueStr == null && typeInfo.isRequired,

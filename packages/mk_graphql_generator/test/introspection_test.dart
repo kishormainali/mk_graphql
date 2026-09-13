@@ -7,7 +7,6 @@ import 'package:mk_graphql_generator/src/introspection/introspection_to_sdl.dart
 import 'package:test/test.dart';
 
 void main() {
-
   group('introspectionToSdl Tests', () {
     test('converts basic schema with Query, User, and Enum to valid SDL', () {
       final introspectionJson = {
@@ -121,14 +120,16 @@ void main() {
       final doc = parseString(sdl);
       expect(doc.definitions, isNotEmpty);
 
-
       // Verify definitions
       final typeNames = doc.definitions
           .whereType<TypeDefinitionNode>()
           .map((d) => d.name.value)
           .toSet();
 
-      expect(typeNames, containsAll(['Query', 'User', 'Role', 'UserFilterInput', 'DateTime']));
+      expect(
+          typeNames,
+          containsAll(
+              ['Query', 'User', 'Role', 'UserFilterInput', 'DateTime']));
 
       // Verify deprecated directive was emitted
       expect(sdl, contains('@deprecated(reason: "Use name instead")'));
@@ -138,7 +139,9 @@ void main() {
       expect(sdl, contains('input UserFilterInput'));
     });
 
-    test('ignores internal __ introspection types and standard built-in scalars', () {
+    test(
+        'ignores internal __ introspection types and standard built-in scalars',
+        () {
       final introspectionJson = {
         '__schema': {
           'queryType': {'name': 'Query'},
@@ -179,7 +182,8 @@ targets:
         options:
           schema_path: lib/graphql/schema.graphql
 ''';
-      expect(parseSchemaPathFromYaml(yaml), equals('lib/graphql/schema.graphql'));
+      expect(
+          parseSchemaPathFromYaml(yaml), equals('lib/graphql/schema.graphql'));
     });
 
     test('extracts schemaPath (camelCase) from targets', () {
@@ -232,8 +236,12 @@ targets:
       expect(parseSchemaPathFromYaml('invalid: [yaml: :'), isNull);
     });
 
-    test('findSchemaPathFromBuildYaml reads from actual file or returns null if not found', () {
-      expect(findSchemaPathFromBuildYaml(buildYamlPath: 'non_existent_file.yaml'), isNull);
+    test(
+        'findSchemaPathFromBuildYaml reads from actual file or returns null if not found',
+        () {
+      expect(
+          findSchemaPathFromBuildYaml(buildYamlPath: 'non_existent_file.yaml'),
+          isNull);
 
       final tempDir = Directory.systemTemp.createTempSync('build_yaml_test_');
       final tempFile = File('${tempDir.path}/build.yaml');
@@ -247,7 +255,8 @@ targets:
 ''');
 
       try {
-        final result = findSchemaPathFromBuildYaml(buildYamlPath: tempFile.path);
+        final result =
+            findSchemaPathFromBuildYaml(buildYamlPath: tempFile.path);
         expect(result, equals('lib/my_schema.graphql'));
       } finally {
         tempDir.deleteSync(recursive: true);
@@ -255,4 +264,3 @@ targets:
     });
   });
 }
-

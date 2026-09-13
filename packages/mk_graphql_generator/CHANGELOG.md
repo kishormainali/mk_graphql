@@ -1,3 +1,12 @@
+## 1.1.1
+
+- **Automatic Selection Sets for Schema Client Extensions**: Automatically generates selection sets for operations and typed `GraphQLClient` extension methods returning composite types (objects, interfaces, unions) such as `register(input: RegisterInput!): RegisterResponse!`, resolving `GRAPHQL_VALIDATION_FAILED` errors where subfields were missing.
+- **Cycle Detection & Depth Limiting**: Automatically breaks recursive or self-referential schema cycles (e.g. `User -> User`) and caps expansion depth safely.
+- **Required Argument Filtering**: Skips subfields that define required (non-null without default) arguments during automatic selection set generation, ensuring generated queries remain valid.
+- **Feature Operation Selection Set Synthesis**: Synthesizes missing selection sets for object fields in hand-written `.graphql` operations.
+- **Interface Type AST Parsing**: Added collection of `interfaceTypes` in `ParsedGraphQLDocument` and support for interface field selections.
+- **Enum Return Type Parsing**: Added direct enum decoding in schema-driven client operations.
+
 ## 1.1.0
 
 - **Schema Introspection CLI (`dart run mk_graphql_generator:introspect`)**: Built-in CLI command to introspect remote GraphQL endpoints via HTTP into clean, standard GraphQL SDL (`.graphql` or `.gql`).

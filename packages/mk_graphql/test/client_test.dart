@@ -516,7 +516,9 @@ void main() {
   });
 
   group('GraphQL Conventions & Optimizations', () {
-    test('ErrorPolicy.none throws when response has errors even if data is present', () async {
+    test(
+        'ErrorPolicy.none throws when response has errors even if data is present',
+        () async {
       final client = GraphQLClient.fromLink(
         const _DataAndErrorLink(
           data: {'id': '123', 'name': 'Alice'},
@@ -533,7 +535,8 @@ void main() {
       );
     });
 
-    test('ErrorPolicy.ignore returns data when partial errors are present', () async {
+    test('ErrorPolicy.ignore returns data when partial errors are present',
+        () async {
       final client = GraphQLClient.fromLink(
         const _DataAndErrorLink(
           data: {'id': '123', 'name': 'Alice'},
@@ -549,7 +552,9 @@ void main() {
       expect(result.name, 'Alice');
     });
 
-    test('ErrorPolicy.all returns data without throwing when partial errors are present', () async {
+    test(
+        'ErrorPolicy.all returns data without throwing when partial errors are present',
+        () async {
       final client = GraphQLClient.fromLink(
         const _DataAndErrorLink(
           data: {'id': '123', 'name': 'Alice'},

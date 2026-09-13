@@ -23,7 +23,8 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
   _TestReq(this.variables, {super.fetchPolicy});
 
   @override
-  String get document => 'mutation CreateUser(\$email: String!) { createUser(email: \$email) { id } }';
+  String get document =>
+      'mutation CreateUser(\$email: String!) { createUser(email: \$email) { id } }';
 
   @override
   String get operationName => 'CreateUser';
@@ -107,8 +108,10 @@ void main() {
 
       expect(valEx.fields, containsAll(['email', 'password']));
       expect(valEx.getErrors('email').length, 2);
-      expect(valEx.getFirstError('email'), 'The email must be a valid email address.');
-      expect(valEx.getFirstError('password'), 'The password must be at least 8 characters.');
+      expect(valEx.getFirstError('email'),
+          'The email must be a valid email address.');
+      expect(valEx.getFirstError('password'),
+          'The password must be at least 8 characters.');
       expect(valEx.hasError('unknown'), isFalse);
       expect(valEx.getErrors('unknown'), isEmpty);
       expect(valEx.getFirstError('unknown'), isNull);
@@ -220,7 +223,9 @@ void main() {
       expect(cleanResponse.validationErrors, isNull);
     });
 
-    test('GraphQLClient.future throws ValidationException on validation failure', () async {
+    test(
+        'GraphQLClient.future throws ValidationException on validation failure',
+        () async {
       final client = GraphQLClient.fromLink(
         const _MockErrorLink([
           gql.GraphQLError(

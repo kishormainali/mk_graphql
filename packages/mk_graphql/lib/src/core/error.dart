@@ -310,8 +310,7 @@ extension GraphQLExceptionExtension on GraphQLException {
       final category = ext['category']?.toString().toLowerCase();
       if (category == 'validation') return true;
 
-      final classification =
-          ext['classification']?.toString().toLowerCase();
+      final classification = ext['classification']?.toString().toLowerCase();
       if (classification == 'validationerror' ||
           classification == 'badrequest' ||
           classification == 'validation') {
@@ -391,14 +390,13 @@ extension GraphQLExceptionExtension on GraphQLException {
 
             final itemMessages = <String>[];
             if (item['messages'] is List) {
-              itemMessages.addAll(
-                  (item['messages'] as List).map((e) => e.toString()));
+              itemMessages
+                  .addAll((item['messages'] as List).map((e) => e.toString()));
             } else if (item['message'] != null) {
               itemMessages.add(item['message'].toString());
             } else if (item['constraints'] is Map) {
-              itemMessages.addAll((item['constraints'] as Map)
-                  .values
-                  .map((e) => e.toString()));
+              itemMessages.addAll(
+                  (item['constraints'] as Map).values.map((e) => e.toString()));
             }
 
             if (fieldName != null && itemMessages.isNotEmpty) {

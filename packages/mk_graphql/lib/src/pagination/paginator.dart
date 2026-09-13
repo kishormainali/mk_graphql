@@ -193,8 +193,7 @@ class GraphQLPaginator<TData, TVars, TItem> {
     _currentRequest = _baseRequest;
 
     try {
-      final data =
-          await client.future(_baseRequest, cancelToken: cancelToken);
+      final data = await client.future(_baseRequest, cancelToken: cancelToken);
       _lastData = data;
       _accumulatedData = data;
       final newItems = getItems(data);

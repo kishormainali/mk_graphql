@@ -524,4 +524,3 @@ TData autoMergeGraphQLData<TData>(
     return incoming;
   }
 }
-

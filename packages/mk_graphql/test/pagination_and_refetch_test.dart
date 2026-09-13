@@ -232,7 +232,9 @@ void main() {
       final prev = {
         'users': {
           'edges': [
-            {'node': {'id': '1', 'name': 'Alice'}}
+            {
+              'node': {'id': '1', 'name': 'Alice'}
+            }
           ],
           'pageInfo': {'hasNextPage': true, 'endCursor': 'cursor_1'}
         }
@@ -240,7 +242,9 @@ void main() {
       final incoming = {
         'users': {
           'edges': [
-            {'node': {'id': '2', 'name': 'Bob'}}
+            {
+              'node': {'id': '2', 'name': 'Bob'}
+            }
           ],
           'pageInfo': {'hasNextPage': false, 'endCursor': 'cursor_2'}
         }
@@ -365,8 +369,8 @@ void main() {
       );
 
       expect(result.items, ['a', 'custom_injected', 'b']);
-      expect(client.cache.readQuery(req1)?.items,
-          ['a', 'custom_injected', 'b']);
+      expect(
+          client.cache.readQuery(req1)?.items, ['a', 'custom_injected', 'b']);
     });
   });
 
@@ -420,11 +424,11 @@ void main() {
       final page2Items = await paginator.loadNext();
       expect(page2Items, ['p1_a', 'p1_b', 'p2_c', 'p2_d']);
       expect(paginator.items, ['p1_a', 'p1_b', 'p2_c', 'p2_d']);
-      expect(paginator.accumulatedData?.items,
-          ['p1_a', 'p1_b', 'p2_c', 'p2_d']);
+      expect(
+          paginator.accumulatedData?.items, ['p1_a', 'p1_b', 'p2_c', 'p2_d']);
       // And the normalized cache under initialRequest holds the merged data!
-      expect(client.cache.readQuery(req)?.items,
-          ['p1_a', 'p1_b', 'p2_c', 'p2_d']);
+      expect(
+          client.cache.readQuery(req)?.items, ['p1_a', 'p1_b', 'p2_c', 'p2_d']);
 
       // 3. loadNext for page 3 (returns 1 item < limit 2, so hasMore becomes false)
       final page3Items = await paginator.loadNext();
@@ -542,4 +546,3 @@ void main() {
     });
   });
 }
-

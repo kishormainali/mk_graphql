@@ -195,12 +195,11 @@ final client = GraphQLClient(
   },
 
   // Optional: if your refresh endpoint expects the refresh token in a
-  // header (rather than a request body), this attaches it to every request
-  // made through `refreshClient` above instead of the access-token header.
-  // refreshTokenHeader: () async {
-  //   final token = await TokenStorage.i.refreshToken;
-  //   return token != null ? {'Authorization': 'Bearer $token'} : null;
-  // },
+  // header (rather than as the `refreshToken` param above), this attaches
+  // it to every request made through `refreshClient` instead of the
+  // access-token header. No default — only attached if you pass this.
+  // refreshTokenHeader: (refreshToken) async =>
+  //     {'Authorization': 'Bearer $refreshToken'},
 
   // Default fetch policy (cacheFirst, networkOnly, cacheAndNetwork, noCache)
   defaultFetchPolicy: FetchPolicy.cacheFirst,

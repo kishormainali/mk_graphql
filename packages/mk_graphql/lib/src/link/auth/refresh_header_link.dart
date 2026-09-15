@@ -1,6 +1,7 @@
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 
+import '../../auth/token_storage.dart';
 import 'auth_types.dart';
 
 /// Attaches a refresh-token header callback's headers (e.g. `Authorization:
@@ -10,13 +11,18 @@ import 'auth_types.dart';
 class RefreshHeaderLink extends Link {
   const RefreshHeaderLink(this.refreshTokenHeader);
 
-  final AccessTokenCallback refreshTokenHeader;
+  final TokenHeaderCallback refreshTokenHeader;
 
   @override
   Stream<Response> request(Request req, [NextLink? forward]) async* {
     assert(forward != null, 'RefreshHeaderLink cannot be a terminating link.');
-    final headers = await refreshTokenHeader();
-    if (headers == null || headers.isEmpty) {
+    final token = await TokenStorage.i.refreshToken;
+    if (token == null) {
+      yield* forward!(req);
+      return;
+    }
+    final headers = await refreshTokenHeader(token);
+    if (headers.isEmpty) {
       yield* forward!(req);
       return;
     }

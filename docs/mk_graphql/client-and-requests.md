@@ -133,7 +133,7 @@ All thrown errors are `GraphQLException` subclasses (which extend `gql_link`'s `
 | `NetworkException` | Dio connection error (offline, DNS, etc). |
 | `TimeoutException` | Request exceeded Dio's configured timeout. |
 | `RequestCancelledException` | The request's `CancelToken` was cancelled. |
-| `RevokeTokenException` | Internal — thrown when `onTokenRefresh` fails during `AuthLink` refresh. |
+| `RevokeTokenException` | Thrown when a token refresh attempt itself fails (its message wraps the real cause) and there's no more specific original error to surface instead — see [Links: `AuthLink`](links.md#authlink). |
 | `AppServerException` | Fallback for anything else (with an optional HTTP `code`). |
 
 ### Handling Validation Errors

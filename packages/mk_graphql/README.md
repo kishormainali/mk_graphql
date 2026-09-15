@@ -84,7 +84,7 @@ final client = GraphQLClient(
 
 However many requests fail at once, only one `refreshCallback` call is made — `AuthLink` queues the rest behind the in-flight refresh and retries all of them once it resolves.
 
-If you'd rather supply the header yourself (static/custom, not from `TokenStorage.i`), pass `accessTokenHeader` — it overrides the header side only and can be combined with `refreshCallback`. If your refresh endpoint expects the refresh token as a header rather than a body param, pass `refreshTokenHeader` too — it's attached to every request made through `refreshClient` above, instead of `accessTokenHeader`.
+The access-token header defaults to `Authorization: Bearer <token>`, built from whatever `TokenStorage.i` has stored (only invoked when a token is actually present). If your API expects a different header format, pass `accessTokenHeader` yourself — it receives the token as its argument, so you don't need to touch `TokenStorage.i` directly. There's no equivalent default for the refresh token, since it already reaches your refresh endpoint as the `refreshCallback` parameter above (for a body/variable) — pass `refreshTokenHeader` only if your refresh endpoint additionally/instead expects it as a header on requests made through `refreshClient`, attached instead of `accessTokenHeader`.
 
 By default, a response/exception is classified as `AuthFailure.refresh` when `extensions.code`/HTTP status is `UNAUTHORIZED`/`UNAUTHENTICATED`/401 (the request is retried once refreshed), and as `AuthFailure.revoke` when it's `FORBIDDEN`/403 — a valid token simply lacking permission, so a refresh wouldn't help; the token is revoked immediately instead. If your API signals either case differently, pass `isUnauthorized: (context) => ...` — it receives a normalized `UnauthorizedContext` (same shape whether the failure came from a response or a thrown exception) and fully replaces the built-in classification.
 
@@ -250,7 +250,7 @@ class AnimeListBloc extends Bloc<AnimeListEvent, AnimeListState> {
 final client = GraphQLClient(
   url: 'https://api.example.com/graphql',
   sseUrl: 'https://api.example.com/graphql/sse',
-  accessTokenHeader: () async => {'Authorization': 'Bearer $token'},
+  accessTokenHeader: (token) async => {'Authorization': 'Bearer $token'},
 );
 
 client.stream(mySubscriptionRequest).listen((data) {

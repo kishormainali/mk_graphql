@@ -71,11 +71,9 @@ class BatchLink extends Link {
 
     try {
       final bodyJson = await completer.future;
-      // Uses the same ResponseParser as DioLink/SseLink/WebSocketLink so
-      // errors[].locations/path/extensions survive parsing here too —
-      // previously only `message` was kept, silently dropping
-      // `extensions.code` (which AuthLink's unauthorized detection and
-      // GraphQLExceptionExtension both rely on).
+      // The same ResponseParser as every other terminating link, so
+      // errors[].extensions.code survives parsing — AuthLink's unauthorized
+      // detection and GraphQLExceptionExtension both key off it.
       yield const ResponseParser().parseResponse(bodyJson);
     } catch (e, stack) {
       throw ServerException(

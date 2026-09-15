@@ -7,6 +7,7 @@ import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 import 'dio_link.dart';
 import '../auth/auth_link.dart';
+import '../../auth/token_storage.dart';
 import '../../core/document_print_cache.dart';
 
 /// Terminating [Link] for GraphQL over Server-Sent Events (SSE).
@@ -31,7 +32,7 @@ class SseLink extends Link {
   /// `GraphQLClient`) already attaches the current token via the request
   /// context; this is for standalone use of [SseLink] without an [AuthLink]
   /// in front of it.
-  final AccessTokenCallback? tokenHeader;
+  final TokenHeaderCallback? tokenHeader;
   final bool useGetForQueries;
   final ResponseParser parser;
 
@@ -63,7 +64,11 @@ class SseLink extends Link {
     final cancelToken =
         req.context.entry<DioLinkCancelTokenContextEntry>()?.token;
 
-    final authHeaders = await tokenHeader?.call() ?? const {};
+    Map<String, String> authHeaders = const {};
+    if (tokenHeader != null) {
+      final token = await TokenStorage.i.accessToken;
+      if (token != null) authHeaders = await tokenHeader!(token);
+    }
 
     final headers = <String, String>{
       'Accept': 'text/event-stream',

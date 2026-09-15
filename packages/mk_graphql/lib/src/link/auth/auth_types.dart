@@ -4,12 +4,15 @@ import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 
 import '../../auth/token_pair.dart';
+import '../../auth/token_storage.dart';
 import '../../client/client.dart';
 import '../../core/graphql_error_mapper.dart';
 
-/// Callback that supplies the current access-token headers (e.g. Authorization).
-/// Return null or empty map when no token is available.
-typedef AccessTokenCallback = FutureOr<Map<String, String>?> Function();
+/// Callback that builds the auth headers (e.g. `Authorization`) for a given
+/// token, read from [TokenStorage.i] by the caller — only invoked when a
+/// token is actually stored, so [token] is always non-null.
+typedef TokenHeaderCallback = FutureOr<Map<String, String>> Function(
+    String token);
 
 /// Callback invoked when the access token is expired.
 /// Receives a plain [GraphQLClient] (no auth link attached) that can be used

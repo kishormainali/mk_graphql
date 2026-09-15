@@ -20,8 +20,9 @@ Injects auth headers into every request and handles 401-driven refresh:
 ```dart
 AuthLink(
   url: endpoint,               // also used for the refresh request
-  accessTokenHeader: () async => {'Authorization': 'Bearer $token'},
-  refreshTokenHeader: () async => {'Authorization': 'Bearer $refreshToken'}, // optional
+  accessTokenHeader: (token) async => {'Authorization': 'Bearer $token'},
+  refreshTokenHeader: (refreshToken) async =>
+      {'Authorization': 'Bearer $refreshToken'}, // optional
   isTokenExpired: () async => tokenIsExpired, // optional: proactive refresh
   isUnauthorized: (context) {
     // optional: override how a failure is classified
@@ -29,9 +30,11 @@ AuthLink(
     if (context.errorCode == 'ACCOUNT_SUSPENDED') return AuthFailure.revoke;
     return AuthFailure.none;
   },
-  onTokenRefresh: (refreshDioLink) async {
-    // perform the refresh call using refreshDioLink or your own client
-    return {'Authorization': 'Bearer $newToken'};
+  onTokenRefresh: (refreshClient) async {
+    // refreshClient is a plain GraphQLClient (no AuthLink attached) —
+    // perform the refresh call via its normal typed API.
+    final result = await refreshClient.future(refreshMutation);
+    return {'Authorization': 'Bearer ${result.accessToken}'};
   },
   onRevokeToken: () => logOut(),
 );
@@ -39,11 +42,12 @@ AuthLink(
 
 Behavior:
 
+- **`accessTokenHeader`/`refreshTokenHeader`/`tokenHeader`** (`TokenHeaderCallback`) each receive the current token as their argument, read from `TokenStorage.i` — they're only invoked when a token is actually stored (skipped entirely otherwise, so the callback never has to null-check it).
 - **Proactive refresh**: if `isTokenExpired` is supplied and returns `true`, the token is refreshed *before* the request is sent.
-- **`refreshTokenHeader`**: when provided, its headers are attached to every request sent through the internal refresh client (the one passed into `onTokenRefresh`), instead of `accessTokenHeader` — useful when your refresh endpoint expects the refresh token itself as a header rather than a body param.
+- **`refreshTokenHeader`**: has no default — the refresh token normally reaches your refresh endpoint as `onTokenRefresh`'s own mechanism (a body/variable). Pass this only if your refresh endpoint *also*/*instead* expects the refresh token as a header; when provided, it's attached to every request sent through the internal refresh client instead of `accessTokenHeader`.
 - **Reactive refresh**: every response/thrown `ServerException` is classified into an `AuthFailure` (`none`, `refresh`, or `revoke`). By default, `extensions.code`/HTTP status of `UNAUTHORIZED`/`UNAUTHENTICATED`/401 classifies as `AuthFailure.refresh` (the request is retried once with the refreshed headers), and `FORBIDDEN`/403 classifies as `AuthFailure.revoke` — a valid token that simply lacks permission, so refreshing it wouldn't help; the token is revoked immediately without attempting a refresh at all. Pass `isUnauthorized` to classify your own API's convention instead — it receives a normalized `UnauthorizedContext` (built the same way whether the failure came from a streamed `Response` or a thrown `ServerException`, exposing `errors`, `statusCode`, `errorCode`, and the raw `response`/`exception`) and fully replaces the default classification when provided.
 - **Concurrent refresh de-duplication**: multiple requests hitting a refreshable failure simultaneously share a single in-flight refresh call rather than each triggering their own.
-- **Revocation**: `onRevokeToken` is called — and every listener registered via `GraphQLClient.registerRevokeTokenListener` fires — whenever `onTokenRefresh` throws *or* a failure classifies as `AuthFailure.revoke` — see [Errors](client-and-requests.md#errors).
+- **Revocation**: `onRevokeToken` is called — and every listener registered via `GraphQLClient.registerRevokeTokenListener` fires — whenever `onTokenRefresh` throws *or* a failure classifies as `AuthFailure.revoke`. Either way, the real cause still reaches `future()`/`stream()` as a thrown exception (the original `FORBIDDEN` error, the original 401 if the refresh attempt itself failed with no more specific cause, or a `RevokeTokenException` describing why the refresh failed) — see [Errors](client-and-requests.md#errors--validation).
 
 ## `TypenameLink`
 

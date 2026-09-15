@@ -4,6 +4,7 @@ import 'package:dio/dio.dart' hide Response;
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 
+import '../../auth/token_storage.dart';
 import '../../client/client.dart';
 import '../../core/error.dart' hide GraphQLError;
 import '../logging/logger.dart';
@@ -50,12 +51,12 @@ class AuthLink extends Link {
   /// Callback that returns the current auth headers built from the access
   /// token (e.g. `Authorization`) — attached to every normal outgoing
   /// request.
-  final AccessTokenCallback? accessTokenHeader;
+  final TokenHeaderCallback? accessTokenHeader;
 
   /// Callback that returns headers built from the refresh token (e.g.
   /// `Authorization`) — when provided, attached to every request sent
   /// through [_refreshClient] instead of [accessTokenHeader].
-  final AccessTokenCallback? refreshTokenHeader;
+  final TokenHeaderCallback? refreshTokenHeader;
 
   /// Optional callback to check whether the current token is expired.
   final IsTokenExpiredCallback? isTokenExpired;
@@ -131,18 +132,18 @@ class AuthLink extends Link {
         try {
           final newHeaders = await _refreshToken();
           if (newHeaders != null) currentHeaders.addAll(newHeaders);
-        } on RevokeTokenException {
+        } on RevokeTokenException catch (e) {
           _handleRevokeToken();
-          return;
+          throw e; // surfaces the real refresh failure to the caller
         }
       } else {
-        final authHeaders = await accessTokenHeader!();
+        final authHeaders = await _buildAccessHeaders();
         if (authHeaders != null && authHeaders.isNotEmpty) {
           currentHeaders.addAll(authHeaders);
         }
       }
     } else if (accessTokenHeader != null) {
-      final authHeaders = await accessTokenHeader!();
+      final authHeaders = await _buildAccessHeaders();
       if (authHeaders != null && authHeaders.isNotEmpty) {
         currentHeaders.addAll(authHeaders);
       }
@@ -166,10 +167,12 @@ class AuthLink extends Link {
         if (onTokenRefresh != null) {
           switch (_classify(response: response)) {
             case AuthFailure.refresh:
-              yield* _refreshAndRetry(req, contextHeaders, forward);
+              yield* _refreshAndRetry(req, contextHeaders, forward,
+                  originalResponse: response);
               return;
             case AuthFailure.revoke:
               _handleRevokeToken();
+              yield response; // still surfaces the real GraphQL error
               return;
             case AuthFailure.none:
               break;
@@ -181,11 +184,12 @@ class AuthLink extends Link {
       if (onTokenRefresh != null) {
         switch (_classify(response: e.parsedResponse, exception: e)) {
           case AuthFailure.refresh:
-            yield* _refreshAndRetry(req, contextHeaders, forward);
+            yield* _refreshAndRetry(req, contextHeaders, forward,
+                originalException: e);
             return;
           case AuthFailure.revoke:
             _handleRevokeToken();
-            return;
+            rethrow; // still surfaces the real HTTP status/response
           case AuthFailure.none:
             break;
         }
@@ -194,11 +198,17 @@ class AuthLink extends Link {
     }
   }
 
+  /// [originalResponse]/[originalException] is the unauthorized
+  /// response/exception that triggered this refresh — surfaced to the
+  /// caller if the refresh itself fails, instead of silently ending the
+  /// stream with no error at all.
   Stream<Response> _refreshAndRetry(
     Request req,
     Map<String, String> contextHeaders,
-    NextLink forward,
-  ) async* {
+    NextLink forward, {
+    Response? originalResponse,
+    ServerException? originalException,
+  }) async* {
     Logger.w(
         'Unauthorized response received — attempting token refresh and retry.',
         tag: 'AuthLink');
@@ -212,15 +222,29 @@ class AuthLink extends Link {
         yield* forward(retryReq);
       } else {
         _handleRevokeToken();
+        if (originalResponse != null) {
+          yield originalResponse;
+        } else if (originalException != null) {
+          throw originalException;
+        }
       }
-    } on RevokeTokenException {
+    } on RevokeTokenException catch (e) {
       _handleRevokeToken();
+      throw e; // the refresh failure itself, more specific than the original
     }
   }
 
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  /// Reads the current access token from [TokenStorage.i] and passes it to
+  /// [accessTokenHeader] — only called when a token is actually stored.
+  Future<Map<String, String>?> _buildAccessHeaders() async {
+    final token = await TokenStorage.i.accessToken;
+    if (token == null) return null;
+    return accessTokenHeader!(token);
+  }
 
   Future<Map<String, String>?> _refreshToken() {
     if (_ongoingRefresh != null) {
@@ -243,7 +267,16 @@ class AuthLink extends Link {
     } catch (exception, stackTrace) {
       Logger.e('Failed to refresh access token — revoking.',
           error: exception, stackTrace: stackTrace, tag: 'AuthLink');
-      completer.completeError(const RevokeTokenException(), stackTrace);
+      completer.completeError(
+        exception is RevokeTokenException
+            ? exception
+            : RevokeTokenException(
+                message: 'Token refresh failed: $exception',
+                originalException: exception,
+                originalStackTrace: stackTrace,
+              ),
+        stackTrace,
+      );
     } finally {
       _ongoingRefresh = null;
     }

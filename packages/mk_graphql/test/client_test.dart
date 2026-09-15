@@ -264,7 +264,7 @@ void main() {
       expect(
         GraphQLClient(
           url: 'https://api.example.com/graphql',
-          accessTokenHeader: () => {'Authorization': 'Bearer tok'},
+          accessTokenHeader: (_) => {'Authorization': 'Bearer tok'},
         ),
         isA<GraphQLClient>(),
       );
@@ -606,7 +606,7 @@ void main() {
         url: 'https://example.com/graphql',
         dio: dioInstance,
         addTypename: false,
-        refreshTokenHeader: () async =>
+        refreshTokenHeader: (_) async =>
             {'Authorization': 'Bearer the-refresh-token'},
         refreshCallback: (refreshClient, refreshToken) async {
           // Hits the mock Dio through the internal refresh client's own
@@ -678,7 +678,7 @@ void main() {
         refreshCallback: (refreshClient, refreshToken) async {
           // No refreshTokenHeader configured — this request through
           // refreshClient must not inherit the outer AuthLink's
-          // accessTokenHeader.
+          // accessTokenHeader, nor default to any header of its own.
           await refreshClient.future(_TestReq(const _TestVars('refresh')));
           return const TokenPair(accessToken: 'new-access');
         },
@@ -705,7 +705,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) => throw Exception('Refresh failed'),
         ),
         _ErrorLink(errors: [
@@ -714,14 +714,20 @@ void main() {
         ]),
       ]);
 
-      await chain
-          .request(gql.Request(
-            operation: gql.Operation(
-              document: parseString('query Test { user { id } }'),
-              operationName: 'Test',
-            ),
-          ))
-          .drain<void>();
+      await expectLater(
+        chain
+            .request(gql.Request(
+              operation: gql.Operation(
+                document: parseString('query Test { user { id } }'),
+                operationName: 'Test',
+              ),
+            ))
+            .drain<void>(),
+        // The real refresh failure reason is surfaced instead of silently
+        // ending the stream.
+        throwsA(isA<RevokeTokenException>()
+            .having((e) => e.message, 'message', contains('Refresh failed'))),
+      );
 
       expect(listenerCalled, isTrue);
       GraphQLClient.clearRevokeTokenListeners();
@@ -733,7 +739,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async {
             refreshCount++;
             await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -769,7 +775,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
         ),
         failingLink,
@@ -805,7 +811,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
         ),
         failingLink,
@@ -831,7 +837,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
         ),
         failingLink,
@@ -859,7 +865,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
           isUnauthorized: (context) => context.errorCode == 'TOKEN_EXPIRED'
               ? AuthFailure.refresh
@@ -900,7 +906,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async {
             refreshCalls++;
             return {'Authorization': 'Bearer new'};
@@ -934,7 +940,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async {
             refreshCalls++;
             return {'Authorization': 'Bearer new'};
@@ -959,9 +965,11 @@ void main() {
 
       expect(refreshCalls, equals(0));
       expect(revokeCalls, equals(1));
-      expect(responses, isEmpty,
-          reason: 'nothing is yielded on revoke, matching a failed-refresh '
-              'revoke — the stream just ends');
+      expect(responses, hasLength(1),
+          reason: 'the real FORBIDDEN response is still yielded instead of '
+              'silently ending the stream');
+      expect(responses.single.errors?.first.message,
+          equals('Insufficient permissions'));
     });
 
     test(
@@ -975,7 +983,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async {
             refreshCalls++;
             return {'Authorization': 'Bearer new'};
@@ -985,20 +993,24 @@ void main() {
         failingLink,
       ]);
 
-      final responses = await chain
-          .request(gql.Request(
-            operation: gql.Operation(
-              document: parseString('query Test { user { id } }'),
-              operationName: 'Test',
-            ),
-          ))
-          .toList();
+      await expectLater(
+        chain
+            .request(gql.Request(
+              operation: gql.Operation(
+                document: parseString('query Test { user { id } }'),
+                operationName: 'Test',
+              ),
+            ))
+            .toList(),
+        // The real ServerException is rethrown instead of silently ending
+        // the stream.
+        throwsA(isA<ServerException>()),
+      );
 
       expect(refreshCalls, equals(0));
       expect(revokeCalls, equals(1));
       expect(failingLink.calls, equals(1),
           reason: 'must not retry — a revoke is not a refresh-and-retry');
-      expect(responses, isEmpty);
     });
   });
 
@@ -1076,6 +1088,9 @@ void main() {
     });
 
     test('SseLink injects dynamic tokenHeader into request headers', () async {
+      // tokenHeader is only invoked when TokenStorage.i actually has an
+      // access token stored.
+      await _seedTokenStorage(accessToken: 'dynamic-sse-token');
       final dioInstance = dio.Dio();
       dio.RequestOptions? capturedOptions;
 
@@ -1098,7 +1113,7 @@ void main() {
       final sseLink = SseLink(
         'https://example.com/graphql/sse',
         client: dioInstance,
-        tokenHeader: () async => {'Authorization': 'Bearer dynamic-sse-token'},
+        tokenHeader: (_) async => {'Authorization': 'Bearer dynamic-sse-token'},
       );
 
       final req = gql.Request(
@@ -1149,6 +1164,9 @@ void main() {
         'AuthLink wraps SseLink and retries a 401 with a refreshed token — '
         'the same single-flight refresh path every other link goes through',
         () async {
+      // accessTokenHeader is only invoked when TokenStorage.i actually has
+      // an access token stored.
+      await _seedTokenStorage(accessToken: 'old-token');
       final dioInstance = dio.Dio();
       int callCount = 0;
       final capturedHeaders = <Map<String, dynamic>>[];
@@ -1185,7 +1203,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://example.com/graphql',
-          accessTokenHeader: () async => {'Authorization': 'Bearer old-token'},
+          accessTokenHeader: (_) async => {'Authorization': 'Bearer old-token'},
           onTokenRefresh: (_) async =>
               {'Authorization': 'Bearer refreshed-token'},
         ),

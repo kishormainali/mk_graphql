@@ -83,17 +83,21 @@ class GraphQLClient {
     /// Default headers merged into every HTTP request at the transport level.
     Map<String, String>? defaultHeaders,
 
-    /// Callback that supplies the current auth headers built from the access
-    /// token (e.g. `Authorization`). Not needed alongside [refreshCallback] —
-    /// the client reads the access token from [TokenStorage.i] itself. Only
-    /// for static/custom headers that don't come from [TokenStorage.i]
-    /// (rare); takes precedence over it when also provided.
-    AccessTokenCallback? accessTokenHeader,
+    /// Callback that builds the current auth headers (e.g. `Authorization`)
+    /// from the access token stored in [TokenStorage.i] — only invoked when
+    /// one is actually stored, so [TokenHeaderCallback]'s `token` argument is
+    /// never null in practice. Defaults to `Authorization: Bearer <token>`;
+    /// pass this only if your API expects a different header format (rare).
+    TokenHeaderCallback? accessTokenHeader,
 
-    /// Callback that supplies headers built from the refresh token (e.g.
-    /// `Authorization`) — when provided, attached to the internal
-    /// token-refresh HTTP request instead of [accessTokenHeader].
-    AccessTokenCallback? refreshTokenHeader,
+    /// Callback that builds headers from the refresh token stored in
+    /// [TokenStorage.i] — when provided, attached to every request sent
+    /// through the internal refresh client instead of [accessTokenHeader].
+    /// Only invoked when a refresh token is actually stored. No default: the
+    /// refresh token normally reaches your refresh endpoint as the
+    /// [refreshCallback] parameter (for a body/variable) — pass this only if
+    /// your refresh endpoint additionally/instead expects it as a header.
+    TokenHeaderCallback? refreshTokenHeader,
 
     /// Returns whether the current token is expired. Triggers proactive refresh.
     IsTokenExpiredCallback? isTokenExpired,
@@ -137,6 +141,7 @@ class GraphQLClient {
 
     final resolvedCallbacks = _resolveAuthCallbacks(
       accessTokenHeader: accessTokenHeader,
+      refreshTokenHeader: refreshTokenHeader,
       onRevokeToken: onRevokeToken,
       refreshCallback: refreshCallback,
     );
@@ -156,7 +161,7 @@ class GraphQLClient {
         defaultHeaders: defaultHeaders,
         loggerOptions: loggerOptions,
         accessTokenHeader: resolvedCallbacks.accessTokenHeader,
-        refreshTokenHeader: refreshTokenHeader,
+        refreshTokenHeader: resolvedCallbacks.refreshTokenHeader,
         isTokenExpired: isTokenExpired,
         isUnauthorized: isUnauthorized,
         onTokenRefresh: resolvedCallbacks.onTokenRefresh,
@@ -191,24 +196,28 @@ class GraphQLClient {
   /// [refreshCallback] so [GraphQLClient] can manage its own auth session via
   /// [TokenStorage.i] — [refreshCallback] is the sole source of truth for
   /// refresh; an explicit [accessTokenHeader] only overrides the header
-  /// supplier.
+  /// supplier. [refreshTokenHeader] is passed through unchanged — it has no
+  /// default and is only attached when the app explicitly supplies one.
   ///
   /// The resulting `onTokenRefresh` is what [AuthLink] dedupes concurrent
   /// 401s against (a shared in-flight [Future] — see `AuthLink._refreshToken`),
   /// so however many requests fail at once, [refreshCallback] runs at most
   /// once per refresh cycle and every one of them retries once it resolves.
   static ({
-    AccessTokenCallback? accessTokenHeader,
+    TokenHeaderCallback? accessTokenHeader,
+    TokenHeaderCallback? refreshTokenHeader,
     OnRefreshCallback? onTokenRefresh,
     OnRevokeTokenCallback? onRevokeToken,
   }) _resolveAuthCallbacks({
-    required AccessTokenCallback? accessTokenHeader,
+    required TokenHeaderCallback? accessTokenHeader,
+    required TokenHeaderCallback? refreshTokenHeader,
     required OnRevokeTokenCallback? onRevokeToken,
     required RefreshCallback? refreshCallback,
   }) {
     if (refreshCallback == null) {
       return (
         accessTokenHeader: accessTokenHeader,
+        refreshTokenHeader: refreshTokenHeader,
         onTokenRefresh: null,
         onRevokeToken: onRevokeToken,
       );
@@ -216,10 +225,11 @@ class GraphQLClient {
 
     return (
       accessTokenHeader: accessTokenHeader ??
-          () async {
-            final token = await TokenStorage.i.accessToken;
-            return token != null ? {'Authorization': 'Bearer $token'} : null;
-          },
+          (token) async => {'Authorization': 'Bearer $token'},
+      // No default: refreshCallback already receives the refresh token
+      // directly as a parameter (for a body/variable), so a header is only
+      // attached when the app explicitly opts in via refreshTokenHeader.
+      refreshTokenHeader: refreshTokenHeader,
       onTokenRefresh: (refreshClient) async {
         final currentRefreshToken = await TokenStorage.i.refreshToken;
         // No refresh token to call the API with — revoke straight away
@@ -246,8 +256,8 @@ class GraphQLClient {
     required Dio dio,
     Map<String, String>? defaultHeaders,
     LoggerOptions loggerOptions = const LoggerOptions(),
-    AccessTokenCallback? accessTokenHeader,
-    AccessTokenCallback? refreshTokenHeader,
+    TokenHeaderCallback? accessTokenHeader,
+    TokenHeaderCallback? refreshTokenHeader,
     IsTokenExpiredCallback? isTokenExpired,
     IsUnauthorizedCallback? isUnauthorized,
     OnRefreshCallback? onTokenRefresh,
@@ -291,7 +301,12 @@ class GraphQLClient {
             ? WebSocketLink(
                 wsUrl,
                 initialPayload: accessTokenHeader != null
-                    ? () async => await accessTokenHeader() ?? const {}
+                    ? () async {
+                        final token = await TokenStorage.i.accessToken;
+                        return token != null
+                            ? await accessTokenHeader(token)
+                            : const {};
+                      }
                     : null,
               )
             : sseUrl != null

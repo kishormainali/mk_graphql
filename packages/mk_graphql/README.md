@@ -60,13 +60,13 @@ final client = GraphQLClient(
   sseUrl: 'https://api.example.com/graphql/sse',
   // wsUrl: 'wss://api.example.com/graphql',
 
-  // The client persists tokens itself (via flutter_secure_storage) and
-  // attaches the Authorization header to every request automatically.
-  // Just tell it how to perform a refresh — no header/storage plumbing needed.
+  // The client reads/writes tokens itself via the `TokenStorage.i` singleton
+  // (backed by flutter_secure_storage) and attaches the Authorization header
+  // to every request automatically. Just tell it how to perform a refresh —
+  // no header/storage plumbing needed.
   refreshCallback: (refreshClient, refreshToken) async {
-    if (refreshToken == null) return null; // nothing to refresh with — revoke
     final refreshed = await refreshClient.future(RefreshTokenRequest(refreshToken));
-    return AuthToken(
+    return TokenPair(
       accessToken: refreshed.accessToken,
       refreshToken: refreshed.refreshToken,
     );
@@ -78,28 +78,15 @@ final client = GraphQLClient(
   // Default error policy: none (throw if errors), ignore (return partial data), all (return data with errors)
   defaultErrorPolicy: ErrorPolicy.none,
 );
-
-// After a successful login mutation, persist the tokens the client will use
-// for every subsequent request:
-await client.setAuthToken(
-  AuthToken(accessToken: loginResult.accessToken, refreshToken: loginResult.refreshToken),
-);
-
-// On logout:
-await client.clearAuthToken();
-
-// Listen for auth state changes anywhere in the app (login, refresh, logout,
-// or a revoked refresh) — e.g. to redirect to the login screen:
-client.onAuthTokenChange.listen((token) {
-  if (token == null) router.go('/login');
-});
 ```
 
-`refreshCallback` is the single source of truth for refresh — it receives the currently stored refresh token (always non-null: with nothing stored yet, the client revokes immediately without calling it) and a plain `GraphQLClient` (no auth link attached) to run the refresh request via its normal typed API. Return the new `AuthToken` to persist, or `null`/throw to revoke — `AuthLink.registerRevokeTokenListener(...)` fires either way so you can navigate to a login screen.
+`refreshCallback` is the single source of truth for refresh — it receives the currently stored refresh token (always non-null: with nothing stored yet, the client revokes immediately without calling it) and a plain `GraphQLClient` (no auth link attached) to run the refresh request via its normal typed API. Return the new `TokenPair` to persist, or `null`/throw to revoke — `AuthLink.registerRevokeTokenListener(...)` fires either way so you can navigate to a login screen.
 
 However many requests fail at once, only one `refreshCallback` call is made — `AuthLink` queues the rest behind the in-flight refresh and retries all of them once it resolves.
 
-If you'd rather supply the header yourself (static/custom, not from `tokenStorage`), pass `tokenHeader` — it overrides the header side only and can be combined with `refreshCallback`.
+If you'd rather supply the header yourself (static/custom, not from `TokenStorage.i`), pass `accessTokenHeader` — it overrides the header side only and can be combined with `refreshCallback`. If your refresh endpoint expects the refresh token as a header rather than a body param, pass `refreshTokenHeader` too — it's attached to every request made through `refreshClient` above, instead of `accessTokenHeader`.
+
+By default, a response/exception is classified as `AuthFailure.refresh` when `extensions.code`/HTTP status is `UNAUTHORIZED`/`UNAUTHENTICATED`/401 (the request is retried once refreshed), and as `AuthFailure.revoke` when it's `FORBIDDEN`/403 — a valid token simply lacking permission, so a refresh wouldn't help; the token is revoked immediately instead. If your API signals either case differently, pass `isUnauthorized: (context) => ...` — it receives a normalized `UnauthorizedContext` (same shape whether the failure came from a response or a thrown exception) and fully replaces the built-in classification.
 
 ---
 
@@ -263,7 +250,7 @@ class AnimeListBloc extends Bloc<AnimeListEvent, AnimeListState> {
 final client = GraphQLClient(
   url: 'https://api.example.com/graphql',
   sseUrl: 'https://api.example.com/graphql/sse',
-  tokenHeader: () async => {'Authorization': 'Bearer $token'},
+  accessTokenHeader: () async => {'Authorization': 'Bearer $token'},
 );
 
 client.stream(mySubscriptionRequest).listen((data) {

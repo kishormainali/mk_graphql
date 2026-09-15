@@ -4,13 +4,14 @@ import 'dart:io' show HandshakeException, SocketException;
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart' as dio;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart' as gql;
 import 'package:gql_link/gql_link.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:mk_graphql/mk_graphql.dart';
+import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
 // ---------------------------------------------------------------------------
 // Test domain types
@@ -138,45 +139,15 @@ class _ErrorLink extends Link {
   }
 }
 
-/// In-memory [TokenStorage] test double — avoids touching the real
-/// platform-channel-backed [SecureTokenStorage] in unit tests.
-class _FakeTokenStorage implements TokenStorage {
-  _FakeTokenStorage({String? initialAccessToken, String? initialRefreshToken})
-      : _accessToken = initialAccessToken,
-        _refreshToken = initialRefreshToken;
-
-  String? _accessToken;
-  String? _refreshToken;
-  bool cleared = false;
-  final _changes = StreamController<AuthToken?>.broadcast();
-
-  @override
-  Future<String?> get accessToken async => _accessToken;
-
-  @override
-  Future<String?> get refreshToken async => _refreshToken;
-
-  @override
-  Stream<AuthToken?> get onChange => _changes.stream;
-
-  @override
-  Future<void> save(AuthToken token) async {
-    _accessToken = token.accessToken;
-    if (token.refreshToken != null) _refreshToken = token.refreshToken;
-    cleared = false;
-    _changes.add(token);
-  }
-
-  @override
-  Future<void> clear() async {
-    _accessToken = null;
-    _refreshToken = null;
-    cleared = true;
-    _changes.add(null);
-  }
-
-  @override
-  Future<void> dispose() => _changes.close();
+/// Seeds the in-memory test double backing [TokenStorage.i] — GraphQLClient
+/// now always talks to the [TokenStorage] singleton (no DI), so tests reset
+/// its backing [FlutterSecureStorage] mock platform and go through
+/// [TokenStorage.saveToken] rather than poking storage keys directly.
+Future<void> _seedTokenStorage({String? accessToken, String? refreshToken}) {
+  FlutterSecureStorage.setMockInitialValues({});
+  if (accessToken == null) return Future.value();
+  return TokenStorage.i.saveToken(
+      TokenPair(accessToken: accessToken, refreshToken: refreshToken));
 }
 
 /// Throws [exception] on the first call (simulating a terminating link like
@@ -202,6 +173,12 @@ class _ServerExceptionOnceLink extends Link {
 // ---------------------------------------------------------------------------
 
 void main() {
+  // TokenStorage.i lazily constructs a SharedPreferencesAsync on first use
+  // (for clearOnInstall) — give it an in-memory platform so that doesn't
+  // throw, even though these tests never call clearOnInstall themselves.
+  SharedPreferencesAsyncPlatform.instance =
+      InMemorySharedPreferencesAsync.empty();
+
   group('InMemoryCache Tests', () {
     test('writeQuery and readQuery normalised caching', () {
       final cache = InMemoryCache();
@@ -287,7 +264,7 @@ void main() {
       expect(
         GraphQLClient(
           url: 'https://api.example.com/graphql',
-          tokenHeader: () => {'Authorization': 'Bearer tok'},
+          accessTokenHeader: () => {'Authorization': 'Bearer tok'},
         ),
         isA<GraphQLClient>(),
       );
@@ -333,77 +310,25 @@ void main() {
     });
   });
 
-  group('GraphQLClient refreshCallback / tokenStorage', () {
-    test('setAuthToken/clearAuthToken delegate to tokenStorage', () async {
-      final storage = _FakeTokenStorage();
+  group('GraphQLClient refreshCallback / TokenStorage.i', () {
+    test('isAuthenticated reflects TokenStorage.i', () async {
+      await _seedTokenStorage();
       final client = GraphQLClient(
-        url: 'https://api.example.com/graphql',
-        addTypename: false,
-        tokenStorage: storage,
-        refreshCallback: (_, __) async => null,
-      );
-
+          url: 'https://api.example.com/graphql', addTypename: false);
       expect(await client.isAuthenticated, isFalse);
 
-      await client.setAuthToken(
-        const AuthToken(accessToken: 'access-1', refreshToken: 'refresh-1'),
-      );
+      await _seedTokenStorage(
+          accessToken: 'access-1', refreshToken: 'refresh-1');
       expect(await client.isAuthenticated, isTrue);
-      expect(await storage.accessToken, equals('access-1'));
-
-      await client.clearAuthToken();
-      expect(await client.isAuthenticated, isFalse);
-      expect(storage.cleared, isTrue);
-    });
-
-    test('onAuthTokenChange emits on setAuthToken and clearAuthToken',
-        () async {
-      final storage = _FakeTokenStorage();
-      final client = GraphQLClient(
-        url: 'https://api.example.com/graphql',
-        addTypename: false,
-        tokenStorage: storage,
-        refreshCallback: (_, __) async => null,
-      );
-
-      final events = <AuthToken?>[];
-      final sub = client.onAuthTokenChange.listen(events.add);
-
-      await client.setAuthToken(const AuthToken(accessToken: 'access-1'));
-      await client.clearAuthToken();
-      await Future<void>.delayed(Duration.zero);
-
-      expect(events, hasLength(2));
-      expect(events[0]?.accessToken, equals('access-1'));
-      expect(events[1], isNull);
-
-      await sub.cancel();
-    });
-
-    test('onAuthTokenChange is empty when no tokenStorage/refreshCallback',
-        () async {
-      final client = GraphQLClient(
-          url: 'https://api.example.com/graphql', addTypename: false);
-      expect(await client.onAuthTokenChange.isEmpty, isTrue);
-    });
-
-    test('setAuthToken throws when no tokenStorage/refreshCallback configured',
-        () async {
-      final client = GraphQLClient(
-          url: 'https://api.example.com/graphql', addTypename: false);
-      expect(
-        () => client.setAuthToken(const AuthToken(accessToken: 'x')),
-        throwsA(isA<StateError>()),
-      );
     });
 
     test(
         'refreshCallback receives the stored refresh token, persists the new '
-        'AuthToken, and the failed request is retried with the new access token',
+        'TokenPair, and the failed request is retried with the new access token',
         () async {
-      final storage = _FakeTokenStorage(
-        initialAccessToken: 'old-access',
-        initialRefreshToken: 'old-refresh',
+      await _seedTokenStorage(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
       );
 
       var callCount = 0;
@@ -444,10 +369,9 @@ void main() {
         url: 'https://example.com/graphql',
         dio: dioInstance,
         addTypename: false,
-        tokenStorage: storage,
         refreshCallback: (refreshClient, refreshToken) async {
           refreshTokenSeen = refreshToken;
-          return const AuthToken(
+          return const TokenPair(
               accessToken: 'new-access', refreshToken: 'new-refresh');
         },
       );
@@ -459,17 +383,17 @@ void main() {
       expect(refreshTokenSeen, equals('old-refresh'));
       expect(capturedHeaders[0]['Authorization'], equals('Bearer old-access'));
       expect(capturedHeaders[1]['Authorization'], equals('Bearer new-access'));
-      expect(await storage.accessToken, equals('new-access'));
-      expect(await storage.refreshToken, equals('new-refresh'));
+      expect(await TokenStorage.i.accessToken, equals('new-access'));
+      expect(await TokenStorage.i.refreshToken, equals('new-refresh'));
     });
 
     test(
         'defaultHeaders reach the token-refresh request too, not just the '
         'original one — AuthLink must share the client\'s configured Dio '
         'instance rather than falling back to an unconfigured one', () async {
-      final storage = _FakeTokenStorage(
-        initialAccessToken: 'old-access',
-        initialRefreshToken: 'old-refresh',
+      await _seedTokenStorage(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
       );
 
       var callCount = 0;
@@ -510,9 +434,8 @@ void main() {
         dio: dioInstance,
         defaultHeaders: {'X-Client-Id': 'test-client'},
         addTypename: false,
-        tokenStorage: storage,
         refreshCallback: (refreshClient, refreshToken) async =>
-            const AuthToken(accessToken: 'new-access'),
+            const TokenPair(accessToken: 'new-access'),
       );
 
       await client.future(_TestReq(const _TestVars('123')));
@@ -528,7 +451,7 @@ void main() {
     test(
         'refreshCallback is never called without a stored refresh token; '
         'revokes immediately instead', () async {
-      final storage = _FakeTokenStorage(initialAccessToken: 'old-access');
+      await _seedTokenStorage(accessToken: 'old-access');
       var refreshCalls = 0;
       var listenerCalled = false;
       GraphQLClient.registerRevokeTokenListener(() => listenerCalled = true);
@@ -555,10 +478,9 @@ void main() {
         url: 'https://example.com/graphql',
         dio: dioInstance,
         addTypename: false,
-        tokenStorage: storage,
         refreshCallback: (_, __) async {
           refreshCalls++;
-          return const AuthToken(accessToken: 'should-not-happen');
+          return const TokenPair(accessToken: 'should-not-happen');
         },
       );
 
@@ -569,16 +491,16 @@ void main() {
 
       expect(refreshCalls, equals(0));
       expect(listenerCalled, isTrue);
-      expect(storage.cleared, isTrue);
+      expect(await TokenStorage.i.accessToken, isNull);
       GraphQLClient.clearRevokeTokenListeners();
     });
 
     test(
         'multiple concurrent requests failing at once trigger only one '
         'refreshCallback call and all retry successfully', () async {
-      final storage = _FakeTokenStorage(
-        initialAccessToken: 'old-access',
-        initialRefreshToken: 'old-refresh',
+      await _seedTokenStorage(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
       );
       var refreshCalls = 0;
 
@@ -616,13 +538,12 @@ void main() {
         url: 'https://example.com/graphql',
         dio: dioInstance,
         addTypename: false,
-        tokenStorage: storage,
         refreshCallback: (refreshClient, refreshToken) async {
           refreshCalls++;
           // Widen the window so all 5 concurrent 401s queue behind this
           // single refresh instead of each triggering their own.
           await Future<void>.delayed(const Duration(milliseconds: 30));
-          return const AuthToken(
+          return const TokenPair(
               accessToken: 'new-access', refreshToken: 'new-refresh');
         },
       );
@@ -638,6 +559,142 @@ void main() {
       expect(
           results.map((d) => d.name), everyElement(equals('Refreshed User')));
     });
+
+    test(
+        'refreshTokenHeader attaches the refresh token to requests made '
+        'through the internal refresh client, not the normal access-token '
+        'header', () async {
+      await _seedTokenStorage(
+        accessToken: 'old-access',
+        refreshToken: 'the-refresh-token',
+      );
+
+      var callCount = 0;
+      final capturedHeaders = <Map<String, dynamic>>[];
+      final dioInstance = dio.Dio();
+      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+        callCount++;
+        capturedHeaders.add(Map.from(options.headers));
+        if (callCount == 1) {
+          return dio.ResponseBody.fromString(
+            jsonEncode({
+              'errors': [
+                {
+                  'message': 'Unauthenticated',
+                  'extensions': {'code': 'UNAUTHENTICATED'},
+                }
+              ]
+            }),
+            401,
+            headers: {
+              'content-type': ['application/json']
+            },
+          );
+        }
+        return dio.ResponseBody.fromString(
+          jsonEncode({
+            'data': {'id': '123', 'name': 'Refreshed User'}
+          }),
+          200,
+          headers: {
+            'content-type': ['application/json']
+          },
+        );
+      });
+
+      final client = GraphQLClient(
+        url: 'https://example.com/graphql',
+        dio: dioInstance,
+        addTypename: false,
+        refreshTokenHeader: () async =>
+            {'Authorization': 'Bearer the-refresh-token'},
+        refreshCallback: (refreshClient, refreshToken) async {
+          // Hits the mock Dio through the internal refresh client's own
+          // pipeline, which is where refreshTokenHeader's headers apply.
+          await refreshClient.future(_TestReq(const _TestVars('refresh')));
+          return const TokenPair(accessToken: 'new-access');
+        },
+      );
+
+      await client.future(_TestReq(const _TestVars('123')));
+
+      expect(callCount, equals(3));
+      expect(capturedHeaders[0]['Authorization'], equals('Bearer old-access'),
+          reason: 'original request carries the access-token header');
+      expect(capturedHeaders[1]['Authorization'],
+          equals('Bearer the-refresh-token'),
+          reason: 'the request made via refreshClient inside refreshCallback '
+              'carries the refresh-token header instead');
+      expect(capturedHeaders[2]['Authorization'], equals('Bearer new-access'),
+          reason: 'the retried original request carries the new access token');
+    });
+
+    test(
+        'without refreshTokenHeader, a request made through the internal '
+        'refresh client carries no Authorization header at all — the '
+        'access-token header must never leak onto refresh requests', () async {
+      await _seedTokenStorage(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+      );
+
+      var callCount = 0;
+      final capturedHeaders = <Map<String, dynamic>>[];
+      final dioInstance = dio.Dio();
+      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+        callCount++;
+        capturedHeaders.add(Map.from(options.headers));
+        if (callCount == 1) {
+          return dio.ResponseBody.fromString(
+            jsonEncode({
+              'errors': [
+                {
+                  'message': 'Unauthenticated',
+                  'extensions': {'code': 'UNAUTHENTICATED'},
+                }
+              ]
+            }),
+            401,
+            headers: {
+              'content-type': ['application/json']
+            },
+          );
+        }
+        return dio.ResponseBody.fromString(
+          jsonEncode({
+            'data': {'id': '123', 'name': 'Refreshed User'}
+          }),
+          200,
+          headers: {
+            'content-type': ['application/json']
+          },
+        );
+      });
+
+      final client = GraphQLClient(
+        url: 'https://example.com/graphql',
+        dio: dioInstance,
+        addTypename: false,
+        refreshCallback: (refreshClient, refreshToken) async {
+          // No refreshTokenHeader configured — this request through
+          // refreshClient must not inherit the outer AuthLink's
+          // accessTokenHeader.
+          await refreshClient.future(_TestReq(const _TestVars('refresh')));
+          return const TokenPair(accessToken: 'new-access');
+        },
+      );
+
+      await client.future(_TestReq(const _TestVars('123')));
+
+      expect(callCount, equals(3));
+      expect(capturedHeaders[0]['Authorization'], equals('Bearer old-access'),
+          reason: 'original request carries the access-token header');
+      expect(capturedHeaders[1].containsKey('Authorization'), isFalse,
+          reason: 'the refresh client request must carry no Authorization '
+              'header when refreshTokenHeader is not configured');
+      expect(capturedHeaders[2]['Authorization'], equals('Bearer new-access'),
+          reason: 'the retried original request carries the new access token');
+    });
   });
 
   group('AuthLink', () {
@@ -648,7 +705,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          tokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: () => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) => throw Exception('Refresh failed'),
         ),
         _ErrorLink(errors: [
@@ -676,7 +733,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          tokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: () => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async {
             refreshCount++;
             await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -712,7 +769,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          tokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: () => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
         ),
         failingLink,
@@ -748,7 +805,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          tokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: () => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
         ),
         failingLink,
@@ -774,7 +831,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://api.example.com/graphql',
-          tokenHeader: () => {'Authorization': 'Bearer old'},
+          accessTokenHeader: () => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
         ),
         failingLink,
@@ -793,6 +850,155 @@ void main() {
       );
       expect(failingLink.calls, equals(1),
           reason: 'must not retry non-unauthorized failures');
+    });
+
+    test(
+        'isUnauthorized lets a custom API convention (a non-standard error '
+        'code the built-in default would not recognize) trigger refresh',
+        () async {
+      final chain = Link.from([
+        AuthLink(
+          url: 'https://api.example.com/graphql',
+          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
+          isUnauthorized: (context) => context.errorCode == 'TOKEN_EXPIRED'
+              ? AuthFailure.refresh
+              : AuthFailure.none,
+        ),
+        _ErrorLink(errors: [
+          const gql.GraphQLError(
+              message: 'Session expired',
+              extensions: {'code': 'TOKEN_EXPIRED'}),
+        ]),
+      ]);
+
+      final responses = await chain
+          .request(gql.Request(
+            operation: gql.Operation(
+              document: parseString('query Test { user { id } }'),
+              operationName: 'Test',
+            ),
+          ))
+          .toList();
+
+      // _ErrorLink always yields the same error response — the "retry"
+      // observed here is just that response coming through once more,
+      // proving the refresh-and-retry path fired instead of the error
+      // being yielded straight through.
+      expect(responses, hasLength(1));
+      expect(responses.single.errors?.first.extensions?['code'],
+          equals('TOKEN_EXPIRED'));
+    });
+
+    test(
+        'isUnauthorized overrides the built-in default entirely — a 401 it '
+        'does not recognize is left alone, not refreshed', () async {
+      final failingLink = _ServerExceptionOnceLink(
+        const ServerException(statusCode: 401),
+      );
+      var refreshCalls = 0;
+      final chain = Link.from([
+        AuthLink(
+          url: 'https://api.example.com/graphql',
+          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          onTokenRefresh: (_) async {
+            refreshCalls++;
+            return {'Authorization': 'Bearer new'};
+          },
+          isUnauthorized: (context) => AuthFailure.none,
+        ),
+        failingLink,
+      ]);
+
+      await expectLater(
+        chain
+            .request(gql.Request(
+              operation: gql.Operation(
+                document: parseString('query Test { user { id } }'),
+                operationName: 'Test',
+              ),
+            ))
+            .drain<void>(),
+        throwsA(isA<ServerException>()),
+      );
+      expect(refreshCalls, equals(0));
+      expect(failingLink.calls, equals(1));
+    });
+
+    test(
+        'a 403/FORBIDDEN response revokes immediately without attempting a '
+        'refresh — the token is valid but lacks permission, so refreshing '
+        "wouldn't help", () async {
+      var refreshCalls = 0;
+      var revokeCalls = 0;
+      final chain = Link.from([
+        AuthLink(
+          url: 'https://api.example.com/graphql',
+          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          onTokenRefresh: (_) async {
+            refreshCalls++;
+            return {'Authorization': 'Bearer new'};
+          },
+          onRevokeToken: () => revokeCalls++,
+        ),
+        _ErrorLink(errors: [
+          const gql.GraphQLError(
+              message: 'Insufficient permissions',
+              extensions: {'code': 'FORBIDDEN'}),
+        ]),
+      ]);
+
+      final responses = await chain
+          .request(gql.Request(
+            operation: gql.Operation(
+              document: parseString('query Test { user { id } }'),
+              operationName: 'Test',
+            ),
+          ))
+          .toList();
+
+      expect(refreshCalls, equals(0));
+      expect(revokeCalls, equals(1));
+      expect(responses, isEmpty,
+          reason: 'nothing is yielded on revoke, matching a failed-refresh '
+              'revoke — the stream just ends');
+    });
+
+    test(
+        'a thrown ServerException with HTTP 403 status also revokes '
+        'immediately instead of attempting a refresh', () async {
+      final failingLink = _ServerExceptionOnceLink(
+        const ServerException(statusCode: 403),
+      );
+      var refreshCalls = 0;
+      var revokeCalls = 0;
+      final chain = Link.from([
+        AuthLink(
+          url: 'https://api.example.com/graphql',
+          accessTokenHeader: () => {'Authorization': 'Bearer old'},
+          onTokenRefresh: (_) async {
+            refreshCalls++;
+            return {'Authorization': 'Bearer new'};
+          },
+          onRevokeToken: () => revokeCalls++,
+        ),
+        failingLink,
+      ]);
+
+      final responses = await chain
+          .request(gql.Request(
+            operation: gql.Operation(
+              document: parseString('query Test { user { id } }'),
+              operationName: 'Test',
+            ),
+          ))
+          .toList();
+
+      expect(refreshCalls, equals(0));
+      expect(revokeCalls, equals(1));
+      expect(failingLink.calls, equals(1),
+          reason: 'must not retry — a revoke is not a refresh-and-retry');
+      expect(responses, isEmpty);
     });
   });
 
@@ -979,7 +1185,7 @@ void main() {
       final chain = Link.from([
         AuthLink(
           url: 'https://example.com/graphql',
-          tokenHeader: () async => {'Authorization': 'Bearer old-token'},
+          accessTokenHeader: () async => {'Authorization': 'Bearer old-token'},
           onTokenRefresh: (_) async =>
               {'Authorization': 'Bearer refreshed-token'},
         ),
@@ -1110,20 +1316,24 @@ void main() {
         );
 
     test('sends a query and parses a successful response', () async {
-      final client = MockClient((request) async {
-        expect(request.method, equals('POST'));
-        return http.Response(
+      final dioInstance = dio.Dio();
+      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+        expect(options.method, equals('POST'));
+        return dio.ResponseBody.fromString(
           jsonEncode({
             'data': {
               'user': {'id': '1', 'name': 'Ada'}
             }
           }),
           200,
-          headers: {'content-type': 'application/json'},
+          headers: {
+            'content-type': ['application/json']
+          },
         );
       });
 
-      final httpLink = HttpLink('https://example.com/graphql', client: client);
+      final httpLink =
+          HttpLink('https://example.com/graphql', client: dioInstance);
       final responses = await httpLink.request(buildReq()).toList();
 
       expect(responses.length, equals(1));
@@ -1133,13 +1343,16 @@ void main() {
     test(
         'a connection failure throws HttpLinkConnectionException and maps to NetworkException',
         () async {
-      // Mirrors what a real IOClient throws for a socket failure: a
-      // ClientException that also implements SocketException (see
-      // package:http's io_client.dart `_ClientSocketException`).
-      final client = MockClient((request) async {
-        throw http.ClientException('Failed host lookup', request.url);
+      final dioInstance = dio.Dio();
+      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+        throw dio.DioException(
+          requestOptions: options,
+          type: dio.DioExceptionType.connectionError,
+          error: const SocketException('Failed host lookup'),
+        );
       });
-      final httpLink = HttpLink('https://example.com/graphql', client: client);
+      final httpLink =
+          HttpLink('https://example.com/graphql', client: dioInstance);
 
       Object? caught;
       try {
@@ -1155,10 +1368,12 @@ void main() {
     test(
         'a malformed response body throws ResponseFormatException instead of a raw FormatException',
         () async {
-      final client = MockClient((request) async {
-        return http.Response('not json', 200);
+      final dioInstance = dio.Dio();
+      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+        return dio.ResponseBody.fromString('not json', 200);
       });
-      final httpLink = HttpLink('https://example.com/graphql', client: client);
+      final httpLink =
+          HttpLink('https://example.com/graphql', client: dioInstance);
 
       Object? caught;
       try {
@@ -1174,12 +1389,14 @@ void main() {
         'HttpLinkCanceledException instead of waiting for the response',
         () async {
       final handlerStarted = Completer<void>();
-      final client = MockClient((request) async {
+      final dioInstance = dio.Dio();
+      dioInstance.httpClientAdapter = _MockUploadAdapter((options) async {
         handlerStarted.complete();
         await Future.delayed(const Duration(seconds: 5));
-        return http.Response(jsonEncode({'data': null}), 200);
+        return dio.ResponseBody.fromString(jsonEncode({'data': null}), 200);
       });
-      final httpLink = HttpLink('https://example.com/graphql', client: client);
+      final httpLink =
+          HttpLink('https://example.com/graphql', client: dioInstance);
       final cancelToken = dio.CancelToken();
 
       final future = httpLink
@@ -1198,11 +1415,13 @@ void main() {
     test('an already-cancelled CancelToken fails fast without sending',
         () async {
       var handlerCalled = false;
-      final client = MockClient((request) async {
+      final dioInstance = dio.Dio();
+      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
         handlerCalled = true;
-        return http.Response(jsonEncode({'data': null}), 200);
+        return dio.ResponseBody.fromString(jsonEncode({'data': null}), 200);
       });
-      final httpLink = HttpLink('https://example.com/graphql', client: client);
+      final httpLink =
+          HttpLink('https://example.com/graphql', client: dioInstance);
       final cancelToken = dio.CancelToken()..cancel();
 
       await expectLater(

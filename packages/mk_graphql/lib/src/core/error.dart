@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:gql_link/gql_link.dart';
 import '../link/transport/dio_link.dart';
 import '../link/transport/http_link.dart';
+import 'graphql_error_mapper.dart';
 
 /// Represents a single GraphQL Error returned in a GraphQL response payload.
 class GraphQLError {
@@ -269,7 +270,7 @@ extension GraphQLExceptionExtension on GraphQLException {
 
     // 2. Check for other standard error types across the error list
     for (final err in errors) {
-      final code = err.extensions?['code']?.toString().toUpperCase();
+      final code = extractErrorCode(err.extensions);
       if (code == 'UNAUTHORIZED' ||
           code == 'UNAUTHENTICATED' ||
           code == 'FORBIDDEN') {
@@ -307,7 +308,7 @@ extension GraphQLExceptionExtension on GraphQLException {
   static bool _isValidationError(GraphQLError error) {
     final ext = error.extensions;
     if (ext != null) {
-      final code = ext['code']?.toString().toUpperCase();
+      final code = extractErrorCode(ext);
       if (code == 'BAD_USER_INPUT' ||
           code == 'GRAPHQL_VALIDATION_FAILED' ||
           code == 'VALIDATION_FAILED' ||
@@ -508,19 +509,7 @@ extension GraphQLExceptionExtension on GraphQLException {
       if (exception.parsedResponse != null &&
           exception.parsedResponse!.errors != null &&
           exception.parsedResponse!.errors!.isNotEmpty) {
-        final gErrors = exception.parsedResponse!.errors!
-            .map((e) => GraphQLError(
-                  message: e.message,
-                  locations: e.locations
-                      ?.map((loc) => GraphQLErrorLocation(
-                            line: loc.line,
-                            column: loc.column,
-                          ))
-                      .toList(),
-                  path: e.path?.cast<Object>(),
-                  extensions: e.extensions,
-                ))
-            .toList();
+        final gErrors = mapGraphQLErrors(exception.parsedResponse!.errors)!;
         return GraphQLExceptionExtension.fromGraphQLErrors(gErrors);
       }
       return AppServerException(

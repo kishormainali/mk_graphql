@@ -35,16 +35,12 @@ final client = GraphQLClient(
   sseUrl: 'https://api.example.com/graphql/sse',
   // wsUrl: 'wss://api.example.com/graphql',
 
-  // Optional: auth headers attached to every request
-  tokenHeader: () async {
-    final token = await getStoredToken();
-    return token != null ? {'Authorization': 'Bearer $token'} : {};
-  },
-
-  // Optional: called on 401 response to refresh token and retry
-  onTokenRefresh: (dioLink) async {
-    final newToken = await refreshUserToken();
-    return newToken != null ? {'Authorization': 'Bearer $newToken'} : null;
+  // Optional: the sole source of truth for token refresh. The client manages
+  // TokenStorage.i and the `Authorization` header on its own — no app-side
+  // storage or header plumbing needed.
+  refreshCallback: (refreshClient, refreshToken) async {
+    final newToken = await refreshUserToken(refreshClient, refreshToken);
+    return newToken; // a TokenPair, or null/throw to revoke
   },
 
   // Optional: default fetch policy (defaults to FetchPolicy.noCache)
@@ -64,6 +60,12 @@ AuthLink?  →  TypenameLink?  →  LoggerLink  →  split(subscription?, WebSoc
 ```
 
 See [Link Pipeline](links.md) for details on customizing links or using `GraphQLClient.fromLink(...)`.
+
+`GraphQLClient` reads and writes tokens through the `TokenStorage.i` singleton
+— it never needs app-side storage plumbing when `refreshCallback` is
+configured. On explicit logout, call `TokenStorage.i.deleteToken()` and
+`AuthLink.notifyRevokeToken()` to drive app-wide auth state (e.g. navigate to
+the login screen) via `GraphQLClient.registerRevokeTokenListener(...)`.
 
 ---
 

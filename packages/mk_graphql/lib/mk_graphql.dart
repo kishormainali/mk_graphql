@@ -9,8 +9,7 @@ export 'src/core/response.dart';
 export 'package:dio/dio.dart' show CancelToken;
 export 'package:gql/ast.dart' show DocumentNode;
 
-export 'src/auth/auth_token.dart';
-export 'src/auth/secure_token_storage.dart';
+export 'src/auth/token_pair.dart';
 export 'src/auth/token_storage.dart';
 export 'src/link/auth/auth_link.dart';
 export 'src/link/transport/batch_link.dart';

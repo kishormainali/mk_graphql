@@ -60,16 +60,16 @@ final client = GraphQLClient(
   sseUrl: 'https://api.example.com/graphql/sse',
   // wsUrl: 'wss://api.example.com/graphql',
 
-  // Attach dynamic authentication token to every outgoing request
-  tokenHeader: () async {
-    final token = await getStoredToken();
-    return token != null ? {'Authorization': 'Bearer $token'} : {};
-  },
-
-  // Called automatically on 401 responses to refresh token and retry
-  onTokenRefresh: (dioLink) async {
-    final newToken = await refreshUserToken();
-    return newToken != null ? {'Authorization': 'Bearer $newToken'} : null;
+  // The client persists tokens itself (via flutter_secure_storage) and
+  // attaches the Authorization header to every request automatically.
+  // Just tell it how to perform a refresh — no header/storage plumbing needed.
+  refreshCallback: (refreshClient, refreshToken) async {
+    if (refreshToken == null) return null; // nothing to refresh with — revoke
+    final refreshed = await refreshClient.future(RefreshTokenRequest(refreshToken));
+    return AuthToken(
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
+    );
   },
 
   // Default caching policy: cacheFirst, networkOnly, cacheAndNetwork, cacheOnly, noCache
@@ -78,7 +78,28 @@ final client = GraphQLClient(
   // Default error policy: none (throw if errors), ignore (return partial data), all (return data with errors)
   defaultErrorPolicy: ErrorPolicy.none,
 );
+
+// After a successful login mutation, persist the tokens the client will use
+// for every subsequent request:
+await client.setAuthToken(
+  AuthToken(accessToken: loginResult.accessToken, refreshToken: loginResult.refreshToken),
+);
+
+// On logout:
+await client.clearAuthToken();
+
+// Listen for auth state changes anywhere in the app (login, refresh, logout,
+// or a revoked refresh) — e.g. to redirect to the login screen:
+client.onAuthTokenChange.listen((token) {
+  if (token == null) router.go('/login');
+});
 ```
+
+`refreshCallback` is the single source of truth for refresh — it receives the currently stored refresh token (always non-null: with nothing stored yet, the client revokes immediately without calling it) and a plain `GraphQLClient` (no auth link attached) to run the refresh request via its normal typed API. Return the new `AuthToken` to persist, or `null`/throw to revoke — `AuthLink.registerRevokeTokenListener(...)` fires either way so you can navigate to a login screen.
+
+However many requests fail at once, only one `refreshCallback` call is made — `AuthLink` queues the rest behind the in-flight refresh and retries all of them once it resolves.
+
+If you'd rather supply the header yourself (static/custom, not from `tokenStorage`), pass `tokenHeader` — it overrides the header side only and can be combined with `refreshCallback`.
 
 ---
 

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:gql/ast.dart';
 import 'package:recase/recase.dart';
+import '../dart_codegen.dart' as codegen;
 
 /// Builds an import for a file that lives at
 /// `<generatedDir>/<targetSubDir>/<targetFile>`, importing it from a file
@@ -53,15 +54,14 @@ class SchemaGenerator {
       buffer.writeln(
           "import 'package:freezed_annotation/freezed_annotation.dart';");
       buffer.writeln();
-      buffer.writeln('@JsonEnum()');
-      buffer.writeln('enum $name {');
-      for (final val in enumDef.values) {
-        final wireValue = val.name.value; // e.g. ADMIN_USER
-        final dartName = _toDartEnumValue(wireValue); // e.g. adminUser
-        buffer.writeln('  @JsonValue("$wireValue")');
-        buffer.writeln('  $dartName,');
-      }
-      buffer.writeln('}');
+      buffer.writeln(codegen.emitSpec(codegen.jsonEnum(
+        name: name,
+        values: {
+          // e.g. ADMIN_USER (wire) -> adminUser (Dart)
+          for (final val in enumDef.values)
+            val.name.value: _toDartEnumValue(val.name.value),
+        },
+      )));
 
       result['enums/$fileName'] = buffer.toString();
       enumExports.add("export '$fileName';");
@@ -479,50 +479,22 @@ class SchemaGenerator {
     return null;
   }
 
+  // Input objects are sent to the server, so an unset optional field must be
+  // omitted from toJson() rather than sent as explicit `null` — some servers
+  // treat the two differently (e.g. an omitted filter field is ignored, an
+  // explicit `field: null` can exclude matches). Response Model classes have
+  // no such concern, so they default to serializing `null` explicitly.
   static void _generateFreezedClass({
     required String className,
     required Map<String, FieldTypeInfo> fields,
     required StringBuffer buffer,
     bool isInput = false,
   }) {
-    buffer.writeln('@freezed');
-    buffer.writeln('abstract class $className with _\$$className {');
-
-    if (fields.isEmpty) {
-      buffer.writeln('  const factory $className() = _$className;');
-    } else {
-      buffer.writeln('  const factory $className({');
-      fields.forEach((rawName, typeInfo) {
-        final dartName = safeIdentifier(rawName);
-        // Input objects are sent to the server, so an unset optional field
-        // must be omitted from toJson() rather than sent as explicit `null`
-        // — some servers treat the two differently (e.g. an omitted filter
-        // field is ignored, an explicit `field: null` can exclude matches).
-        final keyArgs = <String>[
-          if (dartName != rawName) "name: '$rawName'",
-          if (isInput && !typeInfo.isRequired && typeInfo.defaultValue == null)
-            'includeIfNull: false',
-        ];
-        if (keyArgs.isNotEmpty) {
-          buffer.writeln('    @JsonKey(${keyArgs.join(', ')})');
-        }
-        if (typeInfo.defaultValue != null) {
-          buffer.writeln(
-              '    @Default(${typeInfo.defaultValue}) ${typeInfo.dartType} $dartName,');
-        } else if (typeInfo.isRequired) {
-          buffer.writeln('    required ${typeInfo.dartType} $dartName,');
-        } else {
-          buffer.writeln('    ${typeInfo.dartType}? $dartName,');
-        }
-      });
-      buffer.writeln('  }) = _$className;');
-    }
-
-    buffer.writeln();
-    buffer.writeln(
-        '  factory $className.fromJson(Map<String, dynamic> json) => _\$${className}FromJson(json);');
-    buffer.writeln('}');
-    buffer.writeln();
+    buffer.writeln(codegen.emitSpec(codegen.freezedDataClass(
+      className: className,
+      fields: fields,
+      includeIfNull: !isInput,
+    )));
   }
 
   /// Strips `List<...>` wrappers and a trailing `?` to get the base type

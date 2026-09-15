@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+
+import '../../core/document_print_cache.dart';
 
 typedef WebSocketPayloadCallback = FutureOr<dynamic> Function();
 
@@ -37,9 +38,21 @@ class WebSocketLink extends Link {
     this.parser = const ResponseParser(),
   });
 
-  Future<void> _connect() async {
-    if (_connected || _isDisposed) return;
+  /// In-flight connection attempt, if any. [_connect] awaits `payload()`
+  /// before flipping [_connected], so without this guard two subscriptions
+  /// started back-to-back (both seeing `_connected == false` before either
+  /// finishes connecting) would each open their own [WebSocketChannel] — the
+  /// second silently replacing (and leaking) the first. Single-flight, same
+  /// pattern as `AuthLink._ongoingRefresh`.
+  Future<void>? _connectFuture;
 
+  Future<void> _connect() {
+    if (_connected || _isDisposed) return Future.value();
+    return _connectFuture ??=
+        _doConnect().whenComplete(() => _connectFuture = null);
+  }
+
+  Future<void> _doConnect() async {
     try {
       _channel = WebSocketChannel.connect(
         Uri.parse(url),
@@ -157,7 +170,7 @@ class WebSocketLink extends Link {
 
   Future<void> _sendSubscribe(String id, Request req) async {
     await _connect();
-    final docString = printNode(req.operation.document);
+    final docString = printDocumentCached(req.operation.document);
     _channel?.sink.add(jsonEncode({
       'id': id,
       'type': 'subscribe',

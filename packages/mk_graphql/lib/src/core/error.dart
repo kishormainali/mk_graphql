@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:gql_link/gql_link.dart';
 import '../link/transport/dio_link.dart';
+import '../link/transport/http_link.dart';
 
 /// Represents a single GraphQL Error returned in a GraphQL response payload.
 class GraphQLError {
@@ -201,6 +202,16 @@ class NetworkException extends GraphQLException {
 /// Request timeout exception.
 class TimeoutException extends GraphQLException {
   const TimeoutException({
+    required super.message,
+    super.graphqlErrors,
+    super.originalException,
+    super.originalStackTrace,
+  });
+}
+
+/// The server's TLS/SSL certificate failed validation.
+class CertificateException extends GraphQLException {
+  const CertificateException({
     required super.message,
     super.graphqlErrors,
     super.originalException,
@@ -532,17 +543,35 @@ extension GraphQLExceptionExtension on GraphQLException {
         originalStackTrace: exception.originalStackTrace,
         originalException: exception.originalException,
       );
+    } else if (exception is DioLinkConnectionException) {
+      return NetworkException(
+        message:
+            'Something went wrong with your connection. Please check your internet connection and try again.',
+        originalStackTrace: exception.originalStackTrace,
+        originalException: exception.originalException,
+      );
+    } else if (exception is DioLinkCertificateException) {
+      return CertificateException(
+        message: 'Could not establish a secure connection to the server.',
+        originalStackTrace: exception.originalStackTrace,
+        originalException: exception.originalException,
+      );
+    } else if (exception is HttpLinkCanceledException) {
+      return RequestCancelledException(
+        message: 'The request was cancelled.',
+        originalStackTrace: exception.originalStackTrace,
+        originalException: exception.originalException,
+      );
+    } else if (exception is HttpLinkConnectionException) {
+      return NetworkException(
+        message:
+            'Something went wrong with your connection. Please check your internet connection and try again.',
+        originalStackTrace: exception.originalStackTrace,
+        originalException: exception.originalException,
+      );
     } else if (exception is DioLinkUnkownException) {
       final error = exception.originalException;
       if (error is DioException) {
-        if (error.type == DioExceptionType.connectionError) {
-          return NetworkException(
-            message:
-                'Something went wrong with your connection. Please check your internet connection and try again.',
-            originalStackTrace: exception.originalStackTrace,
-            originalException: error,
-          );
-        }
         return AppServerException(
           message:
               error.message ?? 'Something went wrong, please try again later.',

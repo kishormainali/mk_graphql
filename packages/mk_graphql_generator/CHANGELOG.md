@@ -1,3 +1,12 @@
+## 1.2.1-dev.0
+
+- **Internal**: Freezed data classes, request classes, schema enums, and `GraphQLClient` extension methods (`future`/`stream`/`refetch`) are now emitted structurally via `code_builder` instead of hand-written `StringBuffer` writes, and the five near-duplicate implementations of these shapes (previously spread across `generator_orchestrator.dart` and `schema_utility_generator.dart`) are consolidated into a single shared `dart_codegen.dart` module. No generated-code behavior changes; output is functionally identical, verified byte-for-byte except for field/method ordering inside a handful of `*Req` classes (fields now grouped before methods, matching `code_builder`'s `Class` structure — cosmetic only, resolved by the existing `DartFormatter` pass either way).
+- **Removed**: Deleted `CombinerGenerator` (`combiner_generator.dart`) — dead code with no call sites anywhere in the package.
+
+## 1.2.0
+
+- **Pre-parsed request documents**: Generated `*Req` classes now override `GraphQLRequest.documentNode` with a `static final DocumentNode` parsed once per class (via `GraphQLClient.getParsedDocument`), so `GraphQLClient` no longer needs to parse or cache-lookup the query string on every request of that type. Requires `mk_graphql` >= 1.2.0.
+
 ## 1.1.1
 
 - **Automatic Selection Sets for Schema Client Extensions**: Automatically generates selection sets for operations and typed `GraphQLClient` extension methods returning composite types (objects, interfaces, unions) such as `register(input: RegisterInput!): RegisterResponse!`, resolving `GRAPHQL_VALIDATION_FAILED` errors where subfields were missing.

@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 import 'package:http/http.dart' as http;
+
+import '../../core/document_print_cache.dart';
 
 class _BatchItem {
   final Request request;
@@ -23,6 +24,11 @@ class BatchLink extends Link {
   final _queue = <_BatchItem>[];
   Timer? _timer;
 
+  /// Whether [_client] was created by this [BatchLink] itself (no `client:`
+  /// argument was supplied) — if so, [dispose] closes it; a caller-supplied
+  /// client stays theirs to close.
+  final bool _ownsClient;
+
   BatchLink(
     String url, {
     http.Client? client,
@@ -30,7 +36,27 @@ class BatchLink extends Link {
     this.batchTimeout = const Duration(milliseconds: 10),
     this.maxBatchSize = 10,
   })  : uri = Uri.parse(url),
-        _client = client ?? http.Client();
+        _client = client ?? http.Client(),
+        _ownsClient = client == null;
+
+  /// Cancels any pending batch timer, fails queued-but-undispatched requests
+  /// so their `future`/`stream` callers don't hang forever, and closes the
+  /// underlying HTTP client only if this [BatchLink] created it itself.
+  @override
+  Future<void> dispose() async {
+    _timer?.cancel();
+    _timer = null;
+    for (final item in _queue) {
+      item.completer.completeError(
+        const ServerException(
+          originalException: 'BatchLink was disposed before this request '
+              'could be dispatched.',
+        ),
+      );
+    }
+    _queue.clear();
+    if (_ownsClient) _client.close();
+  }
 
   @override
   Stream<Response> request(Request req, [NextLink? forward]) async* {
@@ -72,7 +98,7 @@ class BatchLink extends Link {
 
     final payload = batch.map((item) {
       return {
-        'query': printNode(item.request.operation.document),
+        'query': printDocumentCached(item.request.operation.document),
         'operationName': item.request.operation.operationName,
         'variables': item.request.variables,
       };

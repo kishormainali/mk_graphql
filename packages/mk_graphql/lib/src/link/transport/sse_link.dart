@@ -3,40 +3,57 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart' as dio;
 import 'package:gql/ast.dart';
-import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 import 'dio_link.dart';
 import '../auth/auth_link.dart';
-import '../../client/client.dart';
-import '../../core/error.dart';
+import '../../core/document_print_cache.dart';
 
 /// Terminating [Link] for GraphQL over Server-Sent Events (SSE).
 ///
 /// Implements the GraphQL over Server-Sent Events Protocol, consuming
 /// `text/event-stream` responses from GraphQL servers via HTTP streaming.
+///
+/// Unauthorized responses (401/403) are surfaced as a [ServerException] —
+/// same as [DioLink] — rather than retried here: wrap this link with
+/// [AuthLink] (as `GraphQLClient`'s own pipeline does for `sseUrl`) to get
+/// refresh-and-retry, deduped against every other in-flight request through
+/// [AuthLink]'s single-flight refresh lock. This link has no refresh logic
+/// of its own on purpose — two independent, non-deduped refresh attempts
+/// racing each other was the bug.
 class SseLink extends Link {
   final String url;
   final dio.Dio client;
   final Map<String, String> defaultHeaders;
+
+  /// Callback that supplies the current auth headers, merged into every
+  /// request. Optional — [AuthLink] (when this link is used through
+  /// `GraphQLClient`) already attaches the current token via the request
+  /// context; this is for standalone use of [SseLink] without an [AuthLink]
+  /// in front of it.
   final AccessTokenCallback? tokenHeader;
-  final OnRefreshCallback? onTokenRefresh;
   final bool useGetForQueries;
   final ResponseParser parser;
 
-  /// Internal [GraphQLClient] (no auth link) used exclusively for refresh requests.
-  late final GraphQLClient _refreshClient;
+  /// Whether [client] was created by this [SseLink] itself (no `client:`
+  /// argument was supplied) — if so, [dispose] closes it; a caller-supplied
+  /// client stays theirs to close.
+  final bool _ownsClient;
 
   SseLink(
     this.url, {
     dio.Dio? client,
     this.defaultHeaders = const {},
     this.tokenHeader,
-    this.onTokenRefresh,
     this.useGetForQueries = false,
     this.parser = const ResponseParser(),
-  }) : client = client ?? dio.Dio() {
-    _refreshClient = GraphQLClient.fromLink(DioLink(url, client: this.client));
+  })  : client = client ?? dio.Dio(),
+        _ownsClient = client == null;
+
+  /// Closes [client] only if this [SseLink] created it itself.
+  @override
+  Future<void> dispose() async {
+    if (_ownsClient) client.close();
   }
 
   @override
@@ -48,7 +65,7 @@ class SseLink extends Link {
 
     final authHeaders = await tokenHeader?.call() ?? const {};
 
-    var headers = <String, String>{
+    final headers = <String, String>{
       'Accept': 'text/event-stream',
       'Cache-Control': 'no-cache',
       ...defaultHeaders,
@@ -56,24 +73,18 @@ class SseLink extends Link {
       ...contextHeaders,
     };
 
-    final queryString = printNode(req.operation.document);
+    final queryString = printDocumentCached(req.operation.document);
     final operationName = req.operation.operationName;
     final variables = req.variables;
-
-    final body = {
-      'query': queryString,
-      if (operationName != null) 'operationName': operationName,
-      if (variables.isNotEmpty) 'variables': variables,
-    };
 
     final isQuery = req.operation.document.definitions
         .whereType<OperationDefinitionNode>()
         .any((def) => def.type == OperationType.query);
 
-    Future<dio.Response<dio.ResponseBody>> sendRequest(
-        Map<String, String> hdrs) {
+    dio.Response<dio.ResponseBody> dioResponse;
+    try {
       if (useGetForQueries && isQuery) {
-        return client.get<dio.ResponseBody>(
+        dioResponse = await client.get<dio.ResponseBody>(
           url,
           queryParameters: {
             'query': queryString,
@@ -82,83 +93,35 @@ class SseLink extends Link {
           },
           options: dio.Options(
             responseType: dio.ResponseType.stream,
-            headers: hdrs,
+            headers: headers,
           ),
           cancelToken: cancelToken,
         );
       } else {
-        return client.post<dio.ResponseBody>(
+        dioResponse = await client.post<dio.ResponseBody>(
           url,
-          data: body,
+          data: {
+            'query': queryString,
+            if (operationName != null) 'operationName': operationName,
+            if (variables.isNotEmpty) 'variables': variables,
+          },
           options: dio.Options(
             responseType: dio.ResponseType.stream,
             headers: {
-              ...hdrs,
+              ...headers,
               'Content-Type': 'application/json',
             },
           ),
           cancelToken: cancelToken,
         );
       }
-    }
-
-    dio.Response<dio.ResponseBody> dioResponse;
-    try {
-      try {
-        dioResponse = await sendRequest(headers);
-        if (dioResponse.statusCode == 401 && onTokenRefresh != null) {
-          final newHeaders = await onTokenRefresh!(_refreshClient);
-          if (newHeaders != null && newHeaders.isNotEmpty) {
-            headers = {
-              ...headers,
-              ...newHeaders,
-            };
-            dioResponse = await sendRequest(headers);
-          }
-        }
-      } on dio.DioException catch (e) {
-        if (e.response?.statusCode == 401 && onTokenRefresh != null) {
-          final newHeaders = await onTokenRefresh!(_refreshClient);
-          if (newHeaders != null && newHeaders.isNotEmpty) {
-            headers = {
-              ...headers,
-              ...newHeaders,
-            };
-            dioResponse = await sendRequest(headers);
-          } else {
-            rethrow;
-          }
-        } else {
-          rethrow;
-        }
-      }
     } on dio.DioException catch (e, st) {
-      if (e.type == dio.DioExceptionType.cancel) {
-        throw DioLinkCanceledException(
-          originalException: e,
-          originalStackTrace: st,
-        );
-      }
-      if (e.response?.statusCode == 401) {
-        throw const UnAuthorizedException(message: 'Unauthorized');
-      }
-      throw ServerException(
-        originalException: e,
-        originalStackTrace: st,
-        statusCode: e.response?.statusCode,
-      );
+      throw classifyDioException(e, st);
     } catch (e, st) {
-      if (e is UnAuthorizedException) rethrow;
-      throw ServerException(
-        originalException: e,
-        originalStackTrace: st,
-      );
+      throw ServerException(originalException: e, originalStackTrace: st);
     }
 
     final statusCode = dioResponse.statusCode ?? 200;
-    if (statusCode == 401) {
-      throw const UnAuthorizedException(message: 'Unauthorized');
-    }
     if (statusCode >= 300) {
       throw ServerException(
         statusCode: statusCode,
@@ -211,16 +174,7 @@ class SseLink extends Link {
         }
       }
     } on dio.DioException catch (e, st) {
-      if (e.type == dio.DioExceptionType.cancel) {
-        throw DioLinkCanceledException(
-          originalException: e,
-          originalStackTrace: st,
-        );
-      }
-      throw ServerException(
-        originalException: e,
-        originalStackTrace: st,
-      );
+      throw classifyDioException(e, st);
     }
   }
 

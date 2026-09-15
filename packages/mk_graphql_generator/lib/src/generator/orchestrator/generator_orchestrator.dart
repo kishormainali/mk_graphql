@@ -5,6 +5,7 @@ import 'package:recase/recase.dart';
 import 'package:dart_style/dart_style.dart';
 import '../../cache/generator_cache.dart';
 import '../../parser/graphql_parser.dart';
+import '../dart_codegen.dart' as codegen;
 import '../schema/schema_generator.dart';
 import '../schema/schema_utility_generator.dart';
 
@@ -529,158 +530,56 @@ class GeneratorOrchestrator {
         ));
 
         // 5e. Client extension methods
-        final hasArgs = op.variableDefinitions.isNotEmpty;
-
-        // Future method
-        fileOpExtensions.writeln('  /// Future execution for $methodName');
-        fileOpExtensions.writeln('  Future<$modelClassName> $methodName({');
+        final opArgs = <String, FieldTypeInfo>{};
         for (final v in op.variableDefinitions) {
-          final rawVarName = v.variable.name.value;
-          final varName = SchemaGenerator.safeIdentifier(rawVarName);
           final typeInfo = SchemaGenerator.parseFieldType(v.type,
               enumNames: enumNames,
               inputNames: inputNames,
               scalarNames: scalarNames,
               customScalars: customScalars);
-          final defVal = SchemaGenerator.formatDefaultValue(
-            v.defaultValue?.value,
+          opArgs[v.variable.name.value] = FieldTypeInfo(
             dartType: typeInfo.dartType,
+            isRequired: typeInfo.isRequired,
+            defaultValue: SchemaGenerator.formatDefaultValue(
+              v.defaultValue?.value,
+              dartType: typeInfo.dartType,
+            ),
           );
-          if (defVal != null) {
-            fileOpExtensions
-                .writeln('    ${typeInfo.dartType} $varName = $defVal,');
-          } else if (typeInfo.isRequired) {
-            fileOpExtensions
-                .writeln('    required ${typeInfo.dartType} $varName,');
-          } else {
-            fileOpExtensions.writeln('    ${typeInfo.dartType}? $varName,');
-          }
         }
-        fileOpExtensions.writeln('    FetchPolicy? fetchPolicy,');
-        fileOpExtensions.writeln('    ErrorPolicy? errorPolicy,');
-        fileOpExtensions.writeln('    Map<String, String>? headers,');
-        fileOpExtensions.writeln('    CancelToken? cancelToken,');
-        fileOpExtensions.writeln('  }) {');
-        fileOpExtensions.writeln('    return future($reqClassName(');
-        if (hasArgs) {
-          fileOpExtensions.writeln('      variables: $varsClassName(');
-          for (final v in op.variableDefinitions) {
-            final varName =
-                SchemaGenerator.safeIdentifier(v.variable.name.value);
-            fileOpExtensions.writeln('        $varName: $varName,');
-          }
-          fileOpExtensions.writeln('      ),');
-        } else {
-          fileOpExtensions.writeln('      variables: const $varsClassName(),');
-        }
-        fileOpExtensions.writeln('      fetchPolicy: fetchPolicy,');
-        fileOpExtensions.writeln('      errorPolicy: errorPolicy,');
-        fileOpExtensions.writeln('      headers: headers,');
-        fileOpExtensions.writeln('      cancelToken: cancelToken,');
-        fileOpExtensions.writeln('    ));');
-        fileOpExtensions.writeln('  }');
-        fileOpExtensions.writeln();
-
-        // Stream method
-        fileOpExtensions.writeln('  /// Stream execution for $methodName');
-        fileOpExtensions
-            .writeln('  Stream<$modelClassName> ${methodName}Stream({');
-        for (final v in op.variableDefinitions) {
-          final rawVarName = v.variable.name.value;
-          final varName = SchemaGenerator.safeIdentifier(rawVarName);
-          final typeInfo = SchemaGenerator.parseFieldType(v.type,
-              enumNames: enumNames,
-              inputNames: inputNames,
-              scalarNames: scalarNames,
-              customScalars: customScalars);
-          final defVal = SchemaGenerator.formatDefaultValue(
-            v.defaultValue?.value,
-            dartType: typeInfo.dartType,
-          );
-          if (defVal != null) {
-            fileOpExtensions
-                .writeln('    ${typeInfo.dartType} $varName = $defVal,');
-          } else if (typeInfo.isRequired) {
-            fileOpExtensions
-                .writeln('    required ${typeInfo.dartType} $varName,');
-          } else {
-            fileOpExtensions.writeln('    ${typeInfo.dartType}? $varName,');
-          }
-        }
-        fileOpExtensions.writeln('    FetchPolicy? fetchPolicy,');
-        fileOpExtensions.writeln('    ErrorPolicy? errorPolicy,');
-        fileOpExtensions.writeln('    Map<String, String>? headers,');
-        fileOpExtensions.writeln('    CancelToken? cancelToken,');
-        fileOpExtensions.writeln('  }) {');
-        fileOpExtensions.writeln('    return stream($reqClassName(');
-        if (hasArgs) {
-          fileOpExtensions.writeln('      variables: $varsClassName(');
-          for (final v in op.variableDefinitions) {
-            final varName =
-                SchemaGenerator.safeIdentifier(v.variable.name.value);
-            fileOpExtensions.writeln('        $varName: $varName,');
-          }
-          fileOpExtensions.writeln('      ),');
-        } else {
-          fileOpExtensions.writeln('      variables: const $varsClassName(),');
-        }
-        fileOpExtensions.writeln('      fetchPolicy: fetchPolicy,');
-        fileOpExtensions.writeln('      errorPolicy: errorPolicy,');
-        fileOpExtensions.writeln('      headers: headers,');
-        fileOpExtensions.writeln('    ));');
-        fileOpExtensions.writeln('  }');
-        fileOpExtensions.writeln();
-
-        // Refetch method (bypasses cache with FetchPolicy.networkOnly)
         final refetchMethodName = 'refetch${rawName.pascalCase}';
-        fileOpExtensions.writeln(
-            '  /// Refetch execution for $methodName (bypasses cache with FetchPolicy.networkOnly)');
-        fileOpExtensions
-            .writeln('  Future<$modelClassName> $refetchMethodName({');
-        for (final v in op.variableDefinitions) {
-          final rawVarName = v.variable.name.value;
-          final varName = SchemaGenerator.safeIdentifier(rawVarName);
-          final typeInfo = SchemaGenerator.parseFieldType(v.type,
-              enumNames: enumNames,
-              inputNames: inputNames,
-              scalarNames: scalarNames,
-              customScalars: customScalars);
-          final defVal = SchemaGenerator.formatDefaultValue(
-            v.defaultValue?.value,
-            dartType: typeInfo.dartType,
-          );
-          if (defVal != null) {
-            fileOpExtensions
-                .writeln('    ${typeInfo.dartType} $varName = $defVal,');
-          } else if (typeInfo.isRequired) {
-            fileOpExtensions
-                .writeln('    required ${typeInfo.dartType} $varName,');
-          } else {
-            fileOpExtensions.writeln('    ${typeInfo.dartType}? $varName,');
-          }
+
+        for (final method in [
+          codegen.clientExtensionMethod(
+            kind: 'future',
+            methodName: methodName,
+            modelClassName: modelClassName,
+            reqClassName: reqClassName,
+            varsClassName: varsClassName,
+            args: opArgs,
+            docComment: 'Future execution for $methodName',
+          ),
+          codegen.clientExtensionMethod(
+            kind: 'stream',
+            methodName: '${methodName}Stream',
+            modelClassName: modelClassName,
+            reqClassName: reqClassName,
+            varsClassName: varsClassName,
+            args: opArgs,
+            docComment: 'Stream execution for $methodName',
+          ),
+          codegen.clientExtensionMethod(
+            kind: 'refetch',
+            methodName: refetchMethodName,
+            modelClassName: modelClassName,
+            reqClassName: reqClassName,
+            varsClassName: varsClassName,
+            args: opArgs,
+            docComment:
+                'Refetch execution for $methodName (bypasses cache with FetchPolicy.networkOnly)',
+          ),
+        ]) {
+          fileOpExtensions.writeln(codegen.emitSpec(method));
         }
-        fileOpExtensions.writeln('    ErrorPolicy? errorPolicy,');
-        fileOpExtensions.writeln('    Map<String, String>? headers,');
-        fileOpExtensions.writeln('    CancelToken? cancelToken,');
-        fileOpExtensions.writeln('  }) {');
-        fileOpExtensions.writeln('    return refetch($reqClassName(');
-        if (hasArgs) {
-          fileOpExtensions.writeln('      variables: $varsClassName(');
-          for (final v in op.variableDefinitions) {
-            final varName =
-                SchemaGenerator.safeIdentifier(v.variable.name.value);
-            fileOpExtensions.writeln('        $varName: $varName,');
-          }
-          fileOpExtensions.writeln('      ),');
-        } else {
-          fileOpExtensions.writeln('      variables: const $varsClassName(),');
-        }
-        fileOpExtensions.writeln('      errorPolicy: errorPolicy,');
-        fileOpExtensions.writeln('      headers: headers,');
-        fileOpExtensions.writeln('      cancelToken: cancelToken,');
-        fileOpExtensions.writeln('    ));');
-        fileOpExtensions.writeln('  }');
-        fileOpExtensions.writeln();
       }
 
       fileOpExtensions.writeln('}');
@@ -962,42 +861,11 @@ class GeneratorOrchestrator {
     // breaks fromJson generation for required fields.
     bool includeIfNull = true,
   }) {
-    buffer.writeln('@freezed');
-    buffer.writeln('abstract class $className with _\$$className {');
-
-    if (fields.isEmpty) {
-      buffer.writeln('  const factory $className() = _$className;');
-    } else {
-      buffer.writeln('  const factory $className({');
-      fields.forEach((rawName, typeInfo) {
-        final dartName = SchemaGenerator.safeIdentifier(rawName);
-        final keyArgs = <String>[
-          if (dartName != rawName) "name: '$rawName'",
-          if (!includeIfNull &&
-              !typeInfo.isRequired &&
-              typeInfo.defaultValue == null)
-            'includeIfNull: false',
-        ];
-        if (keyArgs.isNotEmpty) {
-          buffer.writeln('    @JsonKey(${keyArgs.join(', ')})');
-        }
-        if (typeInfo.defaultValue != null) {
-          buffer.writeln(
-              '    @Default(${typeInfo.defaultValue}) ${typeInfo.dartType} $dartName,');
-        } else if (typeInfo.isRequired) {
-          buffer.writeln('    required ${typeInfo.dartType} $dartName,');
-        } else {
-          buffer.writeln('    ${typeInfo.dartType}? $dartName,');
-        }
-      });
-      buffer.writeln('  }) = _$className;');
-    }
-
-    buffer.writeln();
-    buffer.writeln(
-        '  factory $className.fromJson(Map<String, dynamic> json) => _\$${className}FromJson(json);');
-    buffer.writeln('}');
-    buffer.writeln();
+    buffer.writeln(codegen.emitSpec(codegen.freezedDataClass(
+      className: className,
+      fields: fields,
+      includeIfNull: includeIfNull,
+    )));
   }
 
   static void _generateFreezedRequest({
@@ -1009,54 +877,14 @@ class GeneratorOrchestrator {
     required String parseDataExpr,
     required StringBuffer buffer,
   }) {
-    buffer.writeln('@freezed');
-    buffer.writeln(
-        'abstract class $reqClassName extends GraphQLRequest<$modelClassName, $varsClassName> with _\$$reqClassName {');
-    buffer.writeln('  const factory $reqClassName({');
-    buffer.writeln('    required $varsClassName variables,');
-    buffer.writeln('    FetchPolicy? fetchPolicy,');
-    buffer.writeln('    ErrorPolicy? errorPolicy,');
-    buffer.writeln('    Map<String, String>? headers,');
-    buffer.writeln('    CancelToken? cancelToken,');
-    buffer.writeln('    $modelClassName? optimisticResponse,');
-    buffer.writeln('  }) = _$reqClassName;');
-    buffer.writeln();
-    buffer.writeln('  const $reqClassName._();');
-    buffer.writeln();
-    buffer.writeln('  @override');
-    buffer.writeln('  String get document => r"""$docStr""";');
-    buffer.writeln();
-    buffer.writeln('  @override');
-    buffer.writeln('  String get operationName => "$operationName";');
-    buffer.writeln();
-    buffer.writeln('  @override');
-    buffer.writeln(
-        '  Map<String, dynamic> toJsonVars($varsClassName vars) => (vars as dynamic).toJson();');
-    buffer.writeln();
-    buffer.writeln('  @override');
-    buffer.writeln(
-        '  $modelClassName parseData(Map<String, dynamic> json) => $parseDataExpr;');
-    buffer.writeln();
-    buffer.writeln('  @override');
-    buffer.writeln('  $reqClassName copyWithRequest({');
-    buffer.writeln('    $varsClassName? variables,');
-    buffer.writeln('    FetchPolicy? fetchPolicy,');
-    buffer.writeln('    ErrorPolicy? errorPolicy,');
-    buffer.writeln('    Map<String, String>? headers,');
-    buffer.writeln('    CancelToken? cancelToken,');
-    buffer.writeln('    $modelClassName? optimisticResponse,');
-    buffer.writeln('  }) =>');
-    buffer.writeln('      copyWith(');
-    buffer.writeln('        variables: variables ?? this.variables,');
-    buffer.writeln('        fetchPolicy: fetchPolicy ?? this.fetchPolicy,');
-    buffer.writeln('        errorPolicy: errorPolicy ?? this.errorPolicy,');
-    buffer.writeln('        headers: headers ?? this.headers,');
-    buffer.writeln('        cancelToken: cancelToken ?? this.cancelToken,');
-    buffer.writeln(
-        '        optimisticResponse: optimisticResponse ?? this.optimisticResponse,');
-    buffer.writeln('      );');
-    buffer.writeln('}');
-    buffer.writeln();
+    buffer.writeln(codegen.emitSpec(codegen.freezedRequestClass(
+      reqClassName: reqClassName,
+      varsClassName: varsClassName,
+      modelClassName: modelClassName,
+      docStr: docStr,
+      operationName: operationName,
+      parseDataExpr: parseDataExpr,
+    )));
   }
 
   // ---------------------------------------------------------------------------

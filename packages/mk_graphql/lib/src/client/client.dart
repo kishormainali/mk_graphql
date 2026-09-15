@@ -2,24 +2,26 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:gql/ast.dart';
-import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart' as gql;
 import 'package:gql_link/gql_link.dart';
 
-import '../link/logging/logger_link.dart';
-import '../link/logging/logger_options.dart';
-
+import '../auth/auth_token.dart';
+import '../auth/secure_token_storage.dart';
+import '../auth/token_storage.dart';
 import '../cache/cache.dart';
 import '../cache/in_memory_cache.dart';
+import '../core/document_cache.dart' as doc_cache;
 import '../core/error.dart';
 import '../core/error_policy.dart';
 import '../core/fetch_policy.dart';
 import '../core/request.dart';
 import '../core/response.dart';
 import '../link/auth/auth_link.dart';
+import '../link/logging/logger_link.dart';
+import '../link/logging/logger_options.dart';
+import '../link/transform/typename_link.dart';
 import '../link/transport/dio_link.dart';
 import '../link/transport/sse_link.dart';
-import '../link/transform/typename_link.dart';
 import '../link/transport/websocket_link.dart';
 
 /// Central GraphQL Client managing cache, links, and operation requests.
@@ -34,12 +36,21 @@ class GraphQLClient {
   final ErrorPolicy defaultErrorPolicy;
   final LoggerOptions loggerOptions;
 
-  /// In-memory cache for parsed document ASTs to avoid redundant parseString overhead.
-  static final Map<String, DocumentNode> _documentCache = {};
+  /// Persists the auth token when this client was built with
+  /// `refreshCallback` or an explicit `tokenStorage`. Null otherwise
+  /// (including clients built via [GraphQLClient.fromLink]).
+  final TokenStorage? tokenStorage;
 
-  /// Returns the cached [DocumentNode] AST for [document], parsing it only on first access.
+  /// The [Dio] instance this client created for itself (no `dio:` argument
+  /// was supplied to the factory) — closed by [dispose]. Null when the
+  /// caller supplied their own [Dio] (theirs to close) or this client was
+  /// built via [GraphQLClient.fromLink] (no Dio involved at all).
+  final Dio? _ownedDio;
+
+  /// Returns the cached [DocumentNode] AST for [document], parsing it only on
+  /// first access. Shared with the default [GraphQLRequest.documentNode].
   static DocumentNode getParsedDocument(String document) =>
-      _documentCache.putIfAbsent(document, () => parseString(document));
+      doc_cache.getParsedDocument(document);
 
   // ---------------------------------------------------------------------------
   // Static revoke-token listener delegates
@@ -58,7 +69,7 @@ class GraphQLClient {
   // Constructor
   // ---------------------------------------------------------------------------
 
-  GraphQLClient({
+  factory GraphQLClient({
     /// The GraphQL HTTP endpoint URL.
     required String url,
 
@@ -78,39 +89,92 @@ class GraphQLClient {
     Map<String, String>? defaultHeaders,
 
     /// Callback that supplies the current auth headers (e.g. `Authorization`).
+    /// Not needed alongside [refreshCallback] — the client reads the access
+    /// token from [tokenStorage] itself. Only for static/custom headers that
+    /// don't come from [tokenStorage] (rare); takes precedence over it when
+    /// also provided.
     AccessTokenCallback? tokenHeader,
 
     /// Returns whether the current token is expired. Triggers proactive refresh.
     IsTokenExpiredCallback? isTokenExpired,
 
-    /// Performs token refresh. Receives a plain [GraphQLClient] (no auth link
-    /// attached) that can be used to run the refresh request, and returns new headers.
-    OnRefreshCallback? onTokenRefresh,
-
-    /// Called when the token is revoked.
+    /// Called when the token is revoked, in addition to clearing [tokenStorage]
+    /// (when configured via [refreshCallback]/[tokenStorage]).
     OnRevokeTokenCallback? onRevokeToken,
+
+    /// The single source of truth for token refresh: performs the refresh
+    /// using the currently stored refresh token and returns the new
+    /// [AuthToken] to persist (or `null`/throws to revoke). The client
+    /// manages [tokenStorage] (a [SecureTokenStorage] by default) and the
+    /// `Authorization` header on its own — no app-side storage or header
+    /// plumbing needed. Skipped (no refresh attempted, straight to revoke)
+    /// when there's no stored refresh token yet.
+    RefreshCallback? refreshCallback,
+
+    /// Overrides where the auth token persists when using [refreshCallback].
+    /// Defaults to a [SecureTokenStorage]. Useful for tests (inject an
+    /// in-memory fake) or to share storage across multiple clients.
+    TokenStorage? tokenStorage,
 
     /// Whether to inject `__typename` into every selection set. Defaults to `true`.
     bool addTypename = true,
     Cache? cache,
-    this.defaultFetchPolicy = FetchPolicy.noCache,
-    this.defaultErrorPolicy = ErrorPolicy.none,
-    this.loggerOptions = const LoggerOptions(),
-  })  : cache = cache ?? InMemoryCache(),
-        _pipeline = _buildPipeline(
-          url: url,
-          wsUrl: wsUrl,
-          sseUrl: sseUrl,
-          subscriptionLink: subscriptionLink,
-          dio: dio,
-          defaultHeaders: defaultHeaders,
-          loggerOptions: loggerOptions,
-          tokenHeader: tokenHeader,
-          isTokenExpired: isTokenExpired,
-          onTokenRefresh: onTokenRefresh,
-          onRevokeToken: onRevokeToken,
-          addTypename: addTypename,
-        );
+    FetchPolicy defaultFetchPolicy = FetchPolicy.noCache,
+    ErrorPolicy defaultErrorPolicy = ErrorPolicy.none,
+    LoggerOptions loggerOptions = const LoggerOptions(),
+  }) {
+    // Resolved once, here, and threaded through as a single non-null Dio —
+    // AuthLink's own refresh requests must share this exact instance (same
+    // defaultHeaders, same interceptors) rather than each independently
+    // falling back to a second, unconfigured `Dio()`.
+    final dioInstance = dio ?? Dio();
+    if (defaultHeaders != null && defaultHeaders.isNotEmpty) {
+      dioInstance.options.headers.addAll(defaultHeaders);
+    }
+
+    final resolvedTokenStorage =
+        tokenStorage ?? (refreshCallback != null ? SecureTokenStorage() : null);
+    final resolvedCallbacks = _resolveAuthCallbacks(
+      tokenHeader: tokenHeader,
+      onRevokeToken: onRevokeToken,
+      refreshCallback: refreshCallback,
+      tokenStorage: resolvedTokenStorage,
+    );
+
+    return GraphQLClient._(
+      tokenStorage: resolvedTokenStorage,
+      cache: cache ?? InMemoryCache(),
+      defaultFetchPolicy: defaultFetchPolicy,
+      defaultErrorPolicy: defaultErrorPolicy,
+      loggerOptions: loggerOptions,
+      ownedDio: dio == null ? dioInstance : null,
+      pipeline: _buildPipeline(
+        url: url,
+        wsUrl: wsUrl,
+        sseUrl: sseUrl,
+        subscriptionLink: subscriptionLink,
+        dio: dioInstance,
+        defaultHeaders: defaultHeaders,
+        loggerOptions: loggerOptions,
+        tokenHeader: resolvedCallbacks.tokenHeader,
+        isTokenExpired: isTokenExpired,
+        onTokenRefresh: resolvedCallbacks.onTokenRefresh,
+        onRevokeToken: resolvedCallbacks.onRevokeToken,
+        addTypename: addTypename,
+      ),
+    );
+  }
+
+  GraphQLClient._({
+    required this.tokenStorage,
+    required this.cache,
+    required this.defaultFetchPolicy,
+    required this.defaultErrorPolicy,
+    required this.loggerOptions,
+    required Dio? ownedDio,
+    required Link pipeline,
+  })  : _ownedDio = ownedDio,
+        _pipeline = pipeline;
 
   /// Creates a [GraphQLClient] using a custom [Link] pipeline directly.
   GraphQLClient.fromLink(
@@ -120,14 +184,69 @@ class GraphQLClient {
     this.defaultErrorPolicy = ErrorPolicy.none,
     this.loggerOptions = const LoggerOptions(),
   })  : cache = cache ?? InMemoryCache(),
+        tokenStorage = null,
+        _ownedDio = null,
         _pipeline = link;
+
+  /// Derives [tokenHeader]/`onTokenRefresh`/[onRevokeToken] from
+  /// [refreshCallback]/[tokenStorage] so [GraphQLClient] can manage its own
+  /// auth session — [refreshCallback] is the sole source of truth for
+  /// refresh; an explicit [tokenHeader] only overrides the header supplier.
+  ///
+  /// The resulting `onTokenRefresh` is what [AuthLink] dedupes concurrent
+  /// 401s against (a shared in-flight [Future] — see `AuthLink._refreshToken`),
+  /// so however many requests fail at once, [refreshCallback] runs at most
+  /// once per refresh cycle and every one of them retries once it resolves.
+  static ({
+    AccessTokenCallback? tokenHeader,
+    OnRefreshCallback? onTokenRefresh,
+    OnRevokeTokenCallback? onRevokeToken,
+  }) _resolveAuthCallbacks({
+    required AccessTokenCallback? tokenHeader,
+    required OnRevokeTokenCallback? onRevokeToken,
+    required RefreshCallback? refreshCallback,
+    required TokenStorage? tokenStorage,
+  }) {
+    if (tokenStorage == null) {
+      return (
+        tokenHeader: tokenHeader,
+        onTokenRefresh: null,
+        onRevokeToken: onRevokeToken,
+      );
+    }
+
+    return (
+      tokenHeader: tokenHeader ??
+          () async {
+            final token = await tokenStorage.accessToken;
+            return token != null ? {'Authorization': 'Bearer $token'} : null;
+          },
+      onTokenRefresh: refreshCallback != null
+          ? (refreshClient) async {
+              final currentRefreshToken = await tokenStorage.refreshToken;
+              // No refresh token to call the API with — revoke straight away
+              // instead of calling refreshCallback with one.
+              if (currentRefreshToken == null) return null;
+              final newToken =
+                  await refreshCallback(refreshClient, currentRefreshToken);
+              if (newToken == null) return null;
+              await tokenStorage.save(newToken);
+              return {'Authorization': 'Bearer ${newToken.accessToken}'};
+            }
+          : null,
+      onRevokeToken: () {
+        onRevokeToken?.call();
+        tokenStorage.clear();
+      },
+    );
+  }
 
   static Link _buildPipeline({
     required String url,
     String? wsUrl,
     String? sseUrl,
     Link? subscriptionLink,
-    Dio? dio,
+    required Dio dio,
     Map<String, String>? defaultHeaders,
     LoggerOptions loggerOptions = const LoggerOptions(),
     AccessTokenCallback? tokenHeader,
@@ -136,11 +255,7 @@ class GraphQLClient {
     OnRevokeTokenCallback? onRevokeToken,
     bool addTypename = true,
   }) {
-    final dioInstance = dio ?? Dio();
-    if (defaultHeaders != null && defaultHeaders.isNotEmpty) {
-      dioInstance.options.headers.addAll(defaultHeaders);
-    }
-
+    final dioInstance = dio;
     final links = <Link>[];
 
     // 1. AuthLink at the top of the chain (handles auth context & 401 refresh/retry)
@@ -148,7 +263,7 @@ class GraphQLClient {
     if (hasAuth) {
       links.add(AuthLink(
         url: url,
-        dio: dio,
+        dio: dioInstance,
         tokenHeader: tokenHeader,
         isTokenExpired: isTokenExpired,
         onTokenRefresh: onTokenRefresh,
@@ -184,7 +299,6 @@ class GraphQLClient {
                     client: dioInstance,
                     defaultHeaders: defaultHeaders ?? const {},
                     tokenHeader: tokenHeader,
-                    onTokenRefresh: onTokenRefresh,
                   )
                 : null);
 
@@ -374,11 +488,60 @@ class GraphQLClient {
   Stream<TData?> watchQuery<TData, TVars>(GraphQLRequest<TData, TVars> req) =>
       cache.watchQuery(req);
 
+  /// Whether a persisted access token exists in [tokenStorage].
+  /// Always `false` when this client wasn't built with `refreshCallback`/
+  /// `tokenStorage`.
+  Future<bool> get isAuthenticated async =>
+      tokenStorage != null && await tokenStorage!.accessToken != null;
+
+  /// Emits the new [AuthToken] on login/refresh, and `null` on logout or a
+  /// revoked (failed) refresh — listen to drive app-wide auth state, e.g.
+  /// navigate to the login screen when a `null` event arrives:
+  ///
+  /// ```dart
+  /// client.onAuthTokenChange.listen((token) {
+  ///   if (token == null) router.go('/login');
+  /// });
+  /// ```
+  ///
+  /// Empty when this client wasn't built with `refreshCallback`/`tokenStorage`.
+  Stream<AuthToken?> get onAuthTokenChange =>
+      tokenStorage?.onChange ?? const Stream.empty();
+
+  /// Persists [token] via [tokenStorage] — call after a successful login so
+  /// subsequent requests carry the `Authorization` header automatically.
+  ///
+  /// Throws [StateError] if this client wasn't built with `refreshCallback`
+  /// or an explicit `tokenStorage`.
+  Future<void> setAuthToken(AuthToken token) {
+    final storage = tokenStorage;
+    if (storage == null) {
+      throw StateError(
+          'GraphQLClient.setAuthToken requires refreshCallback or tokenStorage to be configured.');
+    }
+    return storage.save(token);
+  }
+
+  /// Clears the persisted auth token and notifies revoke-token listeners —
+  /// call on explicit logout. No-op (beyond notifying listeners) when this
+  /// client wasn't built with `refreshCallback`/`tokenStorage`.
+  Future<void> clearAuthToken() async {
+    await tokenStorage?.clear();
+    AuthLink.notifyRevokeToken();
+  }
+
   /// Disposes client resources and all child links.
+  ///
+  /// Closes the [Dio] client only when this [GraphQLClient] created it
+  /// itself (no `dio:` argument was passed to the factory) — a caller-
+  /// supplied [Dio] is theirs to close, since they may still hold a
+  /// reference to it elsewhere.
   Future<void> dispose() async {
     AuthLink.clearRevokeTokenListeners();
     cache.clear();
+    await tokenStorage?.dispose();
     await _pipeline.dispose();
+    _ownedDio?.close();
   }
 
   // ---------------------------------------------------------------------------
@@ -426,7 +589,7 @@ class GraphQLClient {
 
       final gqlReq = gql.Request(
         operation: gql.Operation(
-          document: getParsedDocument(req.document),
+          document: req.documentNode,
           operationName: req.operationName,
         ),
         variables:

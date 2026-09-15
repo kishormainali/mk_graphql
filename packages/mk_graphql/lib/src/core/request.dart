@@ -1,4 +1,6 @@
 import 'package:dio/dio.dart';
+import 'package:gql/ast.dart';
+import 'document_cache.dart';
 import 'error_policy.dart';
 import 'fetch_policy.dart';
 
@@ -11,6 +13,13 @@ abstract class GraphQLRequest<TData, TVars> {
 
   /// The raw GraphQL document string (query / mutation / subscription body).
   String get document;
+
+  /// The parsed AST [GraphQLClient] sends over the wire. Defaults to parsing
+  /// [document] through the shared process-wide cache (parsed once per
+  /// unique string). The generator overrides this with a `static final`
+  /// field computed once per request class instead, skipping even that
+  /// cache lookup on every subsequent request.
+  DocumentNode get documentNode => getParsedDocument(document);
 
   /// Name of the operation to execute within [document].
   String get operationName;

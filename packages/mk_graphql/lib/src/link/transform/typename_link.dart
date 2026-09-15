@@ -9,6 +9,16 @@ typedef AddTypenameLink = TypenameLink;
 class TypenameLink extends Link {
   const TypenameLink();
 
+  /// Transformed-document cache, keyed by the original [DocumentNode]'s
+  /// identity. The same operation is sent repeatedly with the same document
+  /// instance (a generated request's `static final documentNode`, or a
+  /// hand-written one resolved through the shared parse cache), so without
+  /// this every request re-walks and rebuilds the entire AST for a result
+  /// that's identical to last time. Static (not per-instance) since the
+  /// transform is a pure function of the input document — safe to share
+  /// across every [TypenameLink], and keeps this class `const`-constructible.
+  static final _cache = Expando<DocumentNode>('TypenameLink transform cache');
+
   @override
   Stream<Response> request(Request req, [NextLink? forward]) {
     if (forward == null) {
@@ -16,8 +26,9 @@ class TypenameLink extends Link {
     }
 
     try {
-      final transformedDoc =
-          req.operation.document.accept(_AddTypenameVisitor()) as DocumentNode;
+      final originalDoc = req.operation.document;
+      final transformedDoc = _cache[originalDoc] ??=
+          originalDoc.accept(_AddTypenameVisitor()) as DocumentNode;
       final updatedReq = Request(
         operation: Operation(
           document: transformedDoc,

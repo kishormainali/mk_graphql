@@ -85,9 +85,49 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
       );
 }
 
+class _TestMutationReq extends GraphQLRequest<_TestData, _TestVars> {
+  @override
+  final _TestVars variables;
+  _TestMutationReq(this.variables);
+
+  @override
+  String get document => 'mutation Test { user { id name } }';
+
+  @override
+  String get operationName => 'Test';
+
+  @override
+  Map<String, dynamic> toJsonVars(_TestVars vars) => vars.toJson();
+
+  @override
+  _TestData parseData(Map<String, dynamic> json) => _TestData.fromJson(json);
+
+  @override
+  _TestMutationReq copyWithRequest({
+    _TestVars? variables,
+    FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
+    Map<String, String>? headers,
+    dio.CancelToken? cancelToken,
+    _TestData? optimisticResponse,
+  }) =>
+      _TestMutationReq(variables ?? this.variables);
+}
+
 // ---------------------------------------------------------------------------
 // gql_link test doubles
 // ---------------------------------------------------------------------------
+
+class _CountingLink extends Link {
+  final void Function() onRequest;
+  _CountingLink(this.onRequest);
+
+  @override
+  Stream<gql.Response> request(gql.Request req, [NextLink? forward]) async* {
+    onRequest();
+    yield const gql.Response(data: {'id': '1', 'name': 'Dedup'}, response: {});
+  }
+}
 
 class _CapturingLink extends Link {
   gql.Request? captured;
@@ -353,6 +393,56 @@ void main() {
         () => client.future(_TestReq(const _TestVars('1')), cancelToken: token),
         throwsA(isA<RequestCancelledException>()),
       );
+    });
+
+    test(
+        'deduplicates concurrent identical queries into a single network call',
+        () async {
+      var callCount = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        callCount++;
+      }));
+
+      final results = await Future.wait([
+        for (var i = 0; i < 5; i++) client.future(_TestReq(const _TestVars('1'))),
+      ]);
+
+      expect(callCount, equals(1),
+          reason: 'identical concurrent queries must share one network call');
+      expect(results, hasLength(5));
+    });
+
+    test('mutations are never deduplicated, even with identical variables',
+        () async {
+      var callCount = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        callCount++;
+      }));
+
+      await Future.wait([
+        for (var i = 0; i < 3; i++)
+          client.future(_TestMutationReq(const _TestVars('1'))),
+      ]);
+
+      expect(callCount, equals(3),
+          reason: 'mutations must each hit the network independently');
+    });
+
+    test('a request with an explicit cancelToken is never deduplicated',
+        () async {
+      var callCount = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        callCount++;
+      }));
+
+      await Future.wait([
+        client.future(_TestReq(const _TestVars('1'),
+            cancelToken: CancelToken())),
+        client.future(_TestReq(const _TestVars('1'),
+            cancelToken: CancelToken())),
+      ]);
+
+      expect(callCount, equals(2));
     });
   });
 

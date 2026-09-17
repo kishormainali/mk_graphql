@@ -15,6 +15,7 @@ import '../core/error_policy.dart';
 import '../core/graphql_error_mapper.dart';
 import '../core/fetch_policy.dart';
 import '../core/request.dart';
+import '../core/request_key.dart';
 import '../core/response.dart';
 import '../link/auth/auth_link.dart';
 import '../link/logging/logger_link.dart';
@@ -35,6 +36,13 @@ class GraphQLClient {
   final FetchPolicy defaultFetchPolicy;
   final ErrorPolicy defaultErrorPolicy;
   final LoggerOptions loggerOptions;
+
+  /// In-flight query/subscription network calls keyed by [computeRequestKey]
+  /// — concurrent identical calls share one entry instead of each starting
+  /// a separate pipeline request. Mutations and any request with an
+  /// explicit [CancelToken] are never entered here (see
+  /// [_requestThroughPipeline]).
+  final Map<String, Stream<gql.Response>> _inFlight = {};
 
   /// The [Dio] instance this client created for itself (no `dio:` argument
   /// was supplied to the factory) — closed by [dispose]. Null when the
@@ -125,9 +133,17 @@ class GraphQLClient {
 
     /// Whether to inject `__typename` into every selection set. Defaults to `true`.
     bool addTypename = true,
+
+    /// Cache for the queries
     Cache? cache,
+
+    /// Fetch policy for the client
     FetchPolicy defaultFetchPolicy = FetchPolicy.noCache,
+
+    /// Error policy for the client
     ErrorPolicy defaultErrorPolicy = ErrorPolicy.none,
+
+    /// Logger Options
     LoggerOptions loggerOptions = const LoggerOptions(),
   }) {
     // Resolved once, here, and threaded through as a single non-null Dio —
@@ -338,6 +354,54 @@ class GraphQLClient {
       }
     }
     return defs.any((d) => d.type == OperationType.subscription);
+  }
+
+  static bool _isMutation(gql.Request req) {
+    final defs =
+        req.operation.document.definitions.whereType<OperationDefinitionNode>();
+    if (req.operation.operationName != null) {
+      final match =
+          defs.where((d) => d.name?.value == req.operation.operationName);
+      if (match.isNotEmpty) {
+        return match.first.type == OperationType.mutation;
+      }
+    }
+    return defs.any((d) => d.type == OperationType.mutation);
+  }
+
+  /// Routes [gqlReq] through [_pipeline], deduplicating concurrent identical
+  /// queries/subscriptions (never mutations, never a request carrying an
+  /// explicit [CancelToken] — see [_inFlight]'s doc comment) via
+  /// [_inFlight].
+  Stream<gql.Response> _requestThroughPipeline(
+    GraphQLRequest req,
+    gql.Request gqlReq, {
+    required bool skipDedup,
+  }) {
+    if (skipDedup || _isMutation(gqlReq)) {
+      return _pipeline.request(gqlReq);
+    }
+
+    final key = computeRequestKey(req);
+    final existing = _inFlight[key];
+    if (existing != null) return existing;
+
+    final controller = StreamController<gql.Response>.broadcast();
+    _inFlight[key] = controller.stream;
+
+    _pipeline.request(gqlReq).listen(
+      controller.add,
+      onError: (Object e, StackTrace st) {
+        _inFlight.remove(key);
+        controller.addError(e, st);
+      },
+      onDone: () {
+        _inFlight.remove(key);
+        controller.close();
+      },
+    );
+
+    return controller.stream;
   }
 
   // ---------------------------------------------------------------------------
@@ -574,7 +638,11 @@ class GraphQLClient {
         context: context,
       );
 
-      await for (final res in _pipeline.request(gqlReq)) {
+      await for (final res in _requestThroughPipeline(
+        req,
+        gqlReq,
+        skipDedup: effectiveCancelToken != null,
+      )) {
         yield GraphQLResponse<TData>(
           data: res.data != null ? req.parseData(res.data!) : null,
           errors: mapGraphQLErrors(res.errors),

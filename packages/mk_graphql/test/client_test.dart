@@ -43,6 +43,10 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
     super.errorPolicy,
     super.headers,
     super.optimisticResponse,
+    super.staleTime,
+    super.cacheTime,
+    super.retry,
+    super.refetchInterval,
   });
 
   @override
@@ -74,6 +78,10 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
         cancelToken: cancelToken ?? this.cancelToken,
         optimisticResponse: optimisticResponse ?? this.optimisticResponse,
         requestId: requestId,
+        staleTime: staleTime,
+        cacheTime: cacheTime,
+        retry: retry,
+        refetchInterval: refetchInterval,
       );
 }
 

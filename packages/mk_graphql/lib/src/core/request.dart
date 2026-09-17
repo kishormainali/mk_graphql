@@ -3,6 +3,7 @@ import 'package:gql/ast.dart';
 import 'document_cache.dart';
 import 'error_policy.dart';
 import 'fetch_policy.dart';
+import 'retry_options.dart';
 
 /// Represents an immutable typed GraphQL request.
 ///
@@ -52,6 +53,31 @@ abstract class GraphQLRequest<TData, TVars> {
   /// CancelToken for cancelling the request (e.g. via Dio).
   final CancelToken? cancelToken;
 
+  /// Overrides [GraphQLClient.defaultStaleTime] for this request. Governs
+  /// how long cached data returned by [FetchPolicy.cacheFirst] is
+  /// considered fresh before a background network revalidation is
+  /// triggered — an active [GraphQLClient.watchQuery] subscription also
+  /// revalidates immediately on attach when the cached value is already
+  /// stale.
+  final Duration? staleTime;
+
+  /// Overrides [GraphQLClient.defaultCacheTime]. How long this query's
+  /// cache entry survives after its last active [GraphQLClient.watchQuery]
+  /// subscriber cancels, before being garbage-collected. `null` (the
+  /// default) means "never garbage-collect".
+  final Duration? cacheTime;
+
+  /// Overrides [GraphQLClient.defaultRetry]. `null` uses the client default
+  /// (queries/subscriptions retry automatically, mutations never do); pass
+  /// [RetryOptions.none] to disable retry, or a [RetryOptions] to opt a
+  /// mutation into retry.
+  final RetryOptions? retry;
+
+  /// While this request has an active [GraphQLClient.watchQuery]
+  /// subscriber, triggers a background network refetch every
+  /// [refetchInterval]. `null` (the default) disables interval polling.
+  final Duration? refetchInterval;
+
   final String? _requestId;
 
   /// Unique identifier used for cache keying and optimistic-response tracking.
@@ -63,6 +89,10 @@ abstract class GraphQLRequest<TData, TVars> {
     this.headers,
     this.optimisticResponse,
     this.cancelToken,
+    this.staleTime,
+    this.cacheTime,
+    this.retry,
+    this.refetchInterval,
     String? requestId,
   }) : _requestId = requestId;
 

@@ -6,6 +6,7 @@ export 'src/core/error.dart';
 export 'src/core/request.dart';
 export 'src/core/request_key.dart';
 export 'src/core/response.dart';
+export 'src/core/retry_options.dart';
 
 export 'package:dio/dio.dart' show CancelToken;
 export 'package:gql/ast.dart' show DocumentNode;

@@ -42,6 +42,10 @@ class _PageReq extends GraphQLRequest<_PageData, _PageVars> {
     super.cancelToken,
     super.headers,
     super.optimisticResponse,
+    super.staleTime,
+    super.cacheTime,
+    super.retry,
+    super.refetchInterval,
   });
 
   @override
@@ -74,6 +78,10 @@ class _PageReq extends GraphQLRequest<_PageData, _PageVars> {
       cancelToken: cancelToken ?? this.cancelToken,
       optimisticResponse: optimisticResponse ?? this.optimisticResponse,
       requestId: requestId,
+      staleTime: staleTime,
+      cacheTime: cacheTime,
+      retry: retry,
+      refetchInterval: refetchInterval,
     );
   }
 }

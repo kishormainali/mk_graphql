@@ -136,6 +136,10 @@ Class freezedRequestClass({
           _namedParam('headers', type: 'Map<String, String>?'),
           _namedParam('cancelToken', type: 'CancelToken?'),
           _namedParam('optimisticResponse', type: '$modelClassName?'),
+          _namedParam('staleTime', type: 'Duration?'),
+          _namedParam('cacheTime', type: 'Duration?'),
+          _namedParam('retry', type: 'RetryOptions?'),
+          _namedParam('refetchInterval', type: 'Duration?'),
         ])),
       Constructor((c) => c
         ..constant = true
@@ -198,6 +202,10 @@ Class freezedRequestClass({
           headers: headers ?? this.headers,
           cancelToken: cancelToken ?? this.cancelToken,
           optimisticResponse: optimisticResponse ?? this.optimisticResponse,
+          staleTime: staleTime ?? this.staleTime,
+          cacheTime: cacheTime ?? this.cacheTime,
+          retry: retry ?? this.retry,
+          refetchInterval: refetchInterval ?? this.refetchInterval,
         )''')),
     ]));
 }

@@ -1277,6 +1277,37 @@ void main() {
       expect(barrel, contains('errorPolicy: errorPolicy,'));
     });
 
+    test(
+        'staleTime/cacheTime/retry/refetchInterval are included in request '
+        'constructor and copyWithRequest', () {
+      const query = '''
+        query GetSimpleItem {
+          getItem(id: "123") {
+            id
+          }
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: query,
+        inputPath: 'lib/graphql/operations.graphql',
+        schemaContent: conventionSchema,
+        schemaPath: 'lib/graphql/schema.graphql',
+      );
+
+      final req =
+          bundle.files['generated/get_simple_item/get_simple_item_req.dart']!;
+      expect(req, contains('Duration? staleTime,'));
+      expect(req, contains('Duration? cacheTime,'));
+      expect(req, contains('RetryOptions? retry,'));
+      expect(req, contains('Duration? refetchInterval,'));
+      expect(req, contains('staleTime: staleTime ?? this.staleTime,'));
+      expect(req, contains('cacheTime: cacheTime ?? this.cacheTime,'));
+      expect(req, contains('retry: retry ?? this.retry,'));
+      expect(req,
+          contains('refetchInterval: refetchInterval ?? this.refetchInterval,'));
+    });
+
     test('Custom scalars are mapped according to customScalars configuration',
         () {
       const query = '''

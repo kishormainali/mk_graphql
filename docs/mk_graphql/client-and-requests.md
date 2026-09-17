@@ -18,6 +18,10 @@ abstract class GraphQLRequest<TData, TVars> {
   final Map<String, String>? headers; // per-request extra headers
   final TData? optimisticResponse;
   final CancelToken? cancelToken;
+  final Duration? staleTime;          // overrides GraphQLClient.defaultStaleTime
+  final Duration? cacheTime;          // overrides GraphQLClient.defaultCacheTime
+  final RetryOptions? retry;          // overrides GraphQLClient.defaultRetry
+  final Duration? refetchInterval;    // periodic background refetch while watched
 
   GraphQLRequest<TData, TVars> copyWithRequest({ ... });
   GraphQLRequest<TData, TVars> copyWithFetchPolicy(FetchPolicy policy);
@@ -40,6 +44,21 @@ The generator emits concrete subclasses per operation (`GetUserReq`, `CreatePost
 | `request(req, {cancelToken})` | `Stream<GraphQLResponse<TData>>` | Low-level: yields raw responses (cache/network/optimistic), never throws. |
 | `watchQuery(req)` | `Stream<TData?>` | Subscribes to cache updates for this request's cache key, independent of network activity. |
 | `dispose()` | `Future<void>` | Clears revoke-token listeners, clears cache, disposes link pipeline. |
+
+---
+
+## `GraphQLClient.create`
+
+`GraphQLClient(...)` is a synchronous factory — it needs a `Cache` instance up front. `GraphQLClient.create({...})` is the async counterpart: it takes every same named parameter, but `cache` accepts a `FutureOr<Cache>?`, so an async cache constructor like `HiveCache.open(...)` can be passed directly without a separate `await` statement:
+
+```dart
+final client = await GraphQLClient.create(
+  url: 'https://api.example.com/graphql',
+  cache: HiveCache.open(boxName: 'gql_cache'),
+);
+```
+
+Use the sync constructor for `InMemoryCache` (the default when `cache` is omitted) or a `HiveCache`/other cache you've already opened/awaited yourself — `GraphQLClient.create` only exists to avoid an extra `await` line when the cache itself is async. See [Caching: Persistent cache `HiveCache`](caching.md#persistent-cache-hivecache).
 
 ---
 
@@ -79,6 +98,54 @@ enum FetchPolicy {
 ```
 
 Set a default on the client (`GraphQLClient(defaultFetchPolicy: ...)`) and override per request via `req.fetchPolicy` or `req.copyWithFetchPolicy(...)`.
+
+---
+
+## Request deduplication
+
+Concurrent identical queries/subscriptions — same operation, same document, same variables — automatically share a single in-flight network call instead of each starting its own. Two widgets both doing `client.stream(getUserReq)` (or `future`) on the same query in the same frame only hit the network once; both callers still get their own response.
+
+Mutations never dedup (each call is expected to run exactly once), and neither does any request carrying an explicit `CancelToken` (a caller who wants to cancel *their own* call shouldn't be silently attached to someone else's in-flight request). No configuration is needed — this is always on.
+
+---
+
+## Retry with backoff
+
+`GraphQLClient` can automatically retry a failed query/subscription with exponential backoff:
+
+```dart
+class RetryOptions {
+  final int maxAttempts;                        // default 3, total attempts including the first
+  final Duration initialDelay;                  // default 200ms, delay before the first retry
+  final double backoffMultiplier;                // default 2.0
+  final bool Function(Object error)? retryIf;    // default: transient network errors only
+
+  const RetryOptions({...});
+
+  /// A single attempt, no retry.
+  static const RetryOptions none = RetryOptions(maxAttempts: 1);
+}
+```
+
+- `GraphQLClient(defaultRetry: ...)` — applied automatically to queries and subscriptions; `null` (the default) disables auto-retry. **Mutations never use this** — a mutation only retries if it sets its own `GraphQLRequest.retry`.
+- `GraphQLRequest.retry` — overrides `defaultRetry` for this request. Pass `RetryOptions.none` to disable retry for an otherwise-retrying query, or any `RetryOptions` to opt a mutation into retry.
+- The default `retryIf` retries connection errors and timeouts (`NetworkException`, `TimeoutException`) — never 4xx/validation errors, since those won't succeed on retry regardless of attempts.
+
+```dart
+final client = GraphQLClient(
+  url: 'https://api.example.com/graphql',
+  defaultRetry: const RetryOptions(maxAttempts: 4, initialDelay: Duration(milliseconds: 300)),
+);
+
+// Opt this one query out of the client default:
+final req = GetUserReq(variables: GetUserVars(id: userId), retry: RetryOptions.none);
+
+// Opt this mutation into retry (mutations don't retry by default):
+final createReq = CreatePostReq(
+  variables: CreatePostVars(title: title),
+  retry: const RetryOptions(maxAttempts: 2),
+);
+```
 
 ---
 

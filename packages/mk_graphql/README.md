@@ -25,6 +25,8 @@ A clean, modern, simplified GraphQL client for Dart and Flutter with normalized 
 - 📑 **Automatic Pagination (Zero Manual Append)**: `client.fetchMore` and `req.fetchMore` automatically merge lists and Relay connections; `GraphQLPaginator` manages reactive infinite scroll.
 - 🛡️ **Validation Errors**: Specialized `ValidationException` extracting field-level validation messages across Apollo, Laravel/Lighthouse, NestJS, and Spring DGS.
 - 🪵 **Built-in Logging**: Pretty console logging with custom options and privacy masking.
+- ⚡ **Smart Query Optimizations**: Automatic in-flight request deduplication, opt-out-of stale-while-revalidate caching with GC, `invalidateQueries`, retry-with-backoff, and reconnect/interval refetch triggers — TanStack-Query-style client behavior.
+- 💽 **Optional Persistent Cache**: `HiveCache` (backed by `hive_ce`) persists the normalized cache across app restarts as a drop-in `Cache` implementation.
 
 ---
 
@@ -36,7 +38,6 @@ Add `mk_graphql` to your `pubspec.yaml`:
 dependencies:
   mk_graphql: ^1.1.0
 ```
-
 
 Then run:
 
@@ -77,6 +78,11 @@ final client = GraphQLClient(
 
   // Default error policy: none (throw if errors), ignore (return partial data), all (return data with errors)
   defaultErrorPolicy: ErrorPolicy.none,
+
+  // Also available: defaultStaleTime/defaultCacheTime (stale-while-revalidate
+  // caching + GC — note cacheFirst now background-revalidates on every cache
+  // hit by default) and defaultRetry (retry-with-backoff for queries). See
+  // the full caching and client docs linked below.
 );
 ```
 
@@ -115,6 +121,7 @@ try {
 ```
 
 Or execute directly on the request object:
+
 ```dart
 final data = await getUserReq.execute(client);
 ```
@@ -158,6 +165,7 @@ final freshData2 = await getUserReq.refetch(client);
 You do not need to manually concatenate lists (`[...previous, ...incoming]`).
 
 #### Option A: `client.fetchMore` / `req.fetchMore`
+
 Automatically merges response JSON trees (concatenating list fields and merging Relay connections) and updates the cache under the initial request:
 
 ```dart
@@ -174,6 +182,7 @@ final mergedData2 = await page1Req.fetchMore(client, nextRequest: page2Req);
 ```
 
 #### Option B: `GraphQLPaginator`
+
 For infinite scroll lists with reactive state management:
 
 ```dart
@@ -210,7 +219,8 @@ paginator.stream.listen((state) {
 });
 ```
 
-##### Flutter BLoC Integration (`emit.forEach`):
+##### Flutter BLoC Integration (`emit.forEach`)
+
 Pipe `paginator.stream` directly into BLoC state without manual subscriptions:
 
 ```dart
@@ -240,7 +250,6 @@ class AnimeListBloc extends Bloc<AnimeListEvent, AnimeListState> {
   }
 }
 ```
-
 
 ---
 

@@ -2149,6 +2149,56 @@ void main() {
           reason: 'no refetchInterval/GC timer should fire after dispose()');
     });
   });
+
+  group('notifyReconnected / notifyAppResumed', () {
+    test('notifyReconnected refetches only currently active watched queries',
+        () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final watchedReq = _TestReq(const _TestVars('watched'),
+          staleTime: const Duration(minutes: 5));
+      final unwatchedReq = _TestReq(const _TestVars('unwatched'),
+          staleTime: const Duration(minutes: 5));
+      client.cache
+          .writeQuery(watchedReq, const _TestData(id: '1', name: 'A'));
+      client.cache
+          .writeQuery(unwatchedReq, const _TestData(id: '2', name: 'B'));
+
+      final sub = client.watchQuery(watchedReq).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      final callsAfterAttach = networkCalls;
+      expect(callsAfterAttach, equals(0),
+          reason: 'fresh staleTime, no reconnect yet — no refetch');
+
+      await client.notifyReconnected();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(networkCalls, equals(1),
+          reason: 'only the watched query refetches on reconnect');
+      await sub.cancel();
+    });
+
+    test('notifyAppResumed behaves the same as notifyReconnected', () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          staleTime: const Duration(minutes: 5));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'A'));
+
+      final sub = client.watchQuery(req).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      await client.notifyAppResumed();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(networkCalls, equals(1));
+      await sub.cancel();
+    });
+  });
 }
 
 class _DataAndErrorLink extends Link {

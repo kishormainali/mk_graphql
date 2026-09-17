@@ -689,6 +689,23 @@ class GraphQLClient {
     return controller.stream;
   }
 
+  /// Triggers a background `networkOnly` refetch for every currently
+  /// active [watchQuery] subscription — call this from your app's
+  /// connectivity listener (e.g. `connectivity_plus`) when the device
+  /// regains network connectivity.
+  Future<void> notifyReconnected() => _refetchActiveQueries();
+
+  /// Triggers a background `networkOnly` refetch for every currently
+  /// active [watchQuery] subscription — call this from your app's
+  /// lifecycle observer (e.g.
+  /// `WidgetsBindingObserver.didChangeAppLifecycleState(resumed)`).
+  Future<void> notifyAppResumed() => _refetchActiveQueries();
+
+  Future<void> _refetchActiveQueries() => Future.wait([
+        for (final active in _activeQueries.values)
+          if (active.refCount > 0) _backgroundRefetch(active.latestRequest),
+      ]);
+
   /// Runs [req] as a `networkOnly` fetch purely to refresh the cache — used
   /// by staleness-on-attach, `refetchInterval`, [invalidateQueries], and
   /// [notifyReconnected]/[notifyAppResumed]. Failures are swallowed: none

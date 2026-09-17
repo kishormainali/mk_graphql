@@ -1983,6 +1983,107 @@ void main() {
       expect(networkCalls, equals(1));
     });
   });
+
+  group('watchQuery: staleness, GC, refetchInterval', () {
+    test('watchQuery triggers a background refetch on attach when stale',
+        () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
+
+      final sub = client.watchQuery(req).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(networkCalls, equals(1),
+          reason: 'default staleTime is zero, so attaching a watcher to '
+              'already-cached data must background-refetch it');
+      await sub.cancel();
+    });
+
+    test(
+        'watchQuery does not refetch on attach when staleTime keeps the '
+        'cached value fresh', () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          staleTime: const Duration(minutes: 5));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Fresh'));
+
+      final sub = client.watchQuery(req).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(networkCalls, equals(0));
+      await sub.cancel();
+    });
+
+    test(
+        'cacheTime evicts the cache entry after the last watcher cancels, '
+        'once the timer elapses', () async {
+      final client = GraphQLClient.fromLink(_CountingLink(() {}));
+      final req = _TestReq(const _TestVars('1'),
+          staleTime: const Duration(minutes: 5),
+          cacheTime: const Duration(milliseconds: 20));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+
+      final sub = client.watchQuery(req).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await sub.cancel();
+
+      expect(client.cache.readQuery(req), isNotNull,
+          reason: 'not evicted yet — cacheTime has not elapsed');
+
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(client.cache.readQuery(req), isNull);
+    });
+
+    test('a resubscribe before cacheTime elapses cancels the pending GC',
+        () async {
+      final client = GraphQLClient.fromLink(_CountingLink(() {}));
+      final req = _TestReq(const _TestVars('1'),
+          staleTime: const Duration(minutes: 5),
+          cacheTime: const Duration(milliseconds: 20));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+
+      final sub1 = client.watchQuery(req).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await sub1.cancel();
+
+      final sub2 = client.watchQuery(req).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(client.cache.readQuery(req), isNotNull,
+          reason: 'resubscribing before the GC timer fired must cancel it');
+      await sub2.cancel();
+    });
+
+    test('refetchInterval refetches on schedule and stops after cancel',
+        () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          staleTime: const Duration(minutes: 5),
+          refetchInterval: const Duration(milliseconds: 15));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+
+      final sub = client.watchQuery(req).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await sub.cancel();
+      final callsAtCancel = networkCalls;
+
+      expect(callsAtCancel, greaterThanOrEqualTo(2));
+
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(networkCalls, equals(callsAtCancel),
+          reason: 'the interval timer must stop once the watcher cancels');
+    });
+  });
 }
 
 class _DataAndErrorLink extends Link {

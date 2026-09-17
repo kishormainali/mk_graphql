@@ -48,6 +48,12 @@ class GraphQLClient {
   /// [_requestThroughPipeline]).
   final Map<String, Stream<gql.Response>> _inFlight = {};
 
+  /// Tracks queries with at least one active [watchQuery] subscriber —
+  /// shared by staleness-on-attach, `cacheTime` GC, `refetchInterval`
+  /// polling, [invalidateQueries], and [notifyReconnected]/
+  /// [notifyAppResumed].
+  final Map<String, _ActiveQuery> _activeQueries = {};
+
   /// The [Dio] instance this client created for itself (no `dio:` argument
   /// was supplied to the factory) — closed by [dispose]. Null when the
   /// caller supplied their own [Dio] (theirs to close) or this client was
@@ -605,9 +611,81 @@ class GraphQLClient {
     }
   }
 
-  /// Watches query cache reactively.
-  Stream<TData?> watchQuery<TData, TVars>(GraphQLRequest<TData, TVars> req) =>
-      cache.watchQuery(req);
+  /// Watches query cache reactively. Also orchestrates the client-driven
+  /// behaviors that only make sense for an *active* subscriber: a
+  /// background revalidation on attach when the cached value is already
+  /// stale, `refetchInterval` polling while subscribed, and `cacheTime`
+  /// garbage collection once the last subscriber cancels.
+  Stream<TData?> watchQuery<TData, TVars>(GraphQLRequest<TData, TVars> req) {
+    final key = computeRequestKey(req);
+    final active = _activeQueries.putIfAbsent(key, () => _ActiveQuery(req));
+    active.latestRequest = req;
+
+    StreamSubscription<TData?>? cacheSub;
+    late StreamController<TData?> controller;
+
+    controller = StreamController<TData?>.broadcast(
+      onListen: () {
+        active.refCount++;
+        active.gcTimer?.cancel();
+        active.gcTimer = null;
+
+        cacheSub = cache.watchQuery(req).listen(controller.add);
+
+        final staleTime = req.staleTime ?? defaultStaleTime;
+        final writtenAt = cache.writtenAt(req);
+        final isStale = writtenAt == null ||
+            DateTime.now().difference(writtenAt) >= staleTime;
+        if (isStale) {
+          unawaited(_backgroundRefetch(req));
+        }
+
+        final interval = req.refetchInterval;
+        if (interval != null) {
+          active.refetchIntervalTimer = Timer.periodic(
+              interval, (_) => unawaited(_backgroundRefetch(req)));
+        }
+      },
+      onCancel: () async {
+        await cacheSub?.cancel();
+        active.refCount--;
+        active.refetchIntervalTimer?.cancel();
+        active.refetchIntervalTimer = null;
+
+        if (active.refCount <= 0) {
+          final cacheTime = req.cacheTime ?? defaultCacheTime;
+          if (cacheTime != null) {
+            active.gcTimer = Timer(cacheTime, () {
+              _activeQueries.remove(key);
+              cache.evictQuery(active.latestRequest);
+            });
+          } else {
+            _activeQueries.remove(key);
+          }
+        }
+      },
+    );
+
+    return controller.stream;
+  }
+
+  /// Runs [req] as a `networkOnly` fetch purely to refresh the cache — used
+  /// by staleness-on-attach, `refetchInterval`, [invalidateQueries], and
+  /// [notifyReconnected]/[notifyAppResumed]. Failures are swallowed: none
+  /// of those callers initiated this fetch directly, so there is no
+  /// `Future` of theirs to fail — the cache simply keeps its last-good
+  /// value and any active `watchQuery` stream doesn't update.
+  Future<void> _backgroundRefetch<TData, TVars>(
+    GraphQLRequest<TData, TVars> req,
+  ) async {
+    try {
+      await for (final _ in _fetchFromNetwork(
+        req.copyWithFetchPolicy(FetchPolicy.networkOnly),
+      )) {}
+    } catch (_) {
+      // Swallowed by design — see doc comment above.
+    }
+  }
 
   /// Whether a persisted access token exists in [TokenStorage.i].
   Future<bool> get isAuthenticated async =>
@@ -776,4 +854,16 @@ TData autoMergeGraphQLData<TData>(
   } catch (_) {
     return incoming;
   }
+}
+
+/// Per-query-key bookkeeping for [GraphQLClient._activeQueries]: how many
+/// [GraphQLClient.watchQuery] subscribers are currently attached, plus the
+/// pending `cacheTime` GC / `refetchInterval` polling timers driven by that
+/// refcount.
+class _ActiveQuery {
+  _ActiveQuery(this.latestRequest);
+  GraphQLRequest latestRequest;
+  int refCount = 0;
+  Timer? gcTimer;
+  Timer? refetchIntervalTimer;
 }

@@ -2083,6 +2083,71 @@ void main() {
       expect(networkCalls, equals(callsAtCancel),
           reason: 'the interval timer must stop once the watcher cancels');
     });
+
+    test(
+        'two concurrent watchQuery subscriptions on the same key each poll '
+        'refetchInterval independently', () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          staleTime: const Duration(minutes: 5),
+          refetchInterval: const Duration(milliseconds: 15));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+
+      final sub1 = client.watchQuery(req).listen((_) {});
+      final sub2 = client.watchQuery(req).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(networkCalls, greaterThanOrEqualTo(2),
+          reason: 'both watchers are polling');
+
+      // Cancel the first watcher only — the second must keep polling on
+      // its own, independent timer.
+      await sub1.cancel();
+      final callsAfterFirstCancel = networkCalls;
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(networkCalls, greaterThan(callsAfterFirstCancel),
+          reason: 'the second watcher must still be polling after the '
+              'first cancels');
+
+      // Cancel the second (last) watcher — all polling must stop. Give any
+      // already-in-flight background refetch (fired just before cancel) a
+      // moment to settle before taking the "final" snapshot, so this
+      // assertion is about the timer being stopped, not about a network
+      // call's completion race.
+      await sub2.cancel();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      final callsAfterBothCancel = networkCalls;
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(networkCalls, equals(callsAfterBothCancel),
+          reason: 'no polling may continue once every watcher has '
+              'cancelled');
+    });
+
+    test('dispose() cancels pending GC and refetchInterval timers', () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          staleTime: const Duration(minutes: 5),
+          cacheTime: const Duration(milliseconds: 20),
+          refetchInterval: const Duration(milliseconds: 10));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+
+      final sub = client.watchQuery(req).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+      await sub.cancel();
+      final callsAtDispose = networkCalls;
+
+      await client.dispose();
+
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(networkCalls, equals(callsAtDispose),
+          reason: 'no refetchInterval/GC timer should fire after dispose()');
+    });
   });
 }
 

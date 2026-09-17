@@ -618,14 +618,21 @@ class GraphQLClient {
   /// garbage collection once the last subscriber cancels.
   Stream<TData?> watchQuery<TData, TVars>(GraphQLRequest<TData, TVars> req) {
     final key = computeRequestKey(req);
-    final active = _activeQueries.putIfAbsent(key, () => _ActiveQuery(req));
-    active.latestRequest = req;
 
     StreamSubscription<TData?>? cacheSub;
+    Timer? myIntervalTimer;
     late StreamController<TData?> controller;
 
     controller = StreamController<TData?>.broadcast(
       onListen: () {
+        // All registry mutation happens here, inside onListen, and nowhere
+        // at watchQuery() call time — a caller may call watchQuery() long
+        // before listening (e.g. in a widget's build()), and touching the
+        // registry earlier would race a pending gcTimer from a just-
+        // cancelled prior watcher on the same key.
+        final active =
+            _activeQueries.putIfAbsent(key, () => _ActiveQuery(req));
+        active.latestRequest = req;
         active.refCount++;
         active.gcTimer?.cancel();
         active.gcTimer = null;
@@ -642,15 +649,28 @@ class GraphQLClient {
 
         final interval = req.refetchInterval;
         if (interval != null) {
-          active.refetchIntervalTimer = Timer.periodic(
+          myIntervalTimer = Timer.periodic(
               interval, (_) => unawaited(_backgroundRefetch(req)));
+          active.refetchIntervalTimers.add(myIntervalTimer!);
         }
       },
       onCancel: () async {
         await cacheSub?.cancel();
+
+        // Cancel only this call's own interval timer — a shared single
+        // Timer? field would let concurrent watchers on the same key
+        // stomp on each other's timers (leaking one, killing the other's
+        // polling early).
+        final timer = myIntervalTimer;
+        if (timer != null) {
+          timer.cancel();
+          _activeQueries[key]?.refetchIntervalTimers.remove(timer);
+          myIntervalTimer = null;
+        }
+
+        final active = _activeQueries[key];
+        if (active == null) return;
         active.refCount--;
-        active.refetchIntervalTimer?.cancel();
-        active.refetchIntervalTimer = null;
 
         if (active.refCount <= 0) {
           final cacheTime = req.cacheTime ?? defaultCacheTime;
@@ -698,6 +718,14 @@ class GraphQLClient {
   /// supplied [Dio] is theirs to close, since they may still hold a
   /// reference to it elsewhere.
   Future<void> dispose() async {
+    for (final active in _activeQueries.values) {
+      active.gcTimer?.cancel();
+      for (final t in active.refetchIntervalTimers) {
+        t.cancel();
+      }
+    }
+    _activeQueries.clear();
+
     AuthLink.clearRevokeTokenListeners();
     cache.clear();
     await _pipeline.dispose();
@@ -865,5 +893,11 @@ class _ActiveQuery {
   GraphQLRequest latestRequest;
   int refCount = 0;
   Timer? gcTimer;
-  Timer? refetchIntervalTimer;
+
+  /// One entry per concurrent [GraphQLClient.watchQuery] call on this key
+  /// that has `refetchInterval` set — each call owns and cancels only its
+  /// own timer (tracked locally in its `watchQuery` closure), so N
+  /// concurrent watchers poll independently of one another. This set lets
+  /// [GraphQLClient.dispose] still reach and cancel every live one.
+  final Set<Timer> refetchIntervalTimers = {};
 }

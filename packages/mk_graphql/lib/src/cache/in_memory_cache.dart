@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 import '../core/request.dart';
+import '../core/request_key.dart';
 import 'cache.dart';
 import 'record_source.dart';
 
@@ -9,6 +9,9 @@ class InMemoryCache implements Cache {
   final RecordSource _store = RecordSource();
   final Map<String, RecordSource> _optimisticLayers = {};
   final KeyGetter _keyGetter;
+
+  final Map<String, DateTime> _writtenAt = {};
+  final Map<String, Set<String>> _queryTypenames = {};
 
   final _watchers = <String, Set<StreamController<dynamic>>>{};
 
@@ -28,33 +31,10 @@ class InMemoryCache implements Cache {
     return null;
   }
 
-  String _requestKey(GraphQLRequest req) {
-    final vars = req.toJsonVars(req.variables);
-    final sortedVars = _canonicalJson(vars);
-    return '${req.operationName}:${req.document.hashCode}:$sortedVars';
-  }
-
-  static String _canonicalJson(dynamic value) {
-    if (value is Map) {
-      final sortedKeys = value.keys.map((e) => e.toString()).toList()..sort();
-      final buffer = StringBuffer('{');
-      for (var i = 0; i < sortedKeys.length; i++) {
-        if (i > 0) buffer.write(',');
-        final k = sortedKeys[i];
-        buffer.write('"${k}":${_canonicalJson(value[k])}');
-      }
-      buffer.write('}');
-      return buffer.toString();
-    } else if (value is List) {
-      return '[${value.map(_canonicalJson).join(',')}]';
-    } else {
-      return jsonEncode(value);
-    }
-  }
 
   @override
   TData? readQuery<TData, TVars>(GraphQLRequest<TData, TVars> request) {
-    final queryKey = 'ROOT_QUERY:${_requestKey(request)}';
+    final queryKey = 'ROOT_QUERY:${computeRequestKey(request)}';
     final rootRecord = _getRecord(queryKey);
     if (rootRecord == null) return null;
 
@@ -71,12 +51,15 @@ class InMemoryCache implements Cache {
     GraphQLRequest<TData, TVars> request,
     TData data,
   ) {
-    final queryKey = 'ROOT_QUERY:${_requestKey(request)}';
+    final key = computeRequestKey(request);
+    final queryKey = 'ROOT_QUERY:$key';
     final json = _dataToJson(data);
 
     if (json is Map<String, dynamic>) {
       final normalized = _normalize(json);
       _store.set(queryKey, normalized);
+      _writtenAt[key] = DateTime.now();
+      _queryTypenames[key] = _collectTypenames(json);
       _notifyWatchers(request);
     }
   }
@@ -103,11 +86,16 @@ class InMemoryCache implements Cache {
   @override
   void evict(String key) {
     _store.delete(key);
+    if (key.startsWith('ROOT_QUERY:')) {
+      final requestKey = key.substring('ROOT_QUERY:'.length);
+      _writtenAt.remove(requestKey);
+      _queryTypenames.remove(requestKey);
+    }
   }
 
   @override
   void evictQuery<TData, TVars>(GraphQLRequest<TData, TVars> request) {
-    final queryKey = 'ROOT_QUERY:${_requestKey(request)}';
+    final queryKey = 'ROOT_QUERY:${computeRequestKey(request)}';
     evict(queryKey);
     _notifyWatchers(request);
   }
@@ -116,12 +104,14 @@ class InMemoryCache implements Cache {
   void clear() {
     _store.clear();
     _optimisticLayers.clear();
+    _writtenAt.clear();
+    _queryTypenames.clear();
   }
 
   @override
   Stream<TData?> watchQuery<TData, TVars>(
       GraphQLRequest<TData, TVars> request) {
-    final key = _requestKey(request);
+    final key = computeRequestKey(request);
     final controller = StreamController<TData?>.broadcast();
 
     _watchers
@@ -148,7 +138,7 @@ class InMemoryCache implements Cache {
     TData data,
   ) {
     final layer = RecordSource();
-    final queryKey = 'ROOT_QUERY:${_requestKey(request)}';
+    final queryKey = 'ROOT_QUERY:${computeRequestKey(request)}';
     final json = _dataToJson(data);
 
     if (json is Map<String, dynamic>) {
@@ -164,6 +154,25 @@ class InMemoryCache implements Cache {
     if (_optimisticLayers.containsKey(requestId)) {
       _optimisticLayers.remove(requestId);
     }
+  }
+
+  @override
+  DateTime? writtenAt<TData, TVars>(GraphQLRequest<TData, TVars> request) =>
+      _writtenAt[computeRequestKey(request)];
+
+  @override
+  Iterable<String> matchingQueryKeys({
+    List<String>? operationNames,
+    List<String>? types,
+  }) {
+    if (operationNames == null && types == null) return const [];
+    return _writtenAt.keys.where((key) {
+      final opMatch = operationNames != null &&
+          operationNames.any((name) => key.startsWith('$name:'));
+      final typeMatch = types != null &&
+          (_queryTypenames[key]?.any(types.contains) ?? false);
+      return opMatch || typeMatch;
+    }).toList();
   }
 
   Map<String, dynamic>? _getRecord(String key) {
@@ -232,8 +241,24 @@ class InMemoryCache implements Cache {
     }
   }
 
+  Set<String> _collectTypenames(dynamic json) {
+    final result = <String>{};
+    void walk(dynamic value) {
+      if (value is Map) {
+        final t = value['__typename'];
+        if (t is String) result.add(t);
+        value.values.forEach(walk);
+      } else if (value is List) {
+        value.forEach(walk);
+      }
+    }
+
+    walk(json);
+    return result;
+  }
+
   void _notifyWatchers(GraphQLRequest request) {
-    final key = _requestKey(request);
+    final key = computeRequestKey(request);
     final controllers = _watchers[key];
     if (controllers != null && controllers.isNotEmpty) {
       final data = readQuery(request);

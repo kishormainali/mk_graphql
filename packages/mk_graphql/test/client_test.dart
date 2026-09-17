@@ -213,6 +213,44 @@ void main() {
       cache.removeOptimistic('req_1');
       expect(cache.readQuery(req), isNull);
     });
+
+    test('writtenAt is null before any write and set after writeQuery', () {
+      final cache = InMemoryCache();
+      final req = _TestReq(const _TestVars('123'));
+      expect(cache.writtenAt(req), isNull);
+
+      cache.writeQuery(req, const _TestData(id: '123', name: 'Alice'));
+      final writtenAt = cache.writtenAt(req);
+      expect(writtenAt, isNotNull);
+      expect(DateTime.now().difference(writtenAt!).inSeconds, lessThan(5));
+    });
+
+    test('matchingQueryKeys matches by operationName and by typename', () {
+      final cache = InMemoryCache();
+      final req = _TestReq(const _TestVars('123'));
+      cache.writeQuery(req, const _TestData(id: '123', name: 'Alice'));
+
+      expect(
+        cache.matchingQueryKeys(operationNames: ['Test']),
+        isNotEmpty,
+      );
+      expect(
+        cache.matchingQueryKeys(operationNames: ['SomethingElse']),
+        isEmpty,
+      );
+      expect(cache.matchingQueryKeys(), isEmpty,
+          reason: 'no operationNames or types given → no matches');
+    });
+
+    test('evict clears writtenAt bookkeeping for the evicted query', () {
+      final cache = InMemoryCache();
+      final req = _TestReq(const _TestVars('123'));
+      cache.writeQuery(req, const _TestData(id: '123', name: 'Alice'));
+      expect(cache.writtenAt(req), isNotNull);
+
+      cache.evictQuery(req);
+      expect(cache.writtenAt(req), isNull);
+    });
   });
 
   group('GraphQLError parsing', () {

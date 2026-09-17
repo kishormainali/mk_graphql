@@ -16,6 +16,7 @@ import '../core/graphql_error_mapper.dart';
 import '../core/fetch_policy.dart';
 import '../core/request.dart';
 import '../core/request_key.dart';
+import '../core/retry_options.dart';
 import '../core/response.dart';
 import '../link/auth/auth_link.dart';
 import '../link/logging/logger_link.dart';
@@ -36,6 +37,9 @@ class GraphQLClient {
   final FetchPolicy defaultFetchPolicy;
   final ErrorPolicy defaultErrorPolicy;
   final LoggerOptions loggerOptions;
+  final Duration defaultStaleTime;
+  final Duration? defaultCacheTime;
+  final RetryOptions? defaultRetry;
 
   /// In-flight query/subscription network calls keyed by [computeRequestKey]
   /// — concurrent identical calls share one entry instead of each starting
@@ -143,6 +147,25 @@ class GraphQLClient {
     /// Error policy for the client
     ErrorPolicy defaultErrorPolicy = ErrorPolicy.none,
 
+    /// How long cached data is considered fresh before FetchPolicy.cacheFirst
+    /// triggers a background revalidation, and before an active watchQuery
+    /// subscription revalidates on attach. Defaults to Duration.zero (always
+    /// stale — every cacheFirst hit background-refetches, matching TanStack
+    /// Query's default). Override per-request via GraphQLRequest.staleTime.
+    Duration defaultStaleTime = Duration.zero,
+
+    /// How long a query's cache entry survives after its last active
+    /// watchQuery subscriber cancels before being garbage-collected. Null
+    /// (the default) disables GC entirely — matches today's behavior.
+    /// Override per-request via GraphQLRequest.cacheTime.
+    Duration? defaultCacheTime,
+
+    /// Automatic retry-with-backoff for queries/subscriptions on transient
+    /// network failures. Null (the default) disables auto-retry. Mutations
+    /// never use this — a mutation only retries if it sets its own
+    /// GraphQLRequest.retry.
+    RetryOptions? defaultRetry,
+
     /// Logger Options
     LoggerOptions loggerOptions = const LoggerOptions(),
   }) {
@@ -166,6 +189,9 @@ class GraphQLClient {
       cache: cache ?? InMemoryCache(),
       defaultFetchPolicy: defaultFetchPolicy,
       defaultErrorPolicy: defaultErrorPolicy,
+      defaultStaleTime: defaultStaleTime,
+      defaultCacheTime: defaultCacheTime,
+      defaultRetry: defaultRetry,
       loggerOptions: loggerOptions,
       ownedDio: dio == null ? dioInstance : null,
       pipeline: _buildPipeline(
@@ -192,6 +218,9 @@ class GraphQLClient {
     required this.defaultFetchPolicy,
     required this.defaultErrorPolicy,
     required this.loggerOptions,
+    required this.defaultStaleTime,
+    required this.defaultCacheTime,
+    required this.defaultRetry,
     required Dio? ownedDio,
     required Link pipeline,
   })  : _ownedDio = ownedDio,
@@ -204,6 +233,9 @@ class GraphQLClient {
     this.defaultFetchPolicy = FetchPolicy.noCache,
     this.defaultErrorPolicy = ErrorPolicy.none,
     this.loggerOptions = const LoggerOptions(),
+    this.defaultStaleTime = Duration.zero,
+    this.defaultCacheTime,
+    this.defaultRetry,
   })  : cache = cache ?? InMemoryCache(),
         _ownedDio = null,
         _pipeline = link;
@@ -617,43 +649,59 @@ class GraphQLClient {
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
   }) async* {
-    try {
-      final effectiveCancelToken = cancelToken ?? req.cancelToken;
-      var context = gql.Context().withEntry(
-        gql.HttpLinkHeaders(headers: req.headers ?? {}),
+    final effectiveCancelToken = cancelToken ?? req.cancelToken;
+    var context = gql.Context().withEntry(
+      gql.HttpLinkHeaders(headers: req.headers ?? {}),
+    );
+    if (effectiveCancelToken != null) {
+      context = context.withEntry(
+        DioLinkCancelTokenContextEntry(effectiveCancelToken),
       );
-      if (effectiveCancelToken != null) {
-        context = context.withEntry(
-          DioLinkCancelTokenContextEntry(effectiveCancelToken),
-        );
-      }
+    }
 
-      final gqlReq = gql.Request(
-        operation: gql.Operation(
-          document: req.documentNode,
-          operationName: req.operationName,
-        ),
-        variables:
-            req.variables != null ? req.toJsonVars(req.variables) : const {},
-        context: context,
-      );
+    final gqlReq = gql.Request(
+      operation: gql.Operation(
+        document: req.documentNode,
+        operationName: req.operationName,
+      ),
+      variables:
+          req.variables != null ? req.toJsonVars(req.variables) : const {},
+      context: context,
+    );
 
-      await for (final res in _requestThroughPipeline(
-        req,
-        gqlReq,
-        skipDedup: effectiveCancelToken != null,
-      )) {
-        yield GraphQLResponse<TData>(
-          data: res.data != null ? req.parseData(res.data!) : null,
-          errors: mapGraphQLErrors(res.errors),
-          source: ResponseSource.network,
-        );
+    final retryOptions =
+        req.retry ?? (_isMutation(gqlReq) ? null : defaultRetry);
+
+    var attempt = 1;
+    while (true) {
+      try {
+        await for (final res in _requestThroughPipeline(
+          req,
+          gqlReq,
+          skipDedup: effectiveCancelToken != null,
+        )) {
+          yield GraphQLResponse<TData>(
+            data: res.data != null ? req.parseData(res.data!) : null,
+            errors: mapGraphQLErrors(res.errors),
+            source: ResponseSource.network,
+          );
+        }
+        return;
+      } catch (e) {
+        final mapped = GraphQLExceptionExtension.fromLinkException(e);
+        final canRetry = retryOptions != null &&
+            attempt < retryOptions.maxAttempts &&
+            retryOptions.shouldRetry(mapped);
+        if (!canRetry) {
+          yield GraphQLResponse<TData>(
+            linkException: mapped,
+            source: ResponseSource.network,
+          );
+          return;
+        }
+        await Future<void>.delayed(retryOptions.delayForAttempt(attempt));
+        attempt++;
       }
-    } catch (e) {
-      yield GraphQLResponse<TData>(
-        linkException: GraphQLExceptionExtension.fromLinkException(e),
-        source: ResponseSource.network,
-      );
     }
   }
 }

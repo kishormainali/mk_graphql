@@ -216,6 +216,29 @@ class _ServerExceptionOnceLink extends Link {
   }
 }
 
+/// Throws a [NetworkException]-mapping [DioException] the first [failTimes]
+/// calls, then succeeds.
+class _FlakyLink extends Link {
+  final int failTimes;
+  final void Function() onAttempt;
+  int _calls = 0;
+  _FlakyLink({required this.failTimes, required this.onAttempt});
+
+  @override
+  Stream<gql.Response> request(gql.Request req, [NextLink? forward]) async* {
+    onAttempt();
+    _calls++;
+    if (_calls <= failTimes) {
+      throw dio.DioException(
+        requestOptions: dio.RequestOptions(path: '/graphql'),
+        type: dio.DioExceptionType.connectionError,
+      );
+    }
+    yield const gql.Response(
+        data: {'id': '1', 'name': 'Recovered'}, response: {});
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -443,6 +466,57 @@ void main() {
       ]);
 
       expect(callCount, equals(2));
+    });
+
+    test('retries a query on NetworkException up to maxAttempts, then succeeds',
+        () async {
+      var attempts = 0;
+      final client = GraphQLClient.fromLink(
+        _FlakyLink(failTimes: 2, onAttempt: () => attempts++),
+        defaultRetry: const RetryOptions(
+          maxAttempts: 3,
+          initialDelay: Duration(milliseconds: 1),
+        ),
+      );
+
+      final result = await client.future(_TestReq(const _TestVars('1')));
+      expect(attempts, equals(3));
+      expect(result.name, equals('Recovered'));
+    });
+
+    test('exhausts retries and surfaces the final failure', () async {
+      var attempts = 0;
+      final client = GraphQLClient.fromLink(
+        _FlakyLink(failTimes: 10, onAttempt: () => attempts++),
+        defaultRetry: const RetryOptions(
+          maxAttempts: 2,
+          initialDelay: Duration(milliseconds: 1),
+        ),
+      );
+
+      await expectLater(
+        client.future(_TestReq(const _TestVars('1'))),
+        throwsA(isA<NetworkException>()),
+      );
+      expect(attempts, equals(2));
+    });
+
+    test('mutations never auto-retry by default, even with defaultRetry set',
+        () async {
+      var attempts = 0;
+      final client = GraphQLClient.fromLink(
+        _FlakyLink(failTimes: 10, onAttempt: () => attempts++),
+        defaultRetry: const RetryOptions(
+          maxAttempts: 3,
+          initialDelay: Duration(milliseconds: 1),
+        ),
+      );
+
+      await expectLater(
+        client.future(_TestMutationReq(const _TestVars('1'))),
+        throwsA(isA<NetworkException>()),
+      );
+      expect(attempts, equals(1));
     });
   });
 

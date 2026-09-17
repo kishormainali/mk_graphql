@@ -432,6 +432,33 @@ void main() {
       expect(sseClient, isA<GraphQLClient>());
     });
 
+    test(
+        'GraphQLClient.create resolves a synchronous cache and builds a client',
+        () async {
+      final client = await GraphQLClient.create(
+        url: 'https://api.example.com/graphql',
+        cache: InMemoryCache(),
+      );
+      expect(client, isA<GraphQLClient>());
+    });
+
+    test('GraphQLClient.create awaits a FutureOr<Cache> before constructing',
+        () async {
+      final cache = InMemoryCache();
+      final client = await GraphQLClient.create(
+        url: 'https://api.example.com/graphql',
+        cache: Future.value(cache),
+      );
+      expect(client.cache, same(cache));
+    });
+
+    test('GraphQLClient.create defaults to a fresh InMemoryCache when cache '
+        'is omitted', () async {
+      final client =
+          await GraphQLClient.create(url: 'https://api.example.com/graphql');
+      expect(client.cache, isA<InMemoryCache>());
+    });
+
     test('maps Dio network error to GraphQLException', () {
       final client = GraphQLClient(
           url: 'https://invalid-host-unreachable-12345.com/graphql');

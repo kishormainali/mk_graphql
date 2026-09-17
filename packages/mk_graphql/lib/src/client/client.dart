@@ -219,6 +219,57 @@ class GraphQLClient {
     );
   }
 
+  /// Async counterpart to the default [GraphQLClient] factory — awaits
+  /// [cache] (so `cache: HiveCache.open(boxName: '...')` can be passed
+  /// directly, without a separate `await` statement) before building the
+  /// client. Every other parameter is identical to the sync factory.
+  static Future<GraphQLClient> create({
+    required String url,
+    String? wsUrl,
+    String? sseUrl,
+    Link? subscriptionLink,
+    Dio? dio,
+    Map<String, String>? defaultHeaders,
+    TokenHeaderCallback? accessTokenHeader,
+    TokenHeaderCallback? refreshTokenHeader,
+    IsTokenExpiredCallback? isTokenExpired,
+    IsUnauthorizedCallback? isUnauthorized,
+    OnRevokeTokenCallback? onRevokeToken,
+    RefreshCallback? refreshCallback,
+    bool addTypename = true,
+    FutureOr<Cache>? cache,
+    FetchPolicy defaultFetchPolicy = FetchPolicy.noCache,
+    ErrorPolicy defaultErrorPolicy = ErrorPolicy.none,
+    Duration defaultStaleTime = Duration.zero,
+    Duration? defaultCacheTime,
+    RetryOptions? defaultRetry,
+    LoggerOptions loggerOptions = const LoggerOptions(),
+  }) async {
+    final resolvedCache = await (cache ?? InMemoryCache());
+    return GraphQLClient(
+      url: url,
+      wsUrl: wsUrl,
+      sseUrl: sseUrl,
+      subscriptionLink: subscriptionLink,
+      dio: dio,
+      defaultHeaders: defaultHeaders,
+      accessTokenHeader: accessTokenHeader,
+      refreshTokenHeader: refreshTokenHeader,
+      isTokenExpired: isTokenExpired,
+      isUnauthorized: isUnauthorized,
+      onRevokeToken: onRevokeToken,
+      refreshCallback: refreshCallback,
+      addTypename: addTypename,
+      cache: resolvedCache,
+      defaultFetchPolicy: defaultFetchPolicy,
+      defaultErrorPolicy: defaultErrorPolicy,
+      defaultStaleTime: defaultStaleTime,
+      defaultCacheTime: defaultCacheTime,
+      defaultRetry: defaultRetry,
+      loggerOptions: loggerOptions,
+    );
+  }
+
   GraphQLClient._({
     required this.cache,
     required this.defaultFetchPolicy,

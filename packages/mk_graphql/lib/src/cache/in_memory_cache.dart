@@ -267,4 +267,22 @@ class InMemoryCache implements Cache {
       }
     }
   }
+
+  /// Dumps the entire normalized record store — never includes optimistic
+  /// layers. Used only by [HiveCache] to mirror state to disk.
+  Map<String, Map<String, dynamic>> exportAll() => _store.toMap();
+
+  /// Bulk-loads [records] into the store. Used only by [HiveCache.open] to
+  /// hydrate a fresh [InMemoryCache] from a previously persisted box,
+  /// before any reads/writes happen. Does not populate `writtenAt`/typename
+  /// bookkeeping for the seeded entries — a freshly hydrated query is
+  /// treated as never-written (so, with the default `staleTime: 0`, it is
+  /// immediately eligible for one background revalidation per process
+  /// start; a configured `staleTime` will similarly not treat hydrated data
+  /// as "fresh" until it is re-written by a live network response).
+  void seed(Map<String, Map<String, dynamic>> records) {
+    for (final entry in records.entries) {
+      _store.set(entry.key, entry.value);
+    }
+  }
 }

@@ -25,6 +25,7 @@ export 'src/link/transport/websocket_link.dart';
 export 'src/cache/cache.dart';
 export 'src/cache/record_source.dart';
 export 'src/cache/in_memory_cache.dart';
+export 'src/cache/hive_cache.dart';
 
 export 'src/client/client.dart';
 export 'src/client/composite_request.dart';

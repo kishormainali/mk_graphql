@@ -637,6 +637,12 @@ class GraphQLClient {
         active.gcTimer?.cancel();
         active.gcTimer = null;
 
+        // Cache.watchQuery's own "emit initial value" add() happens before
+        // its returned stream has a listener (broadcast streams drop events
+        // with no subscribers), so it never reaches us. Seed the outer
+        // controller with the current cached value ourselves — add() here,
+        // inside onListen, *is* delivered to the caller synchronously.
+        controller.add(cache.readQuery(req));
         cacheSub = cache.watchQuery(req).listen(controller.add);
 
         final staleTime = req.staleTime ?? defaultStaleTime;
@@ -700,6 +706,34 @@ class GraphQLClient {
   /// lifecycle observer (e.g.
   /// `WidgetsBindingObserver.didChangeAppLifecycleState(resumed)`).
   Future<void> notifyAppResumed() => _refetchActiveQueries();
+
+  /// Evicts every cached query matching [operationNames] and/or [types]
+  /// (a query matches if its operation name is in [operationNames], or if
+  /// its cached result touched a `__typename` in [types]). When
+  /// [refetchActive] (default `true`), a matching query with at least one
+  /// active [watchQuery] subscriber is immediately background-refetched so
+  /// that subscriber's stream updates in place; a match with no active
+  /// subscriber is simply evicted and refetched lazily on next read.
+  Future<void> invalidateQueries({
+    List<String>? operationNames,
+    List<String>? types,
+    bool refetchActive = true,
+  }) async {
+    final keys = cache.matchingQueryKeys(
+      operationNames: operationNames,
+      types: types,
+    );
+
+    final refetches = <Future<void>>[];
+    for (final key in keys) {
+      cache.evict('ROOT_QUERY:$key');
+      final active = _activeQueries[key];
+      if (refetchActive && active != null && active.refCount > 0) {
+        refetches.add(_backgroundRefetch(active.latestRequest));
+      }
+    }
+    await Future.wait(refetches);
+  }
 
   Future<void> _refetchActiveQueries() => Future.wait([
         for (final active in _activeQueries.values)

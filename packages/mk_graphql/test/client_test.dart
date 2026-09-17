@@ -114,6 +114,45 @@ class _TestMutationReq extends GraphQLRequest<_TestData, _TestVars> {
       _TestMutationReq(variables ?? this.variables);
 }
 
+class _TypedData {
+  final String? id;
+  final String? name;
+  const _TypedData({this.id, this.name});
+  factory _TypedData.fromJson(Map<String, dynamic> json) =>
+      _TypedData(id: json['id'] as String?, name: json['name'] as String?);
+  Map<String, dynamic> toJson() =>
+      {'__typename': 'User', 'id': id, 'name': name};
+}
+
+class _TypedTestReq extends GraphQLRequest<_TypedData, _TestVars> {
+  @override
+  final _TestVars variables;
+  _TypedTestReq(this.variables);
+
+  @override
+  String get document => 'query TypedTest { user { id name } }';
+
+  @override
+  String get operationName => 'TypedTest';
+
+  @override
+  Map<String, dynamic> toJsonVars(_TestVars vars) => vars.toJson();
+
+  @override
+  _TypedData parseData(Map<String, dynamic> json) => _TypedData.fromJson(json);
+
+  @override
+  _TypedTestReq copyWithRequest({
+    _TestVars? variables,
+    FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
+    Map<String, String>? headers,
+    dio.CancelToken? cancelToken,
+    _TypedData? optimisticResponse,
+  }) =>
+      _TypedTestReq(variables ?? this.variables);
+}
+
 // ---------------------------------------------------------------------------
 // gql_link test doubles
 // ---------------------------------------------------------------------------
@@ -2197,6 +2236,70 @@ void main() {
 
       expect(networkCalls, equals(1));
       await sub.cancel();
+    });
+  });
+
+  group('invalidateQueries', () {
+    test('invalidates by operationNames: active watcher gets refetched data',
+        () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          staleTime: const Duration(minutes: 5));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
+
+      final emissions = <_TestData?>[];
+      final sub = client.watchQuery(req).listen(emissions.add);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(emissions.single?.name, equals('Old'));
+
+      await client.invalidateQueries(operationNames: ['Test']);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(networkCalls, equals(1));
+      expect(emissions.last?.name, equals('Dedup'),
+          reason: '_CountingLink always returns name "Dedup"');
+      await sub.cancel();
+    });
+
+    test(
+        'invalidates by types: matches only queries whose cached result '
+        'touched that typename', () async {
+      final client = GraphQLClient.fromLink(_CountingLink(() {}));
+
+      final untypedReq = _TestReq(const _TestVars('1'));
+      client.cache
+          .writeQuery(untypedReq, const _TestData(id: '1', name: 'Alice'));
+
+      final typedReq = _TypedTestReq(const _TestVars('2'));
+      client.cache
+          .writeQuery(typedReq, const _TypedData(id: '2', name: 'Bob'));
+
+      await client.invalidateQueries(types: ['User'], refetchActive: false);
+
+      expect(client.cache.readQuery(typedReq), isNull,
+          reason: 'evicted because its cached JSON included __typename: User');
+      expect(client.cache.readQuery(untypedReq), isNotNull,
+          reason: '_TestData.toJson() carries no __typename, so it must '
+              'not match a type-based invalidation');
+    });
+
+    test(
+        'an inactive (unwatched) match is evicted but not refetched — no '
+        'network call', () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
+
+      await client.invalidateQueries(operationNames: ['Test']);
+
+      expect(networkCalls, equals(0));
+      expect(client.cache.readQuery(req), isNull);
     });
   });
 }

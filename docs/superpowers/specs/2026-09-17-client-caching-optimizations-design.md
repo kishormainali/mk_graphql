@@ -68,13 +68,30 @@ actual network round trip regardless of which `FetchPolicy` branch triggered it 
 e.g. two widgets both doing `cacheAndNetwork` on the same query in the same frame
 still only hit the network once.
 
-### 3. Stale-while-revalidate + GC — opt-in via `staleTime`/`cacheTime`
+### 3. Stale-while-revalidate + GC
+
+**Staleness defaults to on** (this intentionally changes `cacheFirst`'s current
+behavior — see "Behavior change" callout below). **GC stays opt-in**, since eviction
+is a separate, lower-stakes concern from staleness.
 
 **New fields:**
-- `GraphQLClient`: `Duration? defaultStaleTime`, `Duration? defaultCacheTime` (both
-  default `null` — feature off, current behavior preserved).
-- `GraphQLRequest`: `Duration? staleTime`, `Duration? cacheTime` (override the
-  client defaults when set; added to `copyWithRequest`).
+- `GraphQLClient`: `Duration defaultStaleTime = Duration.zero`, `Duration? defaultCacheTime`
+  (`null` — GC off, current behavior preserved).
+- `GraphQLRequest`: `Duration? staleTime`, `Duration? cacheTime` (override the client
+  defaults when set — a request can opt back into "never auto-revalidate" with
+  `staleTime: null` being indistinguishable from "use client default," so a request
+  that truly wants to disable revalidation sets `staleTime: const Duration(days: 36500)`
+  or similar effectively-infinite value; added to `copyWithRequest`).
+
+**Behavior change:** with `defaultStaleTime` now `Duration.zero` instead of `null`,
+every `cacheFirst` cache hit is considered stale by default — it still returns the
+cached value instantly (no UI-visible delay), but now *also* immediately kicks off a
+background network refetch to revalidate it, the same way `cacheAndNetwork` always
+has. This matches TanStack Query's own default (`staleTime: 0`). Apps that want the
+old "serve cache, never auto-revalidate" behavior for a given query set an explicit
+`staleTime` (e.g. `Duration(minutes: 5)`, or a very large value to opt out entirely).
+This is called out as a breaking change in the changelog/migration notes for the
+release that ships it (see "Manual follow-ups").
 
 **Cache changes (`InMemoryCache`):**
 - Track `Map<String, DateTime> _writtenAt` — set in `writeQuery`, read via a new
@@ -89,18 +106,22 @@ case FetchPolicy.cacheFirst:
     yield* _fetchFromNetwork(req, cancelToken: cancelToken);
     break;
   }
-  final staleTime = req.staleTime ?? defaultStaleTime;
+  final staleTime = req.staleTime ?? defaultStaleTime; // defaults to Duration.zero
   final writtenAt = cache.writtenAt(req);
-  final isFresh = staleTime == null ||
-      (writtenAt != null && DateTime.now().difference(writtenAt) < staleTime);
+  final isFresh = writtenAt != null &&
+      DateTime.now().difference(writtenAt) < staleTime;
   yield GraphQLResponse(data: cached, source: ResponseSource.cache, loading: !isFresh);
   if (isFresh) break;
-  // stale: fall through to a background network refetch, same emission shape as cacheAndNetwork
+  // stale (the default, unless staleTime is explicitly raised): fall through to a
+  // background network refetch, same emission shape as cacheAndNetwork
   yield* _fetchFromNetwork(req, cancelToken: cancelToken);
   break;
 ```
-(`staleTime == null` reproduces exactly today's `cacheFirst` — cache hit short-
-circuits, no network call — so existing callers see zero behavior change.)
+(An explicit `staleTime` large enough to outlast the cache entry's age reproduces
+today's `cacheFirst` — cache hit short-circuits, no network call. With no override,
+the new `Duration.zero` default means `isFresh` is `false` as soon as any time has
+passed since the write, so cache hits background-refetch immediately — see "Behavior
+change" above.)
 
 `cacheAndNetwork` is unchanged (it already always backgrounds a network fetch);
 `staleTime` only affects GC eligibility for it, not its emission shape.
@@ -322,11 +343,12 @@ Extend `packages/mk_graphql/test/`:
   query → 1 pipeline invocation, asserted via a counting fake `Link`); mutations never
   dedup even with identical variables; retry respects `maxAttempts`/backoff timing
   (use `fake_async`-style control) and mutation opt-in default.
-- new `stale_while_revalidate_test.dart`: `staleTime` unset reproduces exact current
-  `cacheFirst` behavior (no network call on cache hit); set and fresh → cache-only;
-  set and expired → cache emission followed by network emission; `cacheTime` GC evicts
-  after last watcher cancels + timer fires, and is canceled by a resubscribe before it
-  fires.
+- new `stale_while_revalidate_test.dart`: default (`staleTime` unset →
+  `Duration.zero`) `cacheFirst` cache hit emits cached data immediately *and* triggers
+  a background network refetch; explicit `staleTime` set and still fresh → cache-only,
+  no network call; explicit `staleTime` expired → cache emission followed by network
+  emission; `cacheTime` GC evicts after last watcher cancels + timer fires, and is
+  canceled by a resubscribe before it fires.
 - new `invalidate_queries_test.dart`: invalidate by `operationNames`, by `types`, and
   both; active watcher receives a refetched value; inactive match is evicted but not
   refetched (no network call asserted).
@@ -340,8 +362,12 @@ Extend `packages/mk_graphql/test/`:
 
 ## Manual follow-ups (not performed by this implementation)
 
-None — this is entirely package-internal; no external accounts, publish config, or
-generator changes are required. (`mk_graphql_generator`'s generated `GraphQLRequest`
+No external accounts, publish config, or generator changes are required, but the
+release that ships this must call out in `CHANGELOG.md`/release notes that
+`FetchPolicy.cacheFirst` now background-refetches on every cache hit by default
+(§3's `defaultStaleTime = Duration.zero` change) — apps that relied on `cacheFirst`
+never re-hitting the network need to set an explicit `staleTime` to keep that
+behavior. (`mk_graphql_generator`'s generated `GraphQLRequest`
 subclasses gain `staleTime`/`cacheTime`/`retry`/`refetchInterval` fields automatically
 via the existing `copyWithRequest` pattern the generator already emits — verify this
 during implementation, but it's not expected to need generator template changes beyond

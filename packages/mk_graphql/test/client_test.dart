@@ -1906,6 +1906,83 @@ void main() {
       );
     });
   });
+
+  group('Stale-while-revalidate (cacheFirst)', () {
+    test(
+        'default staleTime (Duration.zero): a cache hit emits cached data '
+        'immediately and also background-refetches', () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          fetchPolicy: FetchPolicy.cacheFirst);
+
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+
+      final responses = await client.request(req).toList();
+      expect(responses.first.data?.name, equals('Cached'));
+      expect(responses.first.source, equals(ResponseSource.cache));
+      expect(responses.first.loading, isTrue,
+          reason: 'default staleTime means the cache hit is always stale');
+      expect(networkCalls, equals(1),
+          reason: 'stale cache hit must trigger a background network refetch');
+    });
+
+    test('explicit staleTime, still fresh: no network call at all', () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          fetchPolicy: FetchPolicy.cacheFirst,
+          staleTime: const Duration(minutes: 5));
+
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+
+      final responses = await client.request(req).toList();
+      expect(responses, hasLength(1));
+      expect(responses.single.loading, isFalse);
+      expect(networkCalls, equals(0));
+    });
+
+    test('explicit staleTime, expired: cache emission then network emission',
+        () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          fetchPolicy: FetchPolicy.cacheFirst,
+          staleTime: const Duration(milliseconds: 1));
+
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      final responses = await client.request(req).toList();
+      expect(responses, hasLength(2));
+      expect(responses[0].source, equals(ResponseSource.cache));
+      expect(responses[0].loading, isTrue);
+      expect(responses[1].source, equals(ResponseSource.network));
+      expect(networkCalls, equals(1));
+    });
+
+    test('cache miss always fetches from network regardless of staleTime',
+        () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          fetchPolicy: FetchPolicy.cacheFirst,
+          staleTime: const Duration(minutes: 5));
+
+      final responses = await client.request(req).toList();
+      expect(responses, hasLength(1));
+      expect(responses.single.source, equals(ResponseSource.network));
+      expect(networkCalls, equals(1));
+    });
+  });
 }
 
 class _DataAndErrorLink extends Link {

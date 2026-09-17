@@ -565,12 +565,21 @@ class GraphQLClient {
 
       case FetchPolicy.cacheFirst:
         final cached = cache.readQuery(req);
-        if (cached != null) {
-          yield GraphQLResponse<TData>(
-              data: cached, source: ResponseSource.cache);
-        } else {
+        if (cached == null) {
           yield* _fetchFromNetwork(req, cancelToken: cancelToken);
+          break;
         }
+        final staleTime = req.staleTime ?? defaultStaleTime;
+        final writtenAt = cache.writtenAt(req);
+        final isFresh = writtenAt != null &&
+            DateTime.now().difference(writtenAt) < staleTime;
+        yield GraphQLResponse<TData>(
+          data: cached,
+          source: ResponseSource.cache,
+          loading: !isFresh,
+        );
+        if (isFresh) break;
+        yield* _fetchFromNetwork(req, cancelToken: cancelToken);
         break;
 
       case FetchPolicy.cacheAndNetwork:

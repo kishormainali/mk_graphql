@@ -196,4 +196,27 @@ void main() {
             'collected, not just the raw record dumped in');
     await cache2.close();
   });
+
+  test(
+      'a query hydrated from a reopened box is timestamped arbitrarily old, '
+      'not "just written" — so it stays correctly stale under any '
+      'configured staleTime, not just the default Duration.zero', () async {
+    final req = _TestReq(const _TestVars('1'));
+
+    final cache1 = await HiveCache.open(boxName: 'gql_cache_staleness_test');
+    cache1.writeQuery(req, const _TestData(id: '1', name: 'Alice'));
+    await pumpEventQueue();
+    await cache1.close();
+
+    final cache2 = await HiveCache.open(boxName: 'gql_cache_staleness_test');
+    final writtenAt = cache2.writtenAt(req);
+
+    expect(writtenAt, isNotNull);
+    // A hydrated value's writtenAt must be old enough that even a generous
+    // staleTime (e.g. a day) would still consider it stale — proving it
+    // isn't stamped as "just written" (DateTime.now()), which would have
+    // made disk-persisted data from a prior app run wrongly count as fresh.
+    expect(DateTime.now().difference(writtenAt!), greaterThan(const Duration(days: 1)));
+    await cache2.close();
+  });
 }

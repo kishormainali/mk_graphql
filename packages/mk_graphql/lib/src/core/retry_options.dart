@@ -1,7 +1,7 @@
 import 'error.dart';
 
-/// Configures automatic retry-with-backoff for a query/subscription (and,
-/// when explicitly set on the request, a mutation) on transient network
+/// Configures automatic retry-with-backoff for a query (and, when explicitly
+/// set on the request, a mutation or subscription) on transient network
 /// failures.
 class RetryOptions {
   /// Total attempts including the first — `1` means "no retry".

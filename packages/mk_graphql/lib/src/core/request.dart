@@ -68,9 +68,9 @@ abstract class GraphQLRequest<TData, TVars> {
   final Duration? cacheTime;
 
   /// Overrides [GraphQLClient.defaultRetry]. `null` uses the client default
-  /// (queries/subscriptions retry automatically, mutations never do); pass
-  /// [RetryOptions.none] to disable retry, or a [RetryOptions] to opt a
-  /// mutation into retry.
+  /// (queries retry automatically; mutations and subscriptions never do);
+  /// pass [RetryOptions.none] to disable retry, or a [RetryOptions] to opt a
+  /// mutation or subscription into retry.
   final RetryOptions? retry;
 
   /// While this request has an active [GraphQLClient.watchQuery]

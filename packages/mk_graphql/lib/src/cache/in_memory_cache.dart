@@ -289,10 +289,12 @@ class InMemoryCache implements Cache {
   /// visible to [writtenAt] and [matchingQueryKeys] (and therefore to
   /// `GraphQLClient.invalidateQueries`, by operation name *and* by type)
   /// without waiting for a live network response to re-write it. Hydrated
-  /// data is timestamped as "just written": with the default
-  /// `staleTime: Duration.zero` that still marks it stale and eligible for a
-  /// background revalidation on first watch, exactly like freshly-written
-  /// data.
+  /// data is timestamped as [DateTime.fromMillisecondsSinceEpoch]`(0)` —
+  /// arbitrarily old, not "just written" — so it stays correctly stale under
+  /// *any* configured `staleTime`, not just the default `Duration.zero`: a
+  /// disk-persisted `HiveCache` value must never be treated as fresher than
+  /// it can actually know it is, since the write that produced it may be
+  /// long gone (a previous app run, possibly days ago).
   void seed(Map<String, Map<String, dynamic>> records) {
     for (final entry in records.entries) {
       _store.set(entry.key, entry.value);
@@ -301,11 +303,11 @@ class InMemoryCache implements Cache {
     // that appear later in [records], so typenames can only be collected
     // once the whole store is populated.
     const rootPrefix = 'ROOT_QUERY:';
-    final now = DateTime.now();
+    final arbitrarilyOld = DateTime.fromMillisecondsSinceEpoch(0);
     for (final entry in records.entries) {
       if (!entry.key.startsWith(rootPrefix)) continue;
       final requestKey = entry.key.substring(rootPrefix.length);
-      _writtenAt[requestKey] = now;
+      _writtenAt[requestKey] = arbitrarilyOld;
       _queryTypenames[requestKey] = _collectTypenames(
         _denormalize(entry.value),
       );

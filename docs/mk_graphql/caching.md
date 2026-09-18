@@ -212,13 +212,13 @@ Write-through semantics: every mutating `Cache` call (`writeQuery`, `writeFragme
 
 **Optimistic writes are never persisted** — `recordOptimistic`/`removeOptimistic` only touch the in-memory delegate, by design, since an optimistic value is inherently temporary and shouldn't survive a restart.
 
-Since `HiveCache.open` is asynchronous, build the client with the async `GraphQLClient.create({...})` factory instead of the synchronous `GraphQLClient(...)` constructor — see [Client, Requests & Responses](client-and-requests.md#graphqlclientcreate).
+Since `HiveCache.open` is asynchronous, build the client with the async `GraphQLClient.create({...})` factory instead of the synchronous `GraphQLClient(...)` constructor — see [Client, Requests & Responses](client-and-requests.md#graphqlclientcreate). `create` accepts `HiveCache.open(...)`'s `Future` directly, so there's no separate `await` needed for the cache itself.
 
-`close()` is an instance method on the opened cache, not a static — so when you need to close the box, hold on to the `HiveCache` instead of passing `HiveCache.open(...)` inline, and close it alongside `client.dispose()`:
+`close()` is an instance method on the opened cache, not a static — so when you need to close the box, hold on to the `HiveCache` instead of letting `create` await it inline, and close it alongside `client.dispose()`:
 
 ```dart
 final cache = await HiveCache.open(boxName: 'gql_cache');
-final client = GraphQLClient(
+final client = await GraphQLClient.create(
   url: 'https://api.example.com/graphql',
   cache: cache,
 );

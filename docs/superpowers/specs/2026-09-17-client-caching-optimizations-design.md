@@ -81,7 +81,9 @@ is a separate, lower-stakes concern from staleness.
   defaults when set — a request can opt back into "never auto-revalidate" with
   `staleTime: null` being indistinguishable from "use client default," so a request
   that truly wants to disable revalidation sets `staleTime: const Duration(days: 36500)`
-  or similar effectively-infinite value; added to `copyWithRequest`).
+  or similar effectively-infinite value; preserved through `copyWithRequest` via
+  the same `this.field` pattern `requestId` already uses — not exposed as one of
+  `copyWithRequest`'s own override parameters).
 
 **Behavior change:** with `defaultStaleTime` now `Duration.zero` instead of `null`,
 every `cacheFirst` cache hit is considered stale by default — it still returns the

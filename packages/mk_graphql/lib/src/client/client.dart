@@ -41,12 +41,23 @@ class GraphQLClient {
   final Duration? defaultCacheTime;
   final RetryOptions? defaultRetry;
 
-  /// In-flight query/subscription network calls keyed by [computeRequestKey]
-  /// — concurrent identical calls share one entry instead of each starting
-  /// a separate pipeline request. Mutations and any request with an
-  /// explicit [CancelToken] are never entered here (see
+  /// In-flight *query* network calls keyed by [computeRequestKey] —
+  /// concurrent identical calls share one entry instead of each starting a
+  /// separate pipeline request. Mutations, subscriptions, and any request
+  /// with an explicit [CancelToken] are never entered here (see
   /// [_requestThroughPipeline]).
-  final Map<String, Stream<gql.Response>> _inFlight = {};
+  ///
+  /// The shared value is a [Future] of the *buffered* response list, not a
+  /// live broadcast stream: a broadcast stream drops events emitted before a
+  /// given listener attaches, so a second caller that reached dedup after the
+  /// pipeline already emitted (routine — `cacheFirst`/`cacheAndNetwork`
+  /// callers await a cache read first, so identical calls arrive at different
+  /// microtask depths) would receive nothing at all. A [Future] replays its
+  /// resolved value — or its error — to every listener regardless of attach
+  /// timing. Buffering the whole sequence is safe here because subscriptions,
+  /// the only genuinely multi-emission operation kind, are excluded from
+  /// dedup entirely.
+  final Map<String, Future<List<gql.Response>>> _inFlight = {};
 
   /// Tracks queries with at least one active [watchQuery] subscriber —
   /// shared by staleness-on-attach, `cacheTime` GC, `refetchInterval`
@@ -166,10 +177,11 @@ class GraphQLClient {
     /// Override per-request via GraphQLRequest.cacheTime.
     Duration? defaultCacheTime,
 
-    /// Automatic retry-with-backoff for queries/subscriptions on transient
-    /// network failures. Null (the default) disables auto-retry. Mutations
-    /// never use this — a mutation only retries if it sets its own
-    /// GraphQLRequest.retry.
+    /// Automatic retry-with-backoff for queries only, on transient network
+    /// failures. Null (the default) disables auto-retry. Neither mutations
+    /// nor subscriptions use this — they retry only if the request sets its
+    /// own GraphQLRequest.retry (subscriptions already reconnect via their
+    /// own transport link).
     RetryOptions? defaultRetry,
 
     /// Logger Options
@@ -459,38 +471,51 @@ class GraphQLClient {
   }
 
   /// Routes [gqlReq] through [_pipeline], deduplicating concurrent identical
-  /// queries/subscriptions (never mutations, never a request carrying an
-  /// explicit [CancelToken] — see [_inFlight]'s doc comment) via
-  /// [_inFlight].
+  /// **queries only** — never mutations, never subscriptions (which have
+  /// their own reconnect semantics in [WebSocketLink]/[SseLink] and are
+  /// long-lived multi-emission streams), and never a request carrying an
+  /// explicit [CancelToken] (see [_inFlight]'s doc comment).
   Stream<gql.Response> _requestThroughPipeline(
     GraphQLRequest req,
     gql.Request gqlReq, {
     required bool skipDedup,
-  }) {
-    if (skipDedup || _isMutation(gqlReq)) {
-      return _pipeline.request(gqlReq);
+  }) async* {
+    if (skipDedup || _isMutation(gqlReq) || _isSubscription(gqlReq)) {
+      yield* _pipeline.request(gqlReq);
+      return;
     }
 
     final key = computeRequestKey(req);
-    final existing = _inFlight[key];
-    if (existing != null) return existing;
+    var future = _inFlight[key];
+    final isOwner = future == null;
+    if (isOwner) {
+      // `.toList()` buffers the full response sequence and completes with
+      // the stream's error if it fails. Awaiting the same [Future] from
+      // every caller (below) — rather than sharing a live broadcast stream —
+      // means a late caller reliably receives the buffered result or error
+      // regardless of when it attaches: a broadcast stream drops events
+      // emitted before a given listener attaches, which a live
+      // (non-buffered) design here would have hit routinely, since
+      // `cacheFirst`/`cacheAndNetwork` callers reach this after a real await
+      // gap (a cache read), so identical calls land at different microtask
+      // depths, not synchronously together.
+      future = _pipeline.request(gqlReq).toList();
+      _inFlight[key] = future;
+    }
 
-    final controller = StreamController<gql.Response>.broadcast();
-    _inFlight[key] = controller.stream;
-
-    _pipeline.request(gqlReq).listen(
-      controller.add,
-      onError: (Object e, StackTrace st) {
-        _inFlight.remove(key);
-        controller.addError(e, st);
-      },
-      onDone: () {
-        _inFlight.remove(key);
-        controller.close();
-      },
-    );
-
-    return controller.stream;
+    try {
+      // Awaiting here (rather than deriving a new Stream from the Future)
+      // lets any error surface as a normal exception on *this* generator, so
+      // the caller's own try/catch around its `await for` sees it directly —
+      // and cleanup below runs via a plain `finally`, with no separate
+      // derived-future side-channel that could itself go unhandled.
+      final responses = await future;
+      for (final response in responses) {
+        yield response;
+      }
+    } finally {
+      if (isOwner) _inFlight.remove(key);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -827,6 +852,7 @@ class GraphQLClient {
       }
     }
     _activeQueries.clear();
+    _inFlight.clear();
 
     AuthLink.clearRevokeTokenListeners();
     cache.clear();
@@ -886,8 +912,11 @@ class GraphQLClient {
       context: context,
     );
 
-    final retryOptions =
-        req.retry ?? (_isMutation(gqlReq) ? null : defaultRetry);
+    // defaultRetry applies to queries only. Mutations (not idempotent) and
+    // subscriptions (long-lived; they reconnect via their own transport link)
+    // opt out of the default and retry only when the request sets its own.
+    final retryOptions = req.retry ??
+        (_isMutation(gqlReq) || _isSubscription(gqlReq) ? null : defaultRetry);
 
     var attempt = 1;
     while (true) {

@@ -114,6 +114,35 @@ class _TestMutationReq extends GraphQLRequest<_TestData, _TestVars> {
       _TestMutationReq(variables ?? this.variables);
 }
 
+class _TestSubscriptionReq extends GraphQLRequest<_TestData, _TestVars> {
+  @override
+  final _TestVars variables;
+  _TestSubscriptionReq(this.variables);
+
+  @override
+  String get document => 'subscription Test { user { id name } }';
+
+  @override
+  String get operationName => 'Test';
+
+  @override
+  Map<String, dynamic> toJsonVars(_TestVars vars) => vars.toJson();
+
+  @override
+  _TestData parseData(Map<String, dynamic> json) => _TestData.fromJson(json);
+
+  @override
+  _TestSubscriptionReq copyWithRequest({
+    _TestVars? variables,
+    FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
+    Map<String, String>? headers,
+    dio.CancelToken? cancelToken,
+    _TestData? optimisticResponse,
+  }) =>
+      _TestSubscriptionReq(variables ?? this.variables);
+}
+
 class _TypedData {
   final String? id;
   final String? name;
@@ -534,6 +563,55 @@ void main() {
       expect(callCount, equals(2));
     });
 
+    test('subscriptions are never deduplicated, even with identical variables',
+        () async {
+      var callCount = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        callCount++;
+      }));
+
+      await Future.wait([
+        for (var i = 0; i < 3; i++)
+          client.future(_TestSubscriptionReq(const _TestVars('1'))),
+      ]);
+
+      expect(callCount, equals(3),
+          reason: 'subscriptions must each hit the network independently — '
+              'they have their own reconnect semantics in WebSocketLink/'
+              'SseLink and are excluded from dedup entirely');
+    });
+
+    test(
+        'callers reaching the network at different microtask depths (e.g. '
+        'networkOnly vs cacheAndNetwork) still all receive the deduped '
+        'response, not a generic "no response received" error', () async {
+      var callCount = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        callCount++;
+      }));
+
+      final networkOnlyReq = _TestReq(const _TestVars('1'),
+          fetchPolicy: FetchPolicy.networkOnly);
+      final cacheAndNetworkReq = _TestReq(const _TestVars('1'),
+          fetchPolicy: FetchPolicy.cacheAndNetwork);
+
+      // cacheAndNetworkReq reaches the dedup'd network call only after an
+      // extra await gap (a cache read first), so these two callers land at
+      // different microtask depths — exactly the routine case a live
+      // broadcast-stream dedup design would drop a late-attaching listener
+      // for.
+      final results = await Future.wait([
+        client.future(networkOnlyReq),
+        client.future(cacheAndNetworkReq),
+      ]);
+
+      expect(callCount, equals(1),
+          reason: 'both reach the network for the identical query, just at '
+              'different await depths — still only one real call');
+      expect(results[0].name, equals('Dedup'));
+      expect(results[1].name, equals('Dedup'));
+    });
+
     test('retries a query on NetworkException up to maxAttempts, then succeeds',
         () async {
       var attempts = 0;
@@ -583,6 +661,27 @@ void main() {
         throwsA(isA<NetworkException>()),
       );
       expect(attempts, equals(1));
+    });
+
+    test(
+        'subscriptions never auto-retry by default, even with defaultRetry '
+        'set', () async {
+      var attempts = 0;
+      final client = GraphQLClient.fromLink(
+        _FlakyLink(failTimes: 10, onAttempt: () => attempts++),
+        defaultRetry: const RetryOptions(
+          maxAttempts: 3,
+          initialDelay: Duration(milliseconds: 1),
+        ),
+      );
+
+      await expectLater(
+        client.future(_TestSubscriptionReq(const _TestVars('1'))),
+        throwsA(isA<NetworkException>()),
+      );
+      expect(attempts, equals(1),
+          reason: 'subscriptions reconnect via their own transport link, '
+              'not defaultRetry');
     });
   });
 

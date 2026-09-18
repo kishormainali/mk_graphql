@@ -128,7 +128,9 @@ class HiveCache implements Cache {
     List<String>? types,
   }) =>
       _delegate.matchingQueryKeys(
-          operationNames: operationNames, types: types);
+        operationNames: operationNames,
+        types: types,
+      );
 
   /// Closes the underlying Hive box. Call when the [GraphQLClient] that
   /// owns this cache is disposed.

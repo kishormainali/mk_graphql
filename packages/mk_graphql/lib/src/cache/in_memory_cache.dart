@@ -125,8 +125,16 @@ class InMemoryCache implements Cache {
       }
     };
 
-    // Emit initial value
+    // Emit initial value.
     final initialData = readQuery(request);
+    // NOTE: this add() is currently unreachable for callers going through
+    // GraphQLClient.watchQuery — its own listener isn't attached to this
+    // broadcast stream yet when this fires, so the event is silently
+    // dropped, and client.dart works around it by seeding its outer
+    // controller itself (`controller.add(cache.readQuery(req))` inside its
+    // onListen). If this drop is ever "fixed" here in isolation,
+    // GraphQLClient.watchQuery will start double-emitting its first value —
+    // fix both together, or remove the client-side seed workaround first.
     controller.add(initialData);
 
     return controller.stream;
@@ -273,16 +281,34 @@ class InMemoryCache implements Cache {
   Map<String, Map<String, dynamic>> exportAll() => _store.toMap();
 
   /// Bulk-loads [records] into the store. Used only by [HiveCache.open] to
-  /// hydrate a fresh [InMemoryCache] from a previously persisted box,
-  /// before any reads/writes happen. Does not populate `writtenAt`/typename
-  /// bookkeeping for the seeded entries — a freshly hydrated query is
-  /// treated as never-written (so, with the default `staleTime: 0`, it is
-  /// immediately eligible for one background revalidation per process
-  /// start; a configured `staleTime` will similarly not treat hydrated data
-  /// as "fresh" until it is re-written by a live network response).
+  /// hydrate a fresh [InMemoryCache] from a previously persisted box, before
+  /// any reads/writes happen.
+  ///
+  /// Every seeded `ROOT_QUERY:` record also gets its `writtenAt` and
+  /// typename bookkeeping populated, so a hydrated query is immediately
+  /// visible to [writtenAt] and [matchingQueryKeys] (and therefore to
+  /// `GraphQLClient.invalidateQueries`, by operation name *and* by type)
+  /// without waiting for a live network response to re-write it. Hydrated
+  /// data is timestamped as "just written": with the default
+  /// `staleTime: Duration.zero` that still marks it stale and eligible for a
+  /// background revalidation on first watch, exactly like freshly-written
+  /// data.
   void seed(Map<String, Map<String, dynamic>> records) {
     for (final entry in records.entries) {
       _store.set(entry.key, entry.value);
+    }
+    // Second pass: refs inside one root query may point at entity records
+    // that appear later in [records], so typenames can only be collected
+    // once the whole store is populated.
+    const rootPrefix = 'ROOT_QUERY:';
+    final now = DateTime.now();
+    for (final entry in records.entries) {
+      if (!entry.key.startsWith(rootPrefix)) continue;
+      final requestKey = entry.key.substring(rootPrefix.length);
+      _writtenAt[requestKey] = now;
+      _queryTypenames[requestKey] = _collectTypenames(
+        _denormalize(entry.value),
+      );
     }
   }
 }

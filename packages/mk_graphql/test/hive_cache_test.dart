@@ -48,6 +48,45 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
       _TestReq(variables ?? this.variables, requestId: requestId);
 }
 
+class _TypedData {
+  final String? id;
+  final String? name;
+  const _TypedData({this.id, this.name});
+  factory _TypedData.fromJson(Map<String, dynamic> json) =>
+      _TypedData(id: json['id'] as String?, name: json['name'] as String?);
+  Map<String, dynamic> toJson() =>
+      {'__typename': 'User', 'id': id, 'name': name};
+}
+
+class _TypedTestReq extends GraphQLRequest<_TypedData, _TestVars> {
+  @override
+  final _TestVars variables;
+  _TypedTestReq(this.variables);
+
+  @override
+  String get document => 'query TypedTest { user { id name } }';
+
+  @override
+  String get operationName => 'TypedTest';
+
+  @override
+  Map<String, dynamic> toJsonVars(_TestVars vars) => vars.toJson();
+
+  @override
+  _TypedData parseData(Map<String, dynamic> json) => _TypedData.fromJson(json);
+
+  @override
+  _TypedTestReq copyWithRequest({
+    _TestVars? variables,
+    FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
+    Map<String, String>? headers,
+    CancelToken? cancelToken,
+    _TypedData? optimisticResponse,
+  }) =>
+      _TypedTestReq(variables ?? this.variables);
+}
+
 void main() {
   late Directory tempDir;
 
@@ -126,5 +165,35 @@ void main() {
     );
     await pumpEventQueue();
     expect(capturedError, isNotNull);
+  });
+
+  test(
+      'a query hydrated from a reopened box is immediately visible to '
+      'matchingQueryKeys (by operationName and by type), without waiting '
+      'for a live re-write', () async {
+    final req = _TestReq(const _TestVars('1'));
+    final typedReq = _TypedTestReq(const _TestVars('2'));
+
+    final cache1 = await HiveCache.open(boxName: 'gql_cache_hydration_test');
+    cache1.writeQuery(req, const _TestData(id: '1', name: 'Alice'));
+    cache1.writeQuery(typedReq, const _TypedData(id: '2', name: 'Bob'));
+    await pumpEventQueue();
+    await cache1.close();
+
+    // Fresh process-equivalent: a brand-new HiveCache hydrated purely from
+    // disk, no live writeQuery call on this instance at all.
+    final cache2 = await HiveCache.open(boxName: 'gql_cache_hydration_test');
+
+    expect(cache2.writtenAt(req), isNotNull,
+        reason: 'seeded records must be timestamped, not left as '
+            'never-written');
+    expect(cache2.matchingQueryKeys(operationNames: ['Test']), isNotEmpty,
+        reason: 'a hydrated query must be matchable by operation name '
+            'without requiring a prior live write');
+    expect(cache2.matchingQueryKeys(types: ['User']), isNotEmpty,
+        reason: 'a hydrated query must be matchable by typename too — the '
+            'seeded record\'s __typename must be denormalized and '
+            'collected, not just the raw record dumped in');
+    await cache2.close();
   });
 }

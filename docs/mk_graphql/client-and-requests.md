@@ -28,7 +28,7 @@ abstract class GraphQLRequest<TData, TVars> {
 }
 ```
 
-The generator emits concrete subclasses per operation (`GetUserReq`, `CreatePostReq`, ...).
+The generator emits concrete subclasses per operation (`GetUserReq`, `CreatePostReq`, ...) and already forwards `staleTime`/`cacheTime`/`retry`/`refetchInterval` correctly. If you hand-write a `GraphQLRequest` subclass yourself and set any of these four fields, forward them in your own `copyWithRequest` override too (e.g. `staleTime: staleTime, cacheTime: cacheTime, retry: retry, refetchInterval: refetchInterval,` reading from `this`) — they aren't parameters of `copyWithRequest` itself (same as `requestId`), so an override that doesn't explicitly preserve them will silently drop them on every `copyWithFetchPolicy`/`refetch`/background-refetch call.
 
 ---
 
@@ -103,15 +103,15 @@ Set a default on the client (`GraphQLClient(defaultFetchPolicy: ...)`) and overr
 
 ## Request deduplication
 
-Concurrent identical queries/subscriptions — same operation, same document, same variables — automatically share a single in-flight network call instead of each starting its own. Two widgets both doing `client.stream(getUserReq)` (or `future`) on the same query in the same frame only hit the network once; both callers still get their own response.
+Concurrent identical **queries** — same operation, same document, same variables — automatically share a single in-flight network call instead of each starting its own. Two widgets both doing `client.stream(getUserReq)` (or `future`) on the same query in the same frame only hit the network once; both callers still get their own response.
 
-Mutations never dedup (each call is expected to run exactly once), and neither does any request carrying an explicit `CancelToken` (a caller who wants to cancel *their own* call shouldn't be silently attached to someone else's in-flight request). No configuration is needed — this is always on.
+Deduplication applies to queries only. Mutations never dedup (each call is expected to run exactly once); subscriptions never dedup either (they're long-lived multi-emission streams with their own reconnect logic in the transport links, `WebSocketLink`/`SseLink`); and neither does any request carrying an explicit `CancelToken` (a caller who wants to cancel *their own* call shouldn't be silently attached to someone else's in-flight request). No configuration is needed — this is always on.
 
 ---
 
 ## Retry with backoff
 
-`GraphQLClient` can automatically retry a failed query/subscription with exponential backoff:
+`GraphQLClient` can automatically retry a failed query with exponential backoff:
 
 ```dart
 class RetryOptions {
@@ -127,7 +127,7 @@ class RetryOptions {
 }
 ```
 
-- `GraphQLClient(defaultRetry: ...)` — applied automatically to queries and subscriptions; `null` (the default) disables auto-retry. **Mutations never use this** — a mutation only retries if it sets its own `GraphQLRequest.retry`.
+- `GraphQLClient(defaultRetry: ...)` — applied automatically to **queries only**; `null` (the default) disables auto-retry. **Neither mutations nor subscriptions use this** — they retry only if the request sets its own `GraphQLRequest.retry` (subscriptions already reconnect on their own, via `WebSocketLink`/`SseLink`).
 - `GraphQLRequest.retry` — overrides `defaultRetry` for this request. Pass `RetryOptions.none` to disable retry for an otherwise-retrying query, or any `RetryOptions` to opt a mutation into retry.
 - The default `retryIf` retries connection errors and timeouts (`NetworkException`, `TimeoutException`) — never 4xx/validation errors, since those won't succeed on retry regardless of attempts.
 

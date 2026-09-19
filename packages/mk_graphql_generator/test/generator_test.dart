@@ -708,10 +708,14 @@ void main() {
       );
 
       expect(identical(bundle1, bundle2), isFalse);
+      // Every response model now also declares a `typename` field (see
+      // freezedDataClass), so a bare contains('name') would spuriously
+      // match that instead of the schema's own `name` field — assert on
+      // the declaration text precisely enough to tell them apart.
       expect(bundle1.files['generated/models/user_model.dart'],
-          isNot(contains('name')));
-      expect(
-          bundle2.files['generated/models/user_model.dart'], contains('name'));
+          isNot(contains('required String name')));
+      expect(bundle2.files['generated/models/user_model.dart'],
+          contains('required String name'));
     });
 
     test('useCache: false bypasses cache', () {
@@ -1159,6 +1163,41 @@ void main() {
       }
     ''';
 
+    test(
+        'response Model/Input classes declare a __typename field; '
+        'Vars/Input classes sent to the server do not', () {
+      const query = '''
+        query GetItemById(\$id: UUID!, \$filter: FilterInput) {
+          getItem(id: \$id, filter: \$filter) {
+            id
+          }
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: query,
+        inputPath: 'lib/graphql/operations.graphql',
+        schemaContent: conventionSchema,
+        schemaPath: 'lib/graphql/schema.graphql',
+      );
+
+      const typenameField =
+          "@JsonKey(name: '__typename', includeIfNull: false) String? typename";
+
+      // The operation's own response wrapper model.
+      final opModel =
+          bundle.files['generated/get_item_by_id/get_item_by_id_model.dart']!;
+      expect(opModel, contains(typenameField));
+
+      // The operation's Vars class — sent to the server, never a response.
+      // (FilterInput itself is a schema-level shared Input — the
+      // "Dart reserved keywords" test below, which generates for the
+      // schema file directly, covers that it stays typename-free too.)
+      final varsClass =
+          bundle.files['generated/get_item_by_id/get_item_by_id_var.dart']!;
+      expect(varsClass, isNot(contains('typename')));
+    });
+
     test('Dart reserved keywords map to g{Keyword} with @JsonKey(name: raw)',
         () {
       final bundle = GeneratorOrchestrator.generateForGraphQLFile(
@@ -1174,6 +1213,11 @@ void main() {
       expect(
           itemModel, contains('required String id')); // UUID mapped to String
       expect(itemModel, contains('required DateTime createdAt'));
+      // A schema-level shared Model (a response type) also gets typename.
+      expect(
+          itemModel,
+          contains(
+              "@JsonKey(name: '__typename', includeIfNull: false) String? typename"));
 
       final filterInput = bundle.files['generated/inputs/filter_input.dart']!;
       expect(
@@ -1183,6 +1227,8 @@ void main() {
       expect(filterInput, contains("@Default(20) int limit"));
       expect(filterInput,
           contains("@JsonKey(name: 'is', includeIfNull: false) bool? gIs"));
+      // Input classes are sent to the server, never a response — no typename.
+      expect(filterInput, isNot(contains('typename')));
 
       final statusEnum = bundle.files['generated/enums/status_enum.dart']!;
       expect(statusEnum, contains('@JsonValue("DEFAULT")\n  gDefault'));

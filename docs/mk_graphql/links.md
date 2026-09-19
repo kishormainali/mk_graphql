@@ -4,7 +4,7 @@
 
 ## The default pipeline
 
-```
+``` dart
 AuthLink?  →  TypenameLink?  →  LoggerLink  →  split(is-subscription?, WebSocketLink|SseLink, DioLink)
 ```
 
@@ -82,7 +82,7 @@ Exactly one of these terminates the pipeline for a given request:
 - **`DioLink(endpoint, {client, defaultHeaders, useGETForQueries})`** — the default HTTP transport, built on Dio. Handles multipart uploads automatically when a variable contains a Dio `MultipartFile` (GraphQL `Upload` scalar). Supports cancellation via `DioLinkCancelTokenContextEntry` (wired up automatically by `GraphQLClient.future/stream` when you pass a `CancelToken`).
 - **`HttpLink(endpoint, {client, defaultHeaders})`** — a lightweight Dio-based alternative to `DioLink` (no proactive GET-for-queries, no response-context headers), for when you want a simpler terminating link. Also supports multipart uploads via `Upload`/`dio.MultipartFile`.
 - **`SseLink(url, {defaultHeaders, tokenHeader, onTokenRefresh, useGetForQueries})`** — Server-Sent Events transport for subscriptions, with the same auth-header/refresh semantics as `AuthLink` built in (useful since SSE connections are long-lived and can outlast a token).
-- **`WebSocketLink(url, {initialPayload, subprotocols, reconnectInterval, autoReconnect})`** — `graphql-ws`/`graphql-transport-ws` subscriptions over WebSocket, with automatic reconnect.
+- **`WebSocketLink(url, {initialPayload, subprotocols, reconnectInterval, maxReconnectInterval, reconnectBackoffMultiplier, reconnectJitter, autoReconnect})`** — `graphql-ws`/`graphql-transport-ws` subscriptions over WebSocket, with automatic reconnect. Reconnect delay backs off exponentially from `reconnectInterval` (default 3s) by `reconnectBackoffMultiplier` (default 1.5) per consecutive failed attempt, capped at `maxReconnectInterval` (default 30s) — a dead server or absent network settles into a bounded retry cadence instead of hammering the connection at a fixed interval forever. `reconnectJitter` (default `0.2`) randomizes each delay by up to that fraction so many clients dropped by the same event don't all reconnect in lockstep. The attempt counter resets on every successful `connection_ack`.
 - **`BatchLink(endpoint, {client, defaultHeaders, batchTimeout, maxBatchSize})`** — batches multiple queries/mutations issued within `batchTimeout` (default 10ms) into a single HTTP request, up to `maxBatchSize` (default 10) per batch. Use it as a terminating link in place of `DioLink` when your server supports batched GraphQL requests.
 
 Pick the subscription transport by passing exactly one of `wsUrl`, `sseUrl`, or a custom `subscriptionLink` to `GraphQLClient(...)`.

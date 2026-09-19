@@ -65,6 +65,16 @@ class GraphQLClient {
   /// [notifyAppResumed].
   final Map<String, _ActiveQuery> _activeQueries = {};
 
+  /// Set by [notifyAppPaused], cleared by [notifyAppResumed]. While `true`,
+  /// every opportunistic background refetch (staleness-on-attach,
+  /// `refetchInterval` polling, [invalidateQueries], [notifyReconnected])
+  /// is skipped — see [_backgroundRefetch]. `refetchInterval`'s `Timer`s
+  /// keep ticking (cheap; no network involved) so their schedule survives a
+  /// pause unmodified, but the network call — and the battery/radio cost of
+  /// making one — is what actually gets skipped for a screen nobody's
+  /// looking at.
+  bool _pollingPaused = false;
+
   /// The [Dio] instance this client created for itself (no `dio:` argument
   /// was supplied to the factory) — closed by [dispose]. Null when the
   /// caller supplied their own [Dio] (theirs to close) or this client was
@@ -777,11 +787,33 @@ class GraphQLClient {
   /// regains network connectivity.
   Future<void> notifyReconnected() => _refetchActiveQueries();
 
-  /// Triggers a background `networkOnly` refetch for every currently
-  /// active [watchQuery] subscription — call this from your app's
-  /// lifecycle observer (e.g.
-  /// `WidgetsBindingObserver.didChangeAppLifecycleState(resumed)`).
-  Future<void> notifyAppResumed() => _refetchActiveQueries();
+  /// Call from your app's lifecycle observer when the app moves to the
+  /// background (e.g.
+  /// `WidgetsBindingObserver.didChangeAppLifecycleState(paused)`) to pause
+  /// every opportunistic background refetch — staleness-on-attach,
+  /// `refetchInterval` polling, [invalidateQueries], [notifyReconnected] —
+  /// until [notifyAppResumed] is called. Nothing refetches data for a
+  /// screen the user can't see; on most platforms a backgrounded app's
+  /// network requests are cheap to make but pointless, so skipping them
+  /// outright is a straightforward battery and data-usage win. A request
+  /// made directly (`future`/`stream`/`refetch`, e.g. from a foreground
+  /// service) is unaffected — only the client's own opportunistic
+  /// background refetches are paused.
+  void notifyAppPaused() => _pollingPaused = true;
+
+  /// Call from your app's lifecycle observer when the app returns to the
+  /// foreground (e.g.
+  /// `WidgetsBindingObserver.didChangeAppLifecycleState(resumed)`). Clears
+  /// any pause set by [notifyAppPaused], then triggers a background
+  /// `networkOnly` refetch for every currently active [watchQuery]
+  /// subscription, so data that went stale — or that a paused
+  /// `refetchInterval`/[invalidateQueries]/[notifyReconnected] skipped
+  /// refetching — catches up immediately instead of waiting for its next
+  /// scheduled tick.
+  Future<void> notifyAppResumed() {
+    _pollingPaused = false;
+    return _refetchActiveQueries();
+  }
 
   /// Evicts every cached query matching [operationNames] and/or [types]
   /// (a query matches if its operation name is in [operationNames], or if
@@ -789,7 +821,10 @@ class GraphQLClient {
   /// [refetchActive] (default `true`), a matching query with at least one
   /// active [watchQuery] subscriber is immediately background-refetched so
   /// that subscriber's stream updates in place; a match with no active
-  /// subscriber is simply evicted and refetched lazily on next read.
+  /// subscriber is simply evicted and refetched lazily on next read. The
+  /// background refetch (not the eviction) is skipped while
+  /// [notifyAppPaused] is in effect — the subscriber still gets fresh data,
+  /// just on [notifyAppResumed] instead of immediately.
   Future<void> invalidateQueries({
     List<String>? operationNames,
     List<String>? types,
@@ -822,9 +857,16 @@ class GraphQLClient {
   /// of those callers initiated this fetch directly, so there is no
   /// `Future` of theirs to fail — the cache simply keeps its last-good
   /// value and any active `watchQuery` stream doesn't update.
+  ///
+  /// A no-op while [_pollingPaused] (see [notifyAppPaused]) — every caller
+  /// above is an *opportunistic* refetch nothing is waiting on, so skipping
+  /// it for a backgrounded app is free. [notifyAppResumed] clears the pause
+  /// and re-runs this for everything currently active, so nothing is lost,
+  /// only deferred.
   Future<void> _backgroundRefetch<TData, TVars>(
     GraphQLRequest<TData, TVars> req,
   ) async {
+    if (_pollingPaused) return;
     try {
       await for (final _ in _fetchFromNetwork(
         req.copyWithFetchPolicy(FetchPolicy.networkOnly),

@@ -140,6 +140,8 @@ await client.invalidateQueries(types: ['Post']);
 
 Pass `operationNames: ['GetPosts']` instead (or in addition) to target by operation name rather than by type. A match with no active subscriber is simply evicted and refetched lazily on its next read — no wasted network call. Pass `refetchActive: false` to only evict, never background-refetch.
 
+Matching by `types:` relies on your generated response models declaring `__typename` (added by `mk_graphql_generator` 1.2.1-dev.1+ — regenerate with `dart run build_runner build --delete-conflicting-outputs` if `types:` isn't matching anything). `operationNames:` has no such dependency, since it matches on the request rather than the cached response.
+
 ## Refetch triggers
 
 Three ways to tell the client "re-run whatever's currently being watched":
@@ -149,6 +151,12 @@ Three ways to tell the client "re-run whatever's currently being watched":
 - `GraphQLRequest.refetchInterval` — a `Duration?` (default `null`) that, while the request has an active `watchQuery` subscriber, triggers a periodic background refetch; the timer is canceled once the last subscriber cancels.
 
 Both `notifyReconnected`/`notifyAppResumed` only refetch queries that currently have at least one active `watchQuery` subscriber — nothing fires for queries nobody's watching.
+
+### Pausing background refetches: `notifyAppPaused`
+
+Call `client.notifyAppPaused()` from the same lifecycle observer when the app moves to the background. It's the battery/data-usage counterpart to the refetch triggers above: while paused, every *opportunistic* background refetch — staleness-on-attach, `refetchInterval` polling, `invalidateQueries`, `notifyReconnected` — is skipped instead of hitting the network for a screen nobody can see. `refetchInterval`'s timers keep ticking on schedule (that part is free), only the network call each tick would have made is skipped, so nothing needs to be rescheduled on resume.
+
+`notifyAppResumed()` clears the pause and immediately background-refetches everything currently watched, so nothing is lost — only deferred until the app is actually visible again. A request you make directly (`future`/`stream`/`refetch`, e.g. from a foreground service or a user-initiated pull-to-refresh) is never affected by the pause; only the client's own opportunistic background refetches are.
 
 ```dart
 class ConnectivityGraphQLBridge with WidgetsBindingObserver {
@@ -168,6 +176,8 @@ class ConnectivityGraphQLBridge with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _client.notifyAppResumed();
+    } else if (state == AppLifecycleState.paused) {
+      _client.notifyAppPaused();
     }
   }
 

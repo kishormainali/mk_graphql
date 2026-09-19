@@ -118,6 +118,7 @@ class RetryOptions {
   final int maxAttempts;                        // default 3, total attempts including the first
   final Duration initialDelay;                  // default 200ms, delay before the first retry
   final double backoffMultiplier;                // default 2.0
+  final double jitter;                          // default 0.0, randomizes each delay by up to this fraction
   final bool Function(Object error)? retryIf;    // default: transient network errors only
 
   const RetryOptions({...});
@@ -130,6 +131,7 @@ class RetryOptions {
 - `GraphQLClient(defaultRetry: ...)` — applied automatically to **queries only**; `null` (the default) disables auto-retry. **Neither mutations nor subscriptions use this** — they retry only if the request sets its own `GraphQLRequest.retry` (subscriptions already reconnect on their own, via `WebSocketLink`/`SseLink`).
 - `GraphQLRequest.retry` — overrides `defaultRetry` for this request. Pass `RetryOptions.none` to disable retry for an otherwise-retrying query, or any `RetryOptions` to opt a mutation into retry.
 - The default `retryIf` retries connection errors and timeouts (`NetworkException`, `TimeoutException`) — never 4xx/validation errors, since those won't succeed on retry regardless of attempts.
+- `jitter` (`0.0`–`1.0`) randomizes each computed delay by up to that fraction in either direction. Worth setting (e.g. `0.2`) whenever many client instances might fail at the same moment — a shared backend blip, a deploy — so they don't all retry in lockstep and re-cause the spike that failed them the first time; `0.0` (the default) keeps the exact deterministic backoff curve prior versions produced.
 
 ```dart
 final client = GraphQLClient(

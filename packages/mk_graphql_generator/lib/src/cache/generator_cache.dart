@@ -7,7 +7,7 @@ import '../generator/orchestrator/generator_orchestrator.dart';
 /// Cache manager for GraphQL code generation to avoid re-generating
 /// unchanged operations and schemas.
 class GeneratorCache {
-  static const String version = 'v13';
+  static const String version = 'v14';
   static String cacheDir = p.join('.dart_tool', 'mk_graphql_cache');
 
   static final Map<String, GeneratedBundle> _memory = {};

@@ -25,7 +25,7 @@ A clean, modern, simplified GraphQL client for Dart and Flutter with normalized 
 - 📑 **Automatic Pagination (Zero Manual Append)**: `client.fetchMore` and `req.fetchMore` automatically merge lists and Relay connections; `GraphQLPaginator` manages reactive infinite scroll.
 - 🛡️ **Validation Errors**: Specialized `ValidationException` extracting field-level validation messages across Apollo, Laravel/Lighthouse, NestJS, and Spring DGS.
 - 🪵 **Built-in Logging**: Pretty console logging with custom options and privacy masking.
-- ⚡ **Smart Query Optimizations**: Automatic in-flight request deduplication, opt-out-of stale-while-revalidate caching with GC, `invalidateQueries`, retry-with-backoff, and reconnect/interval refetch triggers — TanStack-Query-style client behavior.
+- ⚡ **Smart Query Optimizations**: Automatic in-flight request deduplication, opt-out-of stale-while-revalidate caching with GC, `invalidateQueries`, retry-with-backoff, reconnect/interval refetch triggers, and battery-friendly `notifyAppPaused()`/`notifyAppResumed()` pausing of background refetches — TanStack-Query-style client behavior.
 - 💽 **Optional Persistent Cache**: `HiveCache` (backed by `hive_ce`) persists the normalized cache across app restarts as a drop-in `Cache` implementation.
 
 ---

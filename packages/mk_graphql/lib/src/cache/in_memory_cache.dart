@@ -59,7 +59,13 @@ class InMemoryCache implements Cache {
       final normalized = _normalize(json);
       _store.set(queryKey, normalized);
       _writtenAt[key] = DateTime.now();
-      _queryTypenames[key] = _collectTypenames(json);
+      // Collected from the already-normalized (and therefore already
+      // JSON-safe — see _normalizeValue) record rather than the raw [json]:
+      // a field toJson() didn't recursively serialize itself (the common
+      // case for generated wrapper models) would otherwise hide its
+      // __typename from here even though _normalize() itself handles it
+      // fine.
+      _queryTypenames[key] = _collectTypenames(_denormalize(normalized));
       _notifyWatchers(request);
     }
   }
@@ -218,6 +224,20 @@ class InMemoryCache implements Cache {
       return normalizedMap;
     } else if (value is List) {
       return value.map(_normalizeValue).toList();
+    } else if (value != null &&
+        value is! String &&
+        value is! num &&
+        value is! bool) {
+      // A nested typed object (e.g. a generated freezed model field) that
+      // the parent's own toJson() didn't already recursively convert —
+      // json_serializable only does this when a class opts into
+      // `explicitToJson: true`, which the generator's classes don't (it
+      // breaks fromJson for classes with required fields; see
+      // dart_codegen.dart). Coerce it into a plain JSON map ourselves so
+      // normalize/denormalize always operates on JSON-safe data, whatever
+      // the field's own toJson() behavior is.
+      final asJson = _dataToJson(value);
+      if (asJson is Map<String, dynamic>) return _normalizeValue(asJson);
     }
     return value;
   }

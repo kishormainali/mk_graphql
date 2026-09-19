@@ -17,19 +17,26 @@ import 'package:mk_graphql/mk_graphql.dart' as _i901;
 
 import '../features/anime/bloc/anime_details_cubit.dart' as _i256;
 import '../features/anime/bloc/anime_list_bloc.dart' as _i960;
+import '../features/optimizations/network_activity_monitor.dart' as _i581;
 import 'network_module.dart' as _i567;
 
 extension GetItInjectableX on _i174.GetIt {
   // initializes the registration of main-scope dependencies inside of GetIt
-  _i174.GetIt init({
+  Future<_i174.GetIt> init({
     String? environment,
     _i526.EnvironmentFilter? environmentFilter,
-  }) {
+  }) async {
     final gh = _i526.GetItHelper(this, environment, environmentFilter);
     final networkModule = _$NetworkModule();
-    gh.lazySingleton<_i361.Dio>(() => networkModule.provideDio());
-    gh.lazySingleton<_i901.GraphQLClient>(
+    gh.lazySingleton<_i581.NetworkActivityMonitor>(
+      () => _i581.NetworkActivityMonitor(),
+    );
+    gh.lazySingleton<_i361.Dio>(
+      () => networkModule.provideDio(gh<_i581.NetworkActivityMonitor>()),
+    );
+    await gh.factoryAsync<_i901.GraphQLClient>(
       () => networkModule.provideGraphQLClient(gh<_i361.Dio>()),
+      preResolve: true,
     );
     gh.factory<_i256.AnimeDetailsCubit>(
       () => _i256.AnimeDetailsCubit(gh<_i901.GraphQLClient>()),

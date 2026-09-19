@@ -1,5 +1,6 @@
 library mk_graphql;
 
+export 'src/core/backoff.dart';
 export 'src/core/fetch_policy.dart';
 export 'src/core/error_policy.dart';
 export 'src/core/error.dart';

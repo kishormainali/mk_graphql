@@ -10,18 +10,19 @@
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 
-import 'package:auto_route/auto_route.dart' as _i3;
+import 'package:auto_route/auto_route.dart' as _i4;
 import 'package:example/features/anime/anime_details_page.dart' as _i1;
 import 'package:example/features/anime/anime_list_page.dart' as _i2;
-import 'package:flutter/material.dart' as _i4;
+import 'package:example/features/optimizations/optimizations_page.dart' as _i3;
+import 'package:flutter/material.dart' as _i5;
 
 /// generated route for
 /// [_i1.AnimeDetailsPage]
-class AnimeDetailsRoute extends _i3.PageRouteInfo<AnimeDetailsRouteArgs> {
+class AnimeDetailsRoute extends _i4.PageRouteInfo<AnimeDetailsRouteArgs> {
   AnimeDetailsRoute({
-    _i4.Key? key,
+    _i5.Key? key,
     required int id,
-    List<_i3.PageRouteInfo>? children,
+    List<_i4.PageRouteInfo>? children,
   }) : super(
          AnimeDetailsRoute.name,
          args: AnimeDetailsRouteArgs(key: key, id: id),
@@ -31,7 +32,7 @@ class AnimeDetailsRoute extends _i3.PageRouteInfo<AnimeDetailsRouteArgs> {
 
   static const String name = 'AnimeDetailsRoute';
 
-  static _i3.PageInfo page = _i3.PageInfo(
+  static _i4.PageInfo page = _i4.PageInfo(
     name,
     builder: (data) {
       final pathParams = data.inheritedPathParams;
@@ -46,7 +47,7 @@ class AnimeDetailsRoute extends _i3.PageRouteInfo<AnimeDetailsRouteArgs> {
 class AnimeDetailsRouteArgs {
   const AnimeDetailsRouteArgs({this.key, required this.id});
 
-  final _i4.Key? key;
+  final _i5.Key? key;
 
   final int id;
 
@@ -68,16 +69,32 @@ class AnimeDetailsRouteArgs {
 
 /// generated route for
 /// [_i2.AnimeListPage]
-class AnimeListRoute extends _i3.PageRouteInfo<void> {
-  const AnimeListRoute({List<_i3.PageRouteInfo>? children})
+class AnimeListRoute extends _i4.PageRouteInfo<void> {
+  const AnimeListRoute({List<_i4.PageRouteInfo>? children})
     : super(AnimeListRoute.name, initialChildren: children);
 
   static const String name = 'AnimeListRoute';
 
-  static _i3.PageInfo page = _i3.PageInfo(
+  static _i4.PageInfo page = _i4.PageInfo(
     name,
     builder: (data) {
       return const _i2.AnimeListPage();
+    },
+  );
+}
+
+/// generated route for
+/// [_i3.OptimizationsPage]
+class OptimizationsRoute extends _i4.PageRouteInfo<void> {
+  const OptimizationsRoute({List<_i4.PageRouteInfo>? children})
+    : super(OptimizationsRoute.name, initialChildren: children);
+
+  static const String name = 'OptimizationsRoute';
+
+  static _i4.PageInfo page = _i4.PageInfo(
+    name,
+    builder: (data) {
+      return const _i3.OptimizationsPage();
     },
   );
 }

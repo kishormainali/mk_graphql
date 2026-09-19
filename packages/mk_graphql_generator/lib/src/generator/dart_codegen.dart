@@ -42,7 +42,9 @@ Parameter _namedParam(
 /// [includeIfNull] mirrors freezed_annotation's `@JsonKey(includeIfNull:)`:
 /// pass false so an unset optional field is omitted from `toJson()` instead
 /// of serialized as an explicit `null` (used for Input/Vars classes sent to
-/// the server; response Model classes default to true).
+/// the server; response Model classes default to true). It also doubles as
+/// the response-vs-request signal for whether this class gets an injected
+/// `typename` field — see the comment where it's added below.
 Class freezedDataClass({
   required String className,
   required Map<String, FieldTypeInfo> fields,
@@ -75,6 +77,30 @@ Class freezedDataClass({
       ],
     ));
   });
+
+  // Response models (includeIfNull: true — see the doc comment above) get
+  // an optional `typename` field wired to the wire's `__typename`, which
+  // TypenameLink injects into every selection set. Without this, the value
+  // is silently dropped by fromJson (nothing declares it) and can never be
+  // reproduced by toJson — and since GraphQLClient.cache.writeQuery is
+  // called with the *parsed* model, not the raw response map, __typename
+  // then never reaches the cache at all, permanently breaking
+  // matchingQueryKeys/invalidateQueries(types: ...) for every generated
+  // model. Vars/Input classes (includeIfNull: false) never come from a
+  // response, so they skip it — and if a real schema field happens to be
+  // named `typename` (vanishingly unlikely), that field wins and this is
+  // skipped rather than silently colliding with it.
+  if (includeIfNull &&
+      !fields.keys.any((raw) => SchemaGenerator.safeIdentifier(raw) == 'typename')) {
+    params.add(_namedParam(
+      'typename',
+      type: 'String?',
+      annotations: [
+        CodeExpression(
+            Code("JsonKey(name: '__typename', includeIfNull: false)")),
+      ],
+    ));
+  }
 
   return Class((b) => b
     ..abstract = true

@@ -2365,6 +2365,76 @@ void main() {
     });
   });
 
+  group('notifyAppPaused', () {
+    test(
+        'suppresses staleness-on-attach, notifyReconnected, and '
+        'invalidateQueries background refetches; notifyAppResumed catches '
+        'up in one shot', () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'), staleTime: Duration.zero);
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
+
+      client.notifyAppPaused();
+
+      // Attaching to an already-stale query would normally background-
+      // refetch immediately.
+      final sub = client.watchQuery(req).listen((_) {});
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(networkCalls, equals(0),
+          reason: 'staleness-on-attach must be suppressed while paused');
+
+      await client.notifyReconnected();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(networkCalls, equals(0),
+          reason: 'notifyReconnected must also be suppressed while paused');
+
+      await client.invalidateQueries(operationNames: ['Test']);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(networkCalls, equals(0),
+          reason: 'invalidateQueries still evicts but must not refetch '
+              'while paused');
+      expect(client.cache.readQuery(req), isNull,
+          reason: 'eviction itself is never skipped, only the refetch');
+
+      // Restore the entry so notifyAppResumed's catch-up refetch has an
+      // active watcher to target (invalidateQueries above evicted it).
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
+
+      await client.notifyAppResumed();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(networkCalls, equals(1),
+          reason: 'notifyAppResumed clears the pause and refetches once');
+
+      await sub.cancel();
+    });
+
+    test('refetchInterval keeps ticking but skips its network call while '
+        'paused', () async {
+      var networkCalls = 0;
+      final client = GraphQLClient.fromLink(_CountingLink(() {
+        networkCalls++;
+      }));
+      final req = _TestReq(const _TestVars('1'),
+          staleTime: const Duration(minutes: 5),
+          refetchInterval: const Duration(milliseconds: 15));
+      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
+
+      client.notifyAppPaused();
+      final sub = client.watchQuery(req).listen((_) {});
+
+      // Several ticks' worth of time, all of which must be no-ops.
+      await Future<void>.delayed(const Duration(milliseconds: 70));
+      expect(networkCalls, equals(0),
+          reason: 'every refetchInterval tick must skip its network call '
+              'while paused');
+
+      await sub.cancel();
+    });
+  });
+
   group('invalidateQueries', () {
     test('invalidates by operationNames: active watcher gets refetched data',
         () async {

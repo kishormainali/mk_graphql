@@ -46,7 +46,8 @@ class _Req extends GraphQLRequest<_Wrapper, _Vars> {
   const _Req(this.variables);
 
   @override
-  String get document => 'query GetMedia(\$id: Int) { Media(id: \$id) { id title } }';
+  String get document =>
+      'query GetMedia(\$id: Int) { Media(id: \$id) { id title } }';
 
   @override
   String get operationName => 'GetMedia';

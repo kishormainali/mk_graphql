@@ -1350,8 +1350,10 @@ void main() {
       expect(req, contains('staleTime: staleTime ?? this.staleTime,'));
       expect(req, contains('cacheTime: cacheTime ?? this.cacheTime,'));
       expect(req, contains('retry: retry ?? this.retry,'));
-      expect(req,
-          contains('refetchInterval: refetchInterval ?? this.refetchInterval,'));
+      expect(
+          req,
+          contains(
+              'refetchInterval: refetchInterval ?? this.refetchInterval,'));
     });
 
     test('Custom scalars are mapped according to customScalars configuration',

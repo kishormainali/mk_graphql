@@ -481,7 +481,8 @@ void main() {
       expect(client.cache, same(cache));
     });
 
-    test('GraphQLClient.create defaults to a fresh InMemoryCache when cache '
+    test(
+        'GraphQLClient.create defaults to a fresh InMemoryCache when cache '
         'is omitted', () async {
       final client =
           await GraphQLClient.create(url: 'https://api.example.com/graphql');
@@ -513,8 +514,7 @@ void main() {
       );
     });
 
-    test(
-        'deduplicates concurrent identical queries into a single network call',
+    test('deduplicates concurrent identical queries into a single network call',
         () async {
       var callCount = 0;
       final client = GraphQLClient.fromLink(_CountingLink(() {
@@ -522,7 +522,8 @@ void main() {
       }));
 
       final results = await Future.wait([
-        for (var i = 0; i < 5; i++) client.future(_TestReq(const _TestVars('1'))),
+        for (var i = 0; i < 5; i++)
+          client.future(_TestReq(const _TestVars('1'))),
       ]);
 
       expect(callCount, equals(1),
@@ -554,10 +555,10 @@ void main() {
       }));
 
       await Future.wait([
-        client.future(_TestReq(const _TestVars('1'),
-            cancelToken: CancelToken())),
-        client.future(_TestReq(const _TestVars('1'),
-            cancelToken: CancelToken())),
+        client
+            .future(_TestReq(const _TestVars('1'), cancelToken: CancelToken())),
+        client
+            .future(_TestReq(const _TestVars('1'), cancelToken: CancelToken())),
       ]);
 
       expect(callCount, equals(2));
@@ -590,8 +591,8 @@ void main() {
         callCount++;
       }));
 
-      final networkOnlyReq = _TestReq(const _TestVars('1'),
-          fetchPolicy: FetchPolicy.networkOnly);
+      final networkOnlyReq =
+          _TestReq(const _TestVars('1'), fetchPolicy: FetchPolicy.networkOnly);
       final cacheAndNetworkReq = _TestReq(const _TestVars('1'),
           fetchPolicy: FetchPolicy.cacheAndNetwork);
 
@@ -2080,8 +2081,8 @@ void main() {
       final client = GraphQLClient.fromLink(_CountingLink(() {
         networkCalls++;
       }));
-      final req = _TestReq(const _TestVars('1'),
-          fetchPolicy: FetchPolicy.cacheFirst);
+      final req =
+          _TestReq(const _TestVars('1'), fetchPolicy: FetchPolicy.cacheFirst);
 
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
 
@@ -2175,8 +2176,8 @@ void main() {
       final client = GraphQLClient.fromLink(_CountingLink(() {
         networkCalls++;
       }));
-      final req = _TestReq(const _TestVars('1'),
-          staleTime: const Duration(minutes: 5));
+      final req =
+          _TestReq(const _TestVars('1'), staleTime: const Duration(minutes: 5));
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Fresh'));
 
       final sub = client.watchQuery(req).listen((_) {});
@@ -2326,8 +2327,7 @@ void main() {
           staleTime: const Duration(minutes: 5));
       final unwatchedReq = _TestReq(const _TestVars('unwatched'),
           staleTime: const Duration(minutes: 5));
-      client.cache
-          .writeQuery(watchedReq, const _TestData(id: '1', name: 'A'));
+      client.cache.writeQuery(watchedReq, const _TestData(id: '1', name: 'A'));
       client.cache
           .writeQuery(unwatchedReq, const _TestData(id: '2', name: 'B'));
 
@@ -2350,8 +2350,8 @@ void main() {
       final client = GraphQLClient.fromLink(_CountingLink(() {
         networkCalls++;
       }));
-      final req = _TestReq(const _TestVars('1'),
-          staleTime: const Duration(minutes: 5));
+      final req =
+          _TestReq(const _TestVars('1'), staleTime: const Duration(minutes: 5));
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'A'));
 
       final sub = client.watchQuery(req).listen((_) {});
@@ -2411,7 +2411,8 @@ void main() {
       await sub.cancel();
     });
 
-    test('refetchInterval keeps ticking but skips its network call while '
+    test(
+        'refetchInterval keeps ticking but skips its network call while '
         'paused', () async {
       var networkCalls = 0;
       final client = GraphQLClient.fromLink(_CountingLink(() {
@@ -2442,8 +2443,8 @@ void main() {
       final client = GraphQLClient.fromLink(_CountingLink(() {
         networkCalls++;
       }));
-      final req = _TestReq(const _TestVars('1'),
-          staleTime: const Duration(minutes: 5));
+      final req =
+          _TestReq(const _TestVars('1'), staleTime: const Duration(minutes: 5));
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
 
       final emissions = <_TestData?>[];
@@ -2470,8 +2471,7 @@ void main() {
           .writeQuery(untypedReq, const _TestData(id: '1', name: 'Alice'));
 
       final typedReq = _TypedTestReq(const _TestVars('2'));
-      client.cache
-          .writeQuery(typedReq, const _TypedData(id: '2', name: 'Bob'));
+      client.cache.writeQuery(typedReq, const _TypedData(id: '2', name: 'Bob'));
 
       await client.invalidateQueries(types: ['User'], refetchActive: false);
 

@@ -91,7 +91,8 @@ Class freezedDataClass({
   // named `typename` (vanishingly unlikely), that field wins and this is
   // skipped rather than silently colliding with it.
   if (includeIfNull &&
-      !fields.keys.any((raw) => SchemaGenerator.safeIdentifier(raw) == 'typename')) {
+      !fields.keys
+          .any((raw) => SchemaGenerator.safeIdentifier(raw) == 'typename')) {
     params.add(_namedParam(
       'typename',
       type: 'String?',

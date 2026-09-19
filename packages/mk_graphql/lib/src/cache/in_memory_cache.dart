@@ -31,7 +31,6 @@ class InMemoryCache implements Cache {
     return null;
   }
 
-
   @override
   TData? readQuery<TData, TVars>(GraphQLRequest<TData, TVars> request) {
     final queryKey = 'ROOT_QUERY:${computeRequestKey(request)}';
@@ -183,8 +182,8 @@ class InMemoryCache implements Cache {
     return _writtenAt.keys.where((key) {
       final opMatch = operationNames != null &&
           operationNames.any((name) => key.startsWith('$name:'));
-      final typeMatch = types != null &&
-          (_queryTypenames[key]?.any(types.contains) ?? false);
+      final typeMatch =
+          types != null && (_queryTypenames[key]?.any(types.contains) ?? false);
       return opMatch || typeMatch;
     }).toList();
   }

@@ -139,8 +139,7 @@ void main() {
     await pumpEventQueue();
     await cache.close();
 
-    final reopened =
-        await HiveCache.open(boxName: 'gql_cache_optimistic_test');
+    final reopened = await HiveCache.open(boxName: 'gql_cache_optimistic_test');
     expect(reopened.readQuery(req), isNull,
         reason: 'optimistic data must never be persisted');
     await reopened.close();
@@ -216,7 +215,8 @@ void main() {
     // staleTime (e.g. a day) would still consider it stale — proving it
     // isn't stamped as "just written" (DateTime.now()), which would have
     // made disk-persisted data from a prior app run wrongly count as fresh.
-    expect(DateTime.now().difference(writtenAt!), greaterThan(const Duration(days: 1)));
+    expect(DateTime.now().difference(writtenAt!),
+        greaterThan(const Duration(days: 1)));
     await cache2.close();
   });
 }

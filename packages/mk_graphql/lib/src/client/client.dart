@@ -716,8 +716,7 @@ class GraphQLClient {
         // before listening (e.g. in a widget's build()), and touching the
         // registry earlier would race a pending gcTimer from a just-
         // cancelled prior watcher on the same key.
-        final active =
-            _activeQueries.putIfAbsent(key, () => _ActiveQuery(req));
+        final active = _activeQueries.putIfAbsent(key, () => _ActiveQuery(req));
         active.latestRequest = req;
         active.refCount++;
         active.gcTimer?.cancel();

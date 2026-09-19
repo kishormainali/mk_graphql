@@ -71,7 +71,8 @@ void main() {
       expect(options.delayForAttempt(3), const Duration(milliseconds: 800));
     });
 
-    test('a positive jitter keeps every sampled delay within the spread '
+    test(
+        'a positive jitter keeps every sampled delay within the spread '
         'around the base delay, never negative', () {
       const options = RetryOptions(
         initialDelay: Duration(milliseconds: 200),
@@ -86,8 +87,7 @@ void main() {
       }
     });
 
-    test('jitter actually varies the delay across samples (not a no-op)',
-        () {
+    test('jitter actually varies the delay across samples (not a no-op)', () {
       const options = RetryOptions(
         initialDelay: Duration(milliseconds: 200),
         backoffMultiplier: 2.0,

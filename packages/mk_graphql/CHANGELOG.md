@@ -1,4 +1,4 @@
-## Unreleased
+## 1.2.1-dev.4
 
 - **New: silent token refresh.** `TokenPair` gained optional `createdAt` (when the session's tokens were first issued — preserved across refreshes) and `updatedAt` (last write). `TokenStorage` persists both (new `__token_created_at__`/`__token_updated_at__` keys; sessions stored before this change load with `null` timestamps and get `createdAt` backfilled on their next refresh) and gained `updateToken(pair)`, which writes a refreshed pair without notifying token listeners. `GraphQLClient` now uses it when `refreshCallback` succeeds, so `TokenStorage.i.setTokenListener(...)` — typically what drives app routing — is no longer triggered by a refresh; the next request just reads the new tokens from storage. `saveToken` (login) and `deleteToken` (logout/revoke) still notify, the latter with `null`.
 - **Breaking**: `TokenStorage.setTokenListener` no longer fires after a token refresh. If you relied on it to observe refreshed tokens (e.g. to reconnect a websocket), read `TokenStorage.i.getToken()` instead — `updatedAt` tells you when they last changed.

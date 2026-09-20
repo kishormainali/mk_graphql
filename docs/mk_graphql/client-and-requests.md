@@ -48,6 +48,21 @@ The generator emits concrete subclasses per operation (`GetUserReq`, `CreatePost
 
 ---
 
+## Default headers
+
+`GraphQLClient(defaultHeaders: {...})` sends the given headers on every HTTP request the client makes — queries, mutations, multipart uploads, SSE subscriptions, and the token-refresh request. They are **not** sent when opening a WebSocket (`wsUrl`); put credentials for that in the connection payload, which the client fills from `accessTokenHeader`.
+
+Precedence, lowest to highest:
+
+1. The transport's built-in headers (`Accept`, `Content-Type`)
+2. `defaultHeaders` — so you can override the two above (on a multipart upload the boundary `Content-Type` always wins)
+3. A request's own `headers`
+4. The stored access token's headers (`Authorization` by default) — a default `Authorization` is only a fallback while logged out
+
+Header names are case-insensitive. A `Dio` passed via `dio:` is never modified, so its own base headers keep applying to your other requests; on a GraphQL request, a default with the same name replaces the Dio's.
+
+---
+
 ## `GraphQLClient.create`
 
 `GraphQLClient(...)` is a synchronous factory — it needs a `Cache` instance up front. `GraphQLClient.create({...})` is the async counterpart: it takes every same named parameter, but `cache` accepts a `FutureOr<Cache>?`, so an async cache constructor like `HiveCache.open(...)` can be passed directly without a separate `await` statement:

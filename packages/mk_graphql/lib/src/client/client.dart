@@ -158,7 +158,16 @@ class GraphQLClient {
     /// Optional pre-configured [Dio] instance. When omitted a default one is created.
     Dio? dio,
 
-    /// Default headers merged into every HTTP request at the transport level.
+    /// Default headers sent on every HTTP request this client makes — queries,
+    /// mutations, uploads, SSE subscriptions and the token-refresh request.
+    /// Not applied to WebSocket connections.
+    ///
+    /// They override the transport's built-in `Accept`/`Content-Type` (except
+    /// on multipart uploads, where the boundary `Content-Type` always wins),
+    /// and are themselves overridden by a request's own `headers` and by the
+    /// stored access token's `Authorization`, so a default `Authorization` is
+    /// only a fallback while logged out. A caller-supplied [dio] is never
+    /// modified.
     Map<String, String>? defaultHeaders,
 
     /// Callback that builds the current auth headers (e.g. `Authorization`)
@@ -238,12 +247,16 @@ class GraphQLClient {
   }) {
     // Resolved once, here, and threaded through as a single non-null Dio —
     // AuthLink's own refresh requests must share this exact instance (same
-    // defaultHeaders, same interceptors) rather than each independently
-    // falling back to a second, unconfigured `Dio()`.
+    // interceptors, adapter) rather than each independently falling back to a
+    // second, unconfigured `Dio()`.
+    //
+    // defaultHeaders are deliberately NOT written into this Dio's
+    // `options.headers`: a caller-supplied Dio would be permanently modified
+    // (overwriting its own same-named headers and leaking ours into the
+    // caller's other requests), and base options lose to the transport's
+    // built-in Accept/Content-Type so they couldn't override those. They are
+    // passed to each link that sends requests instead.
     final dioInstance = dio ?? Dio();
-    if (defaultHeaders != null && defaultHeaders.isNotEmpty) {
-      dioInstance.options.headers.addAll(defaultHeaders);
-    }
 
     final resolvedCallbacks = _resolveAuthCallbacks(
       accessTokenHeader: accessTokenHeader,
@@ -441,6 +454,7 @@ class GraphQLClient {
       links.add(AuthLink(
         url: url,
         dio: dioInstance,
+        defaultHeaders: defaultHeaders ?? const {},
         accessTokenHeader: accessTokenHeader,
         refreshTokenHeader: refreshTokenHeader,
         isTokenExpired: isTokenExpired,
@@ -462,7 +476,11 @@ class GraphQLClient {
     links.add(LoggerLink(options: loggerOptions));
 
     // 4. Terminating links
-    final dioLink = DioLink(url, client: dioInstance);
+    final dioLink = DioLink(
+      url,
+      client: dioInstance,
+      defaultHeaders: defaultHeaders ?? const {},
+    );
 
     final subLink = subscriptionLink ??
         (wsUrl != null

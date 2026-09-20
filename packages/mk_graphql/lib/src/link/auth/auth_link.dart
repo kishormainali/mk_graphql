@@ -36,8 +36,13 @@ class AuthLink extends Link {
     this.isUnauthorized,
     this.onTokenRefresh,
     this.onRevokeToken,
+    this.defaultHeaders = const {},
   }) : _ownedDio = dio == null ? Dio() : null {
-    final dioLink = DioLink(url, client: dio ?? _ownedDio!);
+    final dioLink = DioLink(
+      url,
+      client: dio ?? _ownedDio!,
+      defaultHeaders: defaultHeaders,
+    );
     _refreshClient = GraphQLClient.fromLink(
       refreshTokenHeader != null
           ? Link.from([RefreshHeaderLink(refreshTokenHeader!), dioLink])
@@ -47,6 +52,11 @@ class AuthLink extends Link {
 
   /// The GraphQL endpoint URL — also used for token refresh requests.
   final String url;
+
+  /// Default HTTP headers for the internal refresh client's requests — the
+  /// same ones the app's terminating link sends, so a token refresh reaches
+  /// the server looking like any other request from this client.
+  final Map<String, String> defaultHeaders;
 
   /// Callback that returns the current auth headers built from the access
   /// token (e.g. `Authorization`) — attached to every normal outgoing

@@ -401,7 +401,12 @@ class DioLink extends Link {
       } else {
         final effectiveHeaders = Map<String, String>.from(headers);
         if (body is dio.FormData) {
-          effectiveHeaders.remove(dio.Headers.contentTypeHeader);
+          // Dio sets the multipart Content-Type (with its boundary) itself; a
+          // header of any casing here — e.g. one from defaultHeaders — would
+          // otherwise be sent instead and break the upload.
+          effectiveHeaders.removeWhere(
+            (key, _) => key.toLowerCase() == dio.Headers.contentTypeHeader,
+          );
         }
         res = await client.post<dynamic>(
           endpoint,

@@ -1,3 +1,9 @@
+## Unreleased
+
+- **Fix**: `GraphQLClient(defaultHeaders: ...)` can now override the transport's built-in `Accept` and `Content-Type` headers — previously they were silently ignored, because the headers only reached the request as the `Dio`'s base options, which the link's own per-request headers beat. `defaultHeaders` are now passed to `DioLink` (and to `AuthLink`'s internal refresh client) directly. A default `Content-Type` still never breaks a multipart upload: `DioLink` now strips it case-insensitively before Dio sets the boundary header.
+- **Fix**: `GraphQLClient` no longer modifies a caller-supplied `Dio`. It used to copy `defaultHeaders` into `dio.options.headers`, which overwrote the Dio's own same-named headers and leaked the GraphQL defaults into the caller's other (e.g. REST) requests. **Behaviour change** for anyone who relied on that side effect — set those headers on your own `Dio` instead.
+- **New**: `AuthLink` accepts `defaultHeaders` (applied to its internal refresh client's requests).
+
 ## 1.2.1-dev.4
 
 - **New: silent token refresh.** `TokenPair` gained optional `createdAt` (when the session's tokens were first issued — preserved across refreshes) and `updatedAt` (last write). `TokenStorage` persists both (new `__token_created_at__`/`__token_updated_at__` keys; sessions stored before this change load with `null` timestamps and get `createdAt` backfilled on their next refresh) and gained `updateToken(pair)`, which writes a refreshed pair without notifying token listeners. `GraphQLClient` now uses it when `refreshCallback` succeeds, so `TokenStorage.i.setTokenListener(...)` — typically what drives app routing — is no longer triggered by a refresh; the next request just reads the new tokens from storage. `saveToken` (login) and `deleteToken` (logout/revoke) still notify, the latter with `null`.

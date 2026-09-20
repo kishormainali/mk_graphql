@@ -1,4 +1,4 @@
-## Unreleased
+## 1.2.1-dev.5
 
 - **Fix**: `GraphQLClient(defaultHeaders: ...)` can now override the transport's built-in `Accept` and `Content-Type` headers — previously they were silently ignored, because the headers only reached the request as the `Dio`'s base options, which the link's own per-request headers beat. `defaultHeaders` are now passed to `DioLink` (and to `AuthLink`'s internal refresh client) directly. A default `Content-Type` still never breaks a multipart upload: `DioLink` now strips it case-insensitively before Dio sets the boundary header.
 - **Fix**: `GraphQLClient` no longer modifies a caller-supplied `Dio`. It used to copy `defaultHeaders` into `dio.options.headers`, which overwrote the Dio's own same-named headers and leaked the GraphQL defaults into the caller's other (e.g. REST) requests. **Behaviour change** for anyone who relied on that side effect — set those headers on your own `Dio` instead.

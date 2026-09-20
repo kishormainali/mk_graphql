@@ -42,6 +42,7 @@ AuthLink(
 
 Behavior:
 
+- **Session storage**: when configured through `GraphQLClient(refreshCallback: ...)`, a successful refresh is persisted silently with `TokenStorage.i.updateToken` (no `setTokenListener` notification) and a revoke calls `TokenStorage.i.deleteToken()` — see [Authentication & Token Storage](authentication.md).
 - **`accessTokenHeader`/`refreshTokenHeader`/`tokenHeader`** (`TokenHeaderCallback`) each receive the current token as their argument, read from `TokenStorage.i` — they're only invoked when a token is actually stored (skipped entirely otherwise, so the callback never has to null-check it).
 - **Proactive refresh**: if `isTokenExpired` is supplied and returns `true`, the token is refreshed *before* the request is sent.
 - **`refreshTokenHeader`**: has no default — the refresh token normally reaches your refresh endpoint as `onTokenRefresh`'s own mechanism (a body/variable). Pass this only if your refresh endpoint *also*/*instead* expects the refresh token as a header; when provided, it's attached to every request sent through the internal refresh client instead of `accessTokenHeader`.

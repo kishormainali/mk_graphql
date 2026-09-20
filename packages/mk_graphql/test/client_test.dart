@@ -764,6 +764,62 @@ void main() {
     });
 
     test(
+        'a token refresh updates storage silently — the TokenStorage listener '
+        '(e.g. app routing) is not notified, createdAt is kept and updatedAt '
+        'advances', () async {
+      await _seedTokenStorage(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+      );
+      final seeded = (await TokenStorage.i.getToken())!;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+
+      var callCount = 0;
+      final dioInstance = dio.Dio();
+      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+        callCount++;
+        return dio.ResponseBody.fromString(
+          jsonEncode(callCount == 1
+              ? {
+                  'errors': [
+                    {
+                      'message': 'Unauthenticated',
+                      'extensions': {'code': 'UNAUTHENTICATED'},
+                    }
+                  ]
+                }
+              : {
+                  'data': {'id': '123', 'name': 'Refreshed User'}
+                }),
+          callCount == 1 ? 401 : 200,
+          headers: {
+            'content-type': ['application/json']
+          },
+        );
+      });
+
+      final notified = <String?>[];
+      TokenStorage.i.setTokenListener(notified.add);
+      addTearDown(TokenStorage.i.removeTokenListener);
+
+      final client = GraphQLClient(
+        url: 'https://example.com/graphql',
+        dio: dioInstance,
+        addTypename: false,
+        refreshCallback: (_, __) async => const TokenPair(
+            accessToken: 'new-access', refreshToken: 'new-refresh'),
+      );
+
+      await client.future(_TestReq(const _TestVars('123')));
+
+      expect(notified, isEmpty);
+      final stored = (await TokenStorage.i.getToken())!;
+      expect(stored.accessToken, equals('new-access'));
+      expect(stored.createdAt, equals(seeded.createdAt));
+      expect(stored.updatedAt!.isAfter(seeded.updatedAt!), isTrue);
+    });
+
+    test(
         'defaultHeaders reach the token-refresh request too, not just the '
         'original one — AuthLink must share the client\'s configured Dio '
         'instance rather than falling back to an unconfigured one', () async {
@@ -831,6 +887,9 @@ void main() {
       var refreshCalls = 0;
       var listenerCalled = false;
       GraphQLClient.registerRevokeTokenListener(() => listenerCalled = true);
+      final storageNotified = <String?>[];
+      TokenStorage.i.setTokenListener(storageNotified.add);
+      addTearDown(TokenStorage.i.removeTokenListener);
 
       final dioInstance = dio.Dio();
       dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
@@ -867,6 +926,9 @@ void main() {
 
       expect(refreshCalls, equals(0));
       expect(listenerCalled, isTrue);
+      // Revoking clears storage, which must still notify TokenStorage
+      // listeners (with null) so the app can route to login.
+      expect(storageNotified, equals([null]));
       expect(await TokenStorage.i.accessToken, isNull);
       GraphQLClient.clearRevokeTokenListeners();
     });

@@ -43,6 +43,7 @@ The generator emits concrete subclasses per operation (`GetUserReq`, `CreatePost
 | `fetchMore(...)` | `Future<TData>` | Fetches next page, auto-merges lists/connections, writes to cache under `originalRequest`. |
 | `request(req, {cancelToken})` | `Stream<GraphQLResponse<TData>>` | Low-level: yields raw responses (cache/network/optimistic), never throws. |
 | `watchQuery(req)` | `Stream<TData?>` | Subscribes to cache updates for this request's cache key, independent of network activity. |
+| `isAuthenticated` | `Future<bool>` | Whether `TokenStorage.i` holds an access token (stored, not server-validated). See [Authentication](authentication.md). |
 | `dispose()` | `Future<void>` | Clears revoke-token listeners, clears cache, disposes link pipeline. |
 
 ---
@@ -227,7 +228,7 @@ try {
 
 ## Global Token-Revocation Listeners
 
-Independent of any single client instance, you can react to a revoked token anywhere in the app:
+Independent of any single client instance, you can react to a revoked token anywhere in the app (fires when a refresh fails, no refresh token is stored, or the server's failure classifies as a revoke — not on a successful refresh). See [Authentication & Token Storage](authentication.md) for how this differs from `TokenStorage.i.setTokenListener`:
 
 ```dart
 GraphQLClient.registerRevokeTokenListener(() {

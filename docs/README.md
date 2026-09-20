@@ -18,6 +18,7 @@ This repository is a monorepo with two published packages:
 
 - [Getting Started](mk_graphql/getting-started.md) — step-by-step integration: installing, configuring `GraphQLClient`, executing operations, and handling validation errors.
 - [Client, Requests & Responses](mk_graphql/client-and-requests.md) — `GraphQLClient` API, `FetchPolicy`, `ErrorPolicy`, `GraphQLRequest`, `GraphQLResponse`, and `ValidationException`.
+- [Authentication & Token Storage](mk_graphql/authentication.md) — `TokenPair`, `TokenStorage.i`, silent token refresh, login/logout/revoke listeners, and how `GraphQLClient` manages the session.
 - [Link Pipeline](mk_graphql/links.md) — how `AuthLink`, `TypenameLink`, `LoggerLink`, and transport links (`DioLink`, `HttpLink`, `SseLink`, `WebSocketLink`, `BatchLink`) compose.
 - [Caching](mk_graphql/caching.md) — normalized in-memory cache, deterministic canonical key sorting, optimistic responses, `watchQuery`.
 - [Pagination](mk_graphql/pagination.md) — automatic list and Relay connection merging with `client.fetchMore` / `req.fetchMore`, and reactive `GraphQLPaginator`.

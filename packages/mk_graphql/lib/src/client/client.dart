@@ -31,14 +31,46 @@ import '../link/transport/websocket_link.dart';
 /// Combines an in-memory normalized cache, an extensible [Link] pipeline,
 /// proactive auth token management, automatic `__typename` injection,
 /// rich logging, and typed request execution.
+///
+/// ## Authentication
+///
+/// Pass `refreshCallback` and the client owns the session: it reads the
+/// access token from [TokenStorage.i] for every request's `Authorization`
+/// header, and on an unauthorized response calls `refreshCallback` once (no
+/// matter how many requests failed at the same time), silently persists the
+/// returned [TokenPair] with [TokenStorage.updateToken] — so
+/// [TokenStorage.setTokenListener] listeners are *not* notified — and retries
+/// the failed requests. If the refresh fails (or no refresh token is stored)
+/// the session is revoked: [TokenStorage.deleteToken] runs (notifying
+/// listeners with `null`), `onRevokeToken` is called, and every listener
+/// added with [registerRevokeTokenListener] fires. Log in with
+/// [TokenStorage.saveToken]; see also [isAuthenticated].
 class GraphQLClient {
   final Link _pipeline;
+
+  /// The normalized cache backing [FetchPolicy]s and [watchQuery].
   final Cache cache;
+
+  /// [FetchPolicy] used by a request that doesn't set its own.
   final FetchPolicy defaultFetchPolicy;
+
+  /// [ErrorPolicy] used by a request that doesn't set its own.
   final ErrorPolicy defaultErrorPolicy;
+
+  /// What the [LoggerLink] prints.
   final LoggerOptions loggerOptions;
+
+  /// How long a cached entry counts as fresh before a `cacheFirst` hit
+  /// background-revalidates it; a request's own `staleTime` overrides it.
   final Duration defaultStaleTime;
+
+  /// How long an entry with no active [watchQuery] subscriber is kept before
+  /// being evicted; `null` (the default) never evicts. A request's own
+  /// `cacheTime` overrides it.
   final Duration? defaultCacheTime;
+
+  /// [RetryOptions] applied to queries/subscriptions without their own
+  /// `retry`; `null` disables auto-retry. Mutations never auto-retry.
   final RetryOptions? defaultRetry;
 
   /// In-flight *query* network calls keyed by [computeRequestKey] —
@@ -90,12 +122,19 @@ class GraphQLClient {
   // Static revoke-token listener delegates
   // ---------------------------------------------------------------------------
 
+  /// Registers an app-wide [listener] called whenever a session is revoked —
+  /// a refresh failed, no refresh token was stored, or the server answered
+  /// with a failure classified as `AuthFailure.revoke` (e.g. HTTP 403). Use it
+  /// to navigate to login. Shared by every [GraphQLClient]; not called on a
+  /// successful (silent) refresh.
   static void registerRevokeTokenListener(void Function() listener) =>
       AuthLink.registerRevokeTokenListener(listener);
 
+  /// Removes a [listener] added with [registerRevokeTokenListener].
   static void removeRevokeTokenListener(void Function() listener) =>
       AuthLink.removeRevokeTokenListener(listener);
 
+  /// Removes every listener added with [registerRevokeTokenListener].
   static void clearRevokeTokenListeners() =>
       AuthLink.clearRevokeTokenListeners();
 
@@ -365,7 +404,9 @@ class GraphQLClient {
         final newToken =
             await refreshCallback(refreshClient, currentRefreshToken);
         if (newToken == null) return null;
-        await TokenStorage.i.saveToken(newToken);
+        // Silent: a refresh must not fire TokenStorage listeners (they drive
+        // app routing). The next request reads the new token from storage.
+        await TokenStorage.i.updateToken(newToken);
         return {'Authorization': 'Bearer ${newToken.accessToken}'};
       },
       onRevokeToken: () {
@@ -875,7 +916,8 @@ class GraphQLClient {
     }
   }
 
-  /// Whether a persisted access token exists in [TokenStorage.i].
+  /// Whether a persisted access token exists in [TokenStorage.i] — i.e.
+  /// whether a session is stored, not whether the server still accepts it.
   Future<bool> get isAuthenticated async =>
       await TokenStorage.i.accessToken != null;
 

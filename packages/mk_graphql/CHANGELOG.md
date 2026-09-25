@@ -1,4 +1,4 @@
-## Unreleased
+## 1.2.1-dev.6
 
 - **New**: `llms.txt` and `llms-full.txt` (per the [llmstxt.org](https://llmstxt.org) convention), published alongside the package so an AI coding agent integrating `mk_graphql` into a consuming app has a self-contained reference — `llms-full.txt` inlines setup, auth wiring, caching, pagination, and common-mistakes guidance without requiring the rest of the monorepo.
 

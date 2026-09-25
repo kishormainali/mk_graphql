@@ -797,30 +797,22 @@ class GeneratorOrchestrator {
     final outputs = <String>[];
 
     if (isSchemaFile) {
+      // One fixed path per category — never one per type — so this
+      // schema file's declared build_runner outputs stop depending on how
+      // many enums/inputs/objects it defines. See generateEnums/
+      // generateInputs/generateObjectTypes in schema_generator.dart, which
+      // this must keep matching exactly.
       if (parsed.enumTypes.isNotEmpty) {
-        for (final e in parsed.enumTypes) {
-          outputs
-              .add('${sharedPrefix}enums/${e.name.value.snakeCase}_enum.dart');
-        }
         outputs.add('${sharedPrefix}enums/enums.dart');
       }
       if (parsed.inputTypes.isNotEmpty) {
-        for (final i in parsed.inputTypes) {
-          outputs.add('${sharedPrefix}inputs/${i.name.value.snakeCase}.dart');
-        }
         outputs.add('${sharedPrefix}inputs/inputs.dart');
       }
-      final objectTypes = parsed.objectTypes
-          .where((o) =>
-              o.name.value != 'Query' &&
-              o.name.value != 'Mutation' &&
-              o.name.value != 'Subscription')
-          .toList();
+      final objectTypes = parsed.objectTypes.where((o) =>
+          o.name.value != 'Query' &&
+          o.name.value != 'Mutation' &&
+          o.name.value != 'Subscription');
       if (objectTypes.isNotEmpty) {
-        for (final o in objectTypes) {
-          outputs.add(
-              '${sharedPrefix}models/${o.name.value.snakeCase}_model.dart');
-        }
         outputs.add('${sharedPrefix}models/models.dart');
       }
       outputs.add('${sharedPrefix}$fileName.gql.dart');

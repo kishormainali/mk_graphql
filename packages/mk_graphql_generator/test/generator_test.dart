@@ -38,15 +38,12 @@ void main() {
         inputPath: 'schema.graphql',
       );
 
-      // Verify files map contains expected structured paths
-      expect(
-          bundle.files.keys, contains('generated/enums/user_role_enum.dart'));
+      // Verify files map contains expected structured paths — one merged
+      // barrel per category (not one file per type) is the point of this
+      // generator: see
+      // docs/superpowers/specs/2026-09-25-generator-barrel-file-merge-design.md.
       expect(bundle.files.keys, contains('generated/enums/enums.dart'));
-      expect(bundle.files.keys,
-          contains('generated/inputs/user_filter_input.dart'));
       expect(bundle.files.keys, contains('generated/inputs/inputs.dart'));
-      expect(bundle.files.keys,
-          contains('generated/models/user_response_model.dart'));
       expect(bundle.files.keys, contains('generated/models/models.dart'));
       expect(
           bundle.files.keys, contains('generated/get_user/get_user_var.dart'));
@@ -58,19 +55,17 @@ void main() {
       expect(bundle.files.keys, contains('generated/schema.gql.dart'));
 
       // Verify Enum File
-      final enumContent = bundle.files['generated/enums/user_role_enum.dart']!;
+      final enumContent = bundle.files['generated/enums/enums.dart']!;
       expect(enumContent, contains('@JsonEnum()'));
       expect(enumContent, contains('enum UserRole'));
 
       // Verify Input File
-      final inputContent =
-          bundle.files['generated/inputs/user_filter_input.dart']!;
+      final inputContent = bundle.files['generated/inputs/inputs.dart']!;
       expect(inputContent, contains('@freezed'));
       expect(inputContent, contains(r'UserFilterInput with _$UserFilterInput'));
 
       // Verify Model File
-      final modelContent =
-          bundle.files['generated/models/user_response_model.dart']!;
+      final modelContent = bundle.files['generated/models/models.dart']!;
       expect(modelContent, contains('@freezed'));
       expect(modelContent,
           contains(r'UserResponseModel with _$UserResponseModel'));
@@ -187,7 +182,7 @@ void main() {
         inputPath: 'schema.graphql',
       );
 
-      final enumContent = bundle.files['generated/enums/user_role_enum.dart']!;
+      final enumContent = bundle.files['generated/enums/enums.dart']!;
       expect(enumContent, contains('@JsonValue("ADMIN_USER")'));
       expect(enumContent, contains('adminUser,'));
       expect(enumContent, contains('@JsonValue("STANDARD_USER")'));
@@ -216,8 +211,6 @@ void main() {
         inputPath: 'schema.gql',
       );
 
-      expect(bundle.files.keys,
-          contains('generated/models/user_response_model.dart'));
       expect(bundle.files.keys, contains('generated/models/models.dart'));
       expect(bundle.files.keys, contains('generated/schema.gql.dart'));
     });
@@ -334,21 +327,22 @@ void main() {
         inputPath: 'schema.graphql',
       );
 
-      // A model whose fields are all plain scalars needs none of the
-      // shared barrels.
-      final plainModel =
-          bundle.files['generated/models/plain_thing_model.dart']!;
-      expect(plainModel, isNot(contains("enums.dart")));
-      expect(plainModel, isNot(contains("inputs.dart")));
-      expect(plainModel, isNot(contains("import 'models.dart';")));
-
-      // A model referencing an enum and another model type needs exactly
-      // those two barrels, not inputs.
-      final userModel =
-          bundle.files['generated/models/user_response_model.dart']!;
-      expect(userModel, contains("import '../enums/enums.dart';"));
-      expect(userModel, contains("import 'models.dart';"));
-      expect(userModel, isNot(contains("inputs.dart")));
+      // Every model now lives in one merged models.dart, so "does this
+      // reference an enum/input/model" is a property of the FILE as a
+      // whole (does ANY model in it reference something outside its own
+      // category), not of each individual class.
+      final modelsFile = bundle.files['generated/models/models.dart']!;
+      // UserResponse references the UserRole enum, so the file needs the
+      // enums barrel...
+      expect(modelsFile, contains("import '../enums/enums.dart';"));
+      // ...but nothing here references an input type.
+      expect(modelsFile, isNot(contains("inputs.dart")));
+      // UserResponse's other reference (Address) is now just another class
+      // in this SAME file — no self-import of models.dart is ever needed.
+      expect(modelsFile, isNot(contains("import 'models.dart';")));
+      expect(modelsFile, contains('class PlainThingModel'));
+      expect(modelsFile, contains('class AddressModel'));
+      expect(modelsFile, contains('class UserResponseModel'));
     });
 
     test(
@@ -485,13 +479,12 @@ void main() {
         packageName: 'my_app',
       );
 
-      final userModel =
-          bundle.files['generated/models/user_response_model.dart']!;
+      final modelsFile = bundle.files['generated/models/models.dart']!;
       expect(
-          userModel,
+          modelsFile,
           contains(
               "import 'package:my_app/graphql/generated/enums/enums.dart';"));
-      expect(userModel, isNot(contains("import '../")));
+      expect(modelsFile, isNot(contains("import '../")));
     });
 
     test('supports Upload scalar in operations and maps to MultipartFile', () {
@@ -587,11 +580,7 @@ void main() {
       // inputPath: lib/api/custom_schema.graphql -> inputDir: lib/api
       // sharedDir: lib/shared/generated -> relative: ../shared/generated
       expect(schemaBundle.files.keys,
-          contains('../shared/generated/enums/status_enum.dart'));
-      expect(schemaBundle.files.keys,
           contains('../shared/generated/enums/enums.dart'));
-      expect(schemaBundle.files.keys,
-          contains('../shared/generated/models/user_model.dart'));
       expect(schemaBundle.files.keys,
           contains('../shared/generated/models/models.dart'));
       expect(schemaBundle.files.keys,
@@ -713,9 +702,9 @@ void main() {
       // freezedDataClass), so a bare contains('name') would spuriously
       // match that instead of the schema's own `name` field — assert on
       // the declaration text precisely enough to tell them apart.
-      expect(bundle1.files['generated/models/user_model.dart'],
+      expect(bundle1.files['generated/models/models.dart'],
           isNot(contains('required String name')));
-      expect(bundle2.files['generated/models/user_model.dart'],
+      expect(bundle2.files['generated/models/models.dart'],
           contains('required String name'));
     });
 
@@ -905,13 +894,15 @@ void main() {
         schemaPath: 'lib/schema.graphql',
       );
 
-      expect(paths, contains('generated/enums/status_enum.dart'));
       expect(paths, contains('generated/enums/enums.dart'));
-      expect(paths, contains('generated/inputs/create_user_input.dart'));
       expect(paths, contains('generated/inputs/inputs.dart'));
-      expect(paths, contains('generated/models/user_model.dart'));
       expect(paths, contains('generated/models/models.dart'));
       expect(paths, contains('generated/schema.gql.dart'));
+      // No per-type paths (generated/enums/status_enum.dart, etc.) — the
+      // schema file's declared output set stops growing with its type
+      // count, which is the actual fix. See the "computeOutputPaths Tests"
+      // group's other two tests for the end-to-end proof.
+      expect(paths, hasLength(4));
     });
 
     test('computes fast expected output paths for operation file', () {
@@ -1079,7 +1070,7 @@ void main() {
         inputPath: 'lib/graphql/schema.graphql',
       );
 
-      final countryModel = bundle.files['generated/models/country_model.dart']!;
+      final countryModel = bundle.files['generated/models/models.dart']!;
       expect(countryModel, contains('required String code'));
       expect(countryModel, contains('required String name'));
       expect(countryModel,
@@ -1121,8 +1112,7 @@ void main() {
       expect(opModel, isNot(contains('emoji')));
       expect(opModel, isNot(contains('native')));
 
-      expect(bundle.files.containsKey('generated/models/country_model.dart'),
-          isFalse);
+      expect(bundle.files.containsKey('generated/models/models.dart'), isFalse);
     });
 
     test(
@@ -1310,7 +1300,7 @@ void main() {
         inputPath: 'lib/graphql/schema.graphql',
       );
 
-      final itemModel = bundle.files['generated/models/item_model.dart']!;
+      final itemModel = bundle.files['generated/models/models.dart']!;
       expect(itemModel,
           contains("@JsonKey(name: 'class') required String gClass"));
       expect(itemModel,
@@ -1324,7 +1314,7 @@ void main() {
           contains(
               "@JsonKey(name: '__typename', includeIfNull: false) String? typename"));
 
-      final filterInput = bundle.files['generated/inputs/filter_input.dart']!;
+      final filterInput = bundle.files['generated/inputs/inputs.dart']!;
       expect(
           filterInput,
           contains(
@@ -1335,7 +1325,7 @@ void main() {
       // Input classes are sent to the server, never a response — no typename.
       expect(filterInput, isNot(contains('typename')));
 
-      final statusEnum = bundle.files['generated/enums/status_enum.dart']!;
+      final statusEnum = bundle.files['generated/enums/enums.dart']!;
       expect(statusEnum, contains('@JsonValue("DEFAULT")\n  gDefault'));
     });
 
@@ -1363,7 +1353,7 @@ void main() {
         inputPath: 'lib/graphql/schema.graphql',
       );
 
-      final readingModel = bundle.files['generated/models/reading_model.dart']!;
+      final readingModel = bundle.files['generated/models/models.dart']!;
       expect(readingModel, contains("@JsonKey(name: 'int') required int gInt"));
       expect(readingModel,
           contains("@JsonKey(name: 'double') required double gDouble"));

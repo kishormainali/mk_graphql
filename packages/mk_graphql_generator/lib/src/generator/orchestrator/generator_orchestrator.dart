@@ -128,7 +128,7 @@ class GeneratorOrchestrator {
     };
 
     // -----------------------------------------------------------------------
-    // 1. Enums  → {sharedPrefix}enums/{snake}_enum.dart
+    // 1. Enums  → {sharedPrefix}enums/enums.dart
     // -----------------------------------------------------------------------
     if (isSchemaFile && parsed.enumTypes.isNotEmpty) {
       final enumFilesMap = SchemaGenerator.generateEnums(parsed.enumTypes);
@@ -138,7 +138,7 @@ class GeneratorOrchestrator {
     }
 
     // -----------------------------------------------------------------------
-    // 2. Inputs → {sharedPrefix}inputs/{snake}.dart
+    // 2. Inputs → {sharedPrefix}inputs/inputs.dart
     // -----------------------------------------------------------------------
     if (isSchemaFile && parsed.inputTypes.isNotEmpty) {
       final inputFilesMap = SchemaGenerator.generateInputs(
@@ -155,9 +155,9 @@ class GeneratorOrchestrator {
       });
     }
 
-    // Names of the shared `{Type}Model` classes exported from the schema's
+    // Names of the shared `{Type}Model` classes declared in the schema's
     // models.dart barrel (excludes root Query/Mutation/Subscription, which
-    // never get their own generated model file). Only consumed by the
+    // never get their own generated model class). Only consumed by the
     // schema-driven client extension (item 4) — per-operation response
     // models (item 5) are always scoped to the operation's own selection.
     final sharedModelNames = <String>{
@@ -167,7 +167,7 @@ class GeneratorOrchestrator {
     };
 
     // -----------------------------------------------------------------------
-    // 3. Object types → {sharedPrefix}models/{snake}_model.dart
+    // 3. Object types → {sharedPrefix}models/models.dart
     //
     // These full-schema `{Type}Model` classes are consumed only by the
     // schema-driven client extension below (item 4), which fetches an

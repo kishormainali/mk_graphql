@@ -952,6 +952,15 @@ void main() {
         'rejects, aborting that build before models.dart/inputs.dart got '
         'rewritten and leaving them on disk with a stale export list', () {
       const schemaV1 = '''
+        enum Status {
+          DRAFT
+          PUBLISHED
+        }
+
+        input SearchInput {
+          query: String!
+        }
+
         type Post {
           id: ID!
           title: String!
@@ -971,6 +980,15 @@ void main() {
       // adding a second object type to the already-populated `models`
       // category — and saves.
       const schemaV2 = '''
+        enum Status {
+          DRAFT
+          PUBLISHED
+        }
+
+        input SearchInput {
+          query: String!
+        }
+
         type Post {
           id: ID!
           title: String!
@@ -999,6 +1017,10 @@ void main() {
           contains('class PostModel'));
       expect(bundle.files['generated/models/models.dart'],
           contains('class AuthorModel'));
+      expect(
+          bundle.files['generated/enums/enums.dart'], contains('enum Status'));
+      expect(bundle.files['generated/inputs/inputs.dart'],
+          contains('class SearchInput'));
     });
 
     test(
@@ -1038,12 +1060,13 @@ void main() {
         schemaPath: 'lib/schema.graphql',
       );
 
-      expect(declaredAtWatchStart.containsAll(bundle.files.keys), isFalse,
+      expect(bundle.files.keys.toSet().difference(declaredAtWatchStart),
+          equals({'generated/enums/enums.dart'}),
           reason: 'this is the documented 0→1 limitation — enums/enums.dart '
-              'appearing for the first time is expected to be undeclared '
-              'here; if this assertion starts failing, the limitation has '
-              'actually been closed and docs/CHANGELOG need updating, not '
-              'this test');
+              'appearing for the first time is expected to be the ONLY '
+              'undeclared output here; if this assertion starts failing, '
+              'either the limitation has been closed (update docs/CHANGELOG) '
+              'or something else became undeclared unexpectedly (a real bug)');
       expect(bundle.files.keys, contains('generated/enums/enums.dart'));
     });
   });

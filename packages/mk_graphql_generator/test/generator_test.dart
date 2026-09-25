@@ -951,6 +951,111 @@ void main() {
 
       expect(paths, isEmpty);
     });
+
+    test(
+        'growing an already-populated category during a live watch session '
+        'never produces an output outside what was declared when the '
+        'builder started — this is the actual bug this generator once had: '
+        'a schema gaining a type while `build_runner watch` kept running '
+        'used to write an undeclared per-type file, which build_runner '
+        'rejects, aborting that build before models.dart/inputs.dart got '
+        'rewritten and leaving them on disk with a stale export list', () {
+      const schemaV1 = '''
+        type Post {
+          id: ID!
+          title: String!
+        }
+      ''';
+      // What MkGraphQLBuilder's factory computes once, at watch-session
+      // start, from the schema's content at that moment — this is what
+      // build_runner's Builder.buildExtensions declares as the schema
+      // file's allowed outputs for the rest of that watch session.
+      final declaredAtWatchStart = GeneratorOrchestrator.computeOutputPaths(
+        content: schemaV1,
+        inputPath: 'lib/schema.graphql',
+        schemaPath: 'lib/schema.graphql',
+      ).toSet();
+
+      // The developer edits schema.graphql while watch is still running —
+      // adding a second object type to the already-populated `models`
+      // category — and saves.
+      const schemaV2 = '''
+        type Post {
+          id: ID!
+          title: String!
+        }
+
+        type Author {
+          id: ID!
+          name: String!
+        }
+      ''';
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schemaV2,
+        inputPath: 'lib/schema.graphql',
+        schemaPath: 'lib/schema.graphql',
+      );
+
+      // Every real output must already have been declared at watch start —
+      // nothing new for build_runner to reject.
+      expect(declaredAtWatchStart.containsAll(bundle.files.keys), isTrue,
+          reason: 'undeclared outputs: '
+              '${bundle.files.keys.toSet().difference(declaredAtWatchStart)}');
+
+      // And the merged barrel genuinely contains both types — the bug's
+      // actual symptom was a barrel missing the new type's export.
+      expect(bundle.files['generated/models/models.dart'],
+          contains('class PostModel'));
+      expect(bundle.files['generated/models/models.dart'],
+          contains('class AuthorModel'));
+    });
+
+    test(
+        'a category\'s first-ever type appearing during a live watch '
+        'session is a known, accepted limitation this fix does not close — '
+        'unlike growing an already-populated category, this still needs a '
+        'watch restart, and this test exists so that remains true and '
+        'documented rather than silently assumed', () {
+      const schemaV1 = '''
+        type Post {
+          id: ID!
+          title: String!
+        }
+      ''';
+      final declaredAtWatchStart = GeneratorOrchestrator.computeOutputPaths(
+        content: schemaV1,
+        inputPath: 'lib/schema.graphql',
+        schemaPath: 'lib/schema.graphql',
+      ).toSet();
+
+      // The schema's first-ever enum appears — a brand new category, not
+      // an addition to one that already existed at watch start.
+      const schemaV2 = '''
+        type Post {
+          id: ID!
+          title: String!
+        }
+
+        enum Status {
+          DRAFT
+          PUBLISHED
+        }
+      ''';
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schemaV2,
+        inputPath: 'lib/schema.graphql',
+        schemaPath: 'lib/schema.graphql',
+      );
+
+      expect(declaredAtWatchStart.containsAll(bundle.files.keys), isFalse,
+          reason:
+              'this is the documented 0→1 limitation — enums/enums.dart '
+              'appearing for the first time is expected to be undeclared '
+              'here; if this assertion starts failing, the limitation has '
+              'actually been closed and docs/CHANGELOG need updating, not '
+              'this test');
+      expect(bundle.files.keys, contains('generated/enums/enums.dart'));
+    });
   });
 
   group('Shared vs Partial Models Tests', () {

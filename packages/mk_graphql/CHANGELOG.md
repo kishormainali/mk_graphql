@@ -1,3 +1,7 @@
+## Unreleased
+
+- **New**: `llms.txt` and `llms-full.txt` (per the [llmstxt.org](https://llmstxt.org) convention), published alongside the package so an AI coding agent integrating `mk_graphql` into a consuming app has a self-contained reference — `llms-full.txt` inlines setup, auth wiring, caching, pagination, and common-mistakes guidance without requiring the rest of the monorepo.
+
 ## 1.2.1-dev.5
 
 - **Fix**: `GraphQLClient(defaultHeaders: ...)` can now override the transport's built-in `Accept` and `Content-Type` headers — previously they were silently ignored, because the headers only reached the request as the `Dio`'s base options, which the link's own per-request headers beat. `defaultHeaders` are now passed to `DioLink` (and to `AuthLink`'s internal refresh client) directly. A default `Content-Type` still never breaks a multipart upload: `DioLink` now strips it case-insensitively before Dio sets the boundary header.

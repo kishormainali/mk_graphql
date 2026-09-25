@@ -7,6 +7,8 @@ A clean, modern, simplified GraphQL client for Dart and Flutter with normalized 
 
 📖 **[Full documentation](../../docs/README.md)** — client API, link pipeline, caching internals, and pagination guides.
 
+🤖 **AI coding agent?** See [`llms.txt`](llms.txt) / [`llms-full.txt`](llms-full.txt) — a self-contained integration reference designed to be read directly from the published package.
+
 ---
 
 ## ✨ Features

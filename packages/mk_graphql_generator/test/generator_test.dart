@@ -1048,8 +1048,7 @@ void main() {
       );
 
       expect(declaredAtWatchStart.containsAll(bundle.files.keys), isFalse,
-          reason:
-              'this is the documented 0→1 limitation — enums/enums.dart '
+          reason: 'this is the documented 0→1 limitation — enums/enums.dart '
               'appearing for the first time is expected to be undeclared '
               'here; if this assertion starts failing, the limitation has '
               'actually been closed and docs/CHANGELOG need updating, not '

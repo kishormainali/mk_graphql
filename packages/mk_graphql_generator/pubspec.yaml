@@ -1,6 +1,6 @@
 name: mk_graphql_generator
 description: Fast build_runner generator for mk_graphql. Generates Freezed data models, operations, variables, fragments, and combiner queries into .gql.dart files.
-version: 1.2.1-dev.2
+version: 1.2.1-dev.3
 
 homepage: https://github.com/kishormainali/mk_graphql
 repository: https://github.com/kishormainali/mk_graphql/tree/main/packages/mk_graphql_generator

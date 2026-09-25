@@ -1,6 +1,7 @@
 import 'package:test/test.dart';
 import 'package:mk_graphql_generator/src/cache/generator_cache.dart';
 import 'package:mk_graphql_generator/src/generator/orchestrator/generator_orchestrator.dart';
+import 'package:mk_graphql_generator/src/generator/schema/schema_generator.dart';
 
 void main() {
   group('GeneratorOrchestrator Tests with Structured Folders & Extensions', () {
@@ -1232,6 +1233,139 @@ void main() {
 
       final statusEnum = bundle.files['generated/enums/status_enum.dart']!;
       expect(statusEnum, contains('@JsonValue("DEFAULT")\n  gDefault'));
+    });
+
+    test(
+        'a field named after a Dart core type (int/double/bool/num) maps to '
+        'g{Name} — using the raw name would shadow that type for the whole '
+        'class (e.g. `final double double;` fails to compile since `double` '
+        'no longer resolves to dart:core\'s type inside the class body)', () {
+      const schema = '''
+        type Reading {
+          id: ID!
+          int: Int!
+          double: Float!
+          bool: Boolean!
+          num: Int!
+        }
+
+        type Query {
+          getReading(id: ID!): Reading
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      final readingModel = bundle.files['generated/models/reading_model.dart']!;
+      expect(readingModel, contains("@JsonKey(name: 'int') required int gInt"));
+      expect(readingModel,
+          contains("@JsonKey(name: 'double') required double gDouble"));
+      expect(
+          readingModel, contains("@JsonKey(name: 'bool') required bool gBool"));
+      expect(readingModel, contains("@JsonKey(name: 'num') required int gNum"));
+    });
+
+    test(
+        'safeIdentifier escapes every keyword Dart\'s own scanner recognizes '
+        '(package:_fe_analyzer_shared\'s Keyword table: reserved words, '
+        'built-in identifiers, and pseudo keywords) — a future Dart release '
+        'adding one should fail this test rather than silently generate '
+        'broken code', () {
+      // Source of truth: every lower-cased lexeme in
+      // _fe_analyzer_shared's `Keyword` table (`Function` is the sole
+      // entry that's capitalized — generated field names are always
+      // camelCased with a lowercase first letter, so it can never
+      // collide and is excluded here).
+      const dartScannerKeywords = {
+        'abstract',
+        'as',
+        'assert',
+        'async',
+        'augment',
+        'await',
+        'base',
+        'break',
+        'case',
+        'catch',
+        'class',
+        'const',
+        'continue',
+        'covariant',
+        'default',
+        'deferred',
+        'do',
+        'dynamic',
+        'else',
+        'enum',
+        'export',
+        'extends',
+        'extension',
+        'external',
+        'factory',
+        'false',
+        'final',
+        'finally',
+        'for',
+        'get',
+        'hide',
+        'if',
+        'implements',
+        'import',
+        'in',
+        'inout',
+        'interface',
+        'is',
+        'late',
+        'library',
+        'mixin',
+        'native',
+        'new',
+        'null',
+        'of',
+        'on',
+        'operator',
+        'out',
+        'part',
+        'patch',
+        'required',
+        'rethrow',
+        'return',
+        'sealed',
+        'set',
+        'show',
+        'source',
+        'static',
+        'super',
+        'switch',
+        'sync',
+        'this',
+        'throw',
+        'true',
+        'try',
+        'typedef',
+        'var',
+        'void',
+        'when',
+        'while',
+        'with',
+        'yield',
+      };
+
+      for (final keyword in dartScannerKeywords) {
+        expect(SchemaGenerator.safeIdentifier(keyword), startsWith('g'),
+            reason: '"$keyword" must be escaped');
+      }
+
+      // Not scanner keywords, but a field named after one would shadow
+      // that dart:core type for its whole enclosing class — see the
+      // "Dart core type" test above.
+      for (final coreType in ['int', 'double', 'bool', 'num']) {
+        expect(SchemaGenerator.safeIdentifier(coreType), startsWith('g'),
+            reason: '"$coreType" must be escaped');
+      }
     });
 
     test(

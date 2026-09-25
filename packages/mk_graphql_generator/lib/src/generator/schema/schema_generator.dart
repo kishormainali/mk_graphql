@@ -40,20 +40,26 @@ class FieldTypeInfo {
 }
 
 class SchemaGenerator {
+  /// Every schema enum, declared inline in one `enums/enums.dart` — not one
+  /// file per enum plus a barrel of exports. This keeps the schema file's
+  /// declared build_runner outputs fixed regardless of how many enums the
+  /// schema defines; see
+  /// docs/superpowers/specs/2026-09-25-generator-barrel-file-merge-design.md.
+  /// Enums need no `part` directive — `@JsonEnum()`/`@JsonValue(...)` are
+  /// consumed at runtime by json_annotation and by *other* classes'
+  /// generated `.g.dart`, never by a companion file of their own.
   static Map<String, String> generateEnums(List<EnumTypeDefinitionNode> enums) {
-    final result = <String, String>{};
-    final enumExports = <String>[];
+    if (enums.isEmpty) return const {};
+
+    final buffer = StringBuffer();
+    buffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
+    buffer.writeln('// ignore_for_file: type=lint');
+    buffer.writeln(
+        "import 'package:freezed_annotation/freezed_annotation.dart';");
+    buffer.writeln();
 
     for (final enumDef in enums) {
       final name = enumDef.name.value.pascalCase;
-      final fileName = '${enumDef.name.value.snakeCase}_enum.dart';
-      final buffer = StringBuffer();
-
-      buffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
-      buffer.writeln('// ignore_for_file: type=lint');
-      buffer.writeln(
-          "import 'package:freezed_annotation/freezed_annotation.dart';");
-      buffer.writeln();
       buffer.writeln(codegen.emitSpec(codegen.jsonEnum(
         name: name,
         values: {
@@ -62,24 +68,18 @@ class SchemaGenerator {
             val.name.value: _toDartEnumValue(val.name.value),
         },
       )));
-
-      result['enums/$fileName'] = buffer.toString();
-      enumExports.add("export '$fileName';");
     }
 
-    if (enumExports.isNotEmpty) {
-      final barrelBuffer = StringBuffer();
-      barrelBuffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
-      barrelBuffer.writeln('// ignore_for_file: type=lint');
-      for (final exp in enumExports) {
-        barrelBuffer.writeln(exp);
-      }
-      result['enums/enums.dart'] = barrelBuffer.toString();
-    }
-
-    return result;
+    return {'enums/enums.dart': buffer.toString()};
   }
 
+  /// Every schema input type, declared inline in one `inputs/inputs.dart`
+  /// with a single shared `part 'inputs.freezed.dart'; part 'inputs.g.dart';`
+  /// pair — not one file per input plus a barrel of exports. Same rationale
+  /// as [generateEnums]. An input referencing another input type needs no
+  /// import at all now — both live in this same file — unlike an input
+  /// referencing an enum, which is still a genuine cross-file (cross-
+  /// category) reference to `enums/enums.dart`.
   static Map<String, String> generateInputs(
     List<InputObjectTypeDefinitionNode> inputs,
     Set<String> enumNames,
@@ -89,17 +89,16 @@ class SchemaGenerator {
     String? packageName,
     String generatedDir = '',
   }) {
-    final result = <String, String>{};
-    final inputExports = <String>[];
+    if (inputs.isEmpty) return const {};
+
+    var needsEnumImport = false;
+    final classBuffers = <StringBuffer>[];
 
     for (final inputDef in inputs) {
       final name = inputDef.name.value.pascalCase;
-      final fileName = '${inputDef.name.value.snakeCase}.dart';
-      final buffer = StringBuffer();
+      final classBuffer = StringBuffer();
 
       final fields = <String, FieldTypeInfo>{};
-      var needsEnumImport = false;
-      var needsInputImport = false;
       for (final field in inputDef.fields) {
         final rawFieldName = field.name.value;
         final typeInfo = parseFieldType(field.type,
@@ -116,57 +115,48 @@ class SchemaGenerator {
         );
         final baseType = _unwrapDartType(typeInfo.dartType);
         if (enumNames.contains(baseType)) needsEnumImport = true;
-        if (inputNames.contains(baseType) && baseType != name)
-          needsInputImport = true;
       }
-
-      buffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
-      buffer.writeln('// ignore_for_file: type=lint');
-      buffer.writeln(
-          "import 'package:freezed_annotation/freezed_annotation.dart';");
-      if (needsInputImport) {
-        buffer.writeln("import '${resolveGeneratedImport(
-          packageName: packageName,
-          generatedDir: generatedDir,
-          targetSubDir: 'inputs',
-          targetFile: 'inputs.dart',
-          fromSubDir: 'inputs',
-        )}';");
-      }
-      if (needsEnumImport) {
-        buffer.writeln("import '${resolveGeneratedImport(
-          packageName: packageName,
-          generatedDir: generatedDir,
-          targetSubDir: 'enums',
-          targetFile: 'enums.dart',
-          fromSubDir: 'inputs',
-        )}';");
-      }
-      buffer.writeln();
-      buffer.writeln("part '${inputDef.name.value.snakeCase}.freezed.dart';");
-      buffer.writeln("part '${inputDef.name.value.snakeCase}.g.dart';");
-      buffer.writeln();
 
       _generateFreezedClass(
-          className: name, fields: fields, buffer: buffer, isInput: true);
-
-      result['inputs/$fileName'] = buffer.toString();
-      inputExports.add("export '$fileName';");
+          className: name, fields: fields, buffer: classBuffer, isInput: true);
+      classBuffers.add(classBuffer);
     }
 
-    if (inputExports.isNotEmpty) {
-      final barrelBuffer = StringBuffer();
-      barrelBuffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
-      barrelBuffer.writeln('// ignore_for_file: type=lint');
-      for (final exp in inputExports) {
-        barrelBuffer.writeln(exp);
-      }
-      result['inputs/inputs.dart'] = barrelBuffer.toString();
+    final buffer = StringBuffer();
+    buffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
+    buffer.writeln('// ignore_for_file: type=lint');
+    buffer.writeln(
+        "import 'package:freezed_annotation/freezed_annotation.dart';");
+    if (needsEnumImport) {
+      buffer.writeln("import '${resolveGeneratedImport(
+        packageName: packageName,
+        generatedDir: generatedDir,
+        targetSubDir: 'enums',
+        targetFile: 'enums.dart',
+        fromSubDir: 'inputs',
+      )}';");
+    }
+    buffer.writeln();
+    buffer.writeln("part 'inputs.freezed.dart';");
+    buffer.writeln("part 'inputs.g.dart';");
+    buffer.writeln();
+    for (final classBuffer in classBuffers) {
+      buffer.write(classBuffer);
     }
 
-    return result;
+    return {'inputs/inputs.dart': buffer.toString()};
   }
 
+  /// Every non-root (`Query`/`Mutation`/`Subscription` excluded) schema
+  /// object type, declared inline in one `models/models.dart` with a single
+  /// shared `part 'models.freezed.dart'; part 'models.g.dart';` pair — not
+  /// one file per type plus a barrel of exports. Same rationale as
+  /// [generateEnums]. A model referencing another model type — including
+  /// itself, e.g. `type User { friend: User }` — needs no import at all
+  /// now: every model lives in this same file, so the old
+  /// `baseType != className` self-reference guard (and the whole
+  /// models.dart-importing-itself case it guarded against) no longer
+  /// applies to anything and is removed rather than kept as dead code.
   static Map<String, String> generateObjectTypes(
     List<ObjectTypeDefinitionNode> objects,
     Set<String> enumNames,
@@ -176,25 +166,24 @@ class SchemaGenerator {
     String? packageName,
     String generatedDir = '',
   }) {
-    final result = <String, String>{};
-    final modelExports = <String>[];
+    final filtered = objects
+        .where((o) =>
+            o.name.value != 'Query' &&
+            o.name.value != 'Mutation' &&
+            o.name.value != 'Subscription')
+        .toList();
+    if (filtered.isEmpty) return const {};
 
-    for (final obj in objects) {
-      if (obj.name.value == 'Query' ||
-          obj.name.value == 'Mutation' ||
-          obj.name.value == 'Subscription') {
-        continue;
-      }
+    var needsEnumImport = false;
+    var needsInputImport = false;
+    final classBuffers = <StringBuffer>[];
 
+    for (final obj in filtered) {
       final rawName = obj.name.value;
       final className = '${rawName.pascalCase}Model';
-      final fileName = '${rawName.snakeCase}_model.dart';
-      final buffer = StringBuffer();
+      final classBuffer = StringBuffer();
 
       final fields = <String, FieldTypeInfo>{};
-      var needsEnumImport = false;
-      var needsInputImport = false;
-      var needsModelImport = false;
       for (final field in obj.fields) {
         final rawFieldName = field.name.value;
         final typeInfo = parseFieldType(field.type,
@@ -206,64 +195,45 @@ class SchemaGenerator {
         final baseType = _unwrapDartType(typeInfo.dartType);
         if (enumNames.contains(baseType)) needsEnumImport = true;
         if (inputNames.contains(baseType)) needsInputImport = true;
-        if (baseType.endsWith('Model') && baseType != className)
-          needsModelImport = true;
       }
-
-      buffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
-      buffer.writeln('// ignore_for_file: type=lint');
-      buffer.writeln(
-          "import 'package:freezed_annotation/freezed_annotation.dart';");
-      if (needsModelImport) {
-        buffer.writeln("import '${resolveGeneratedImport(
-          packageName: packageName,
-          generatedDir: generatedDir,
-          targetSubDir: 'models',
-          targetFile: 'models.dart',
-          fromSubDir: 'models',
-        )}';");
-      }
-      if (needsEnumImport) {
-        buffer.writeln("import '${resolveGeneratedImport(
-          packageName: packageName,
-          generatedDir: generatedDir,
-          targetSubDir: 'enums',
-          targetFile: 'enums.dart',
-          fromSubDir: 'models',
-        )}';");
-      }
-      if (needsInputImport) {
-        buffer.writeln("import '${resolveGeneratedImport(
-          packageName: packageName,
-          generatedDir: generatedDir,
-          targetSubDir: 'inputs',
-          targetFile: 'inputs.dart',
-          fromSubDir: 'models',
-        )}';");
-      }
-      buffer.writeln();
-      buffer.writeln("part '${rawName.snakeCase}_model.freezed.dart';");
-      buffer.writeln("part '${rawName.snakeCase}_model.g.dart';");
-      buffer.writeln();
 
       _generateFreezedClass(
-          className: className, fields: fields, buffer: buffer);
-
-      result['models/$fileName'] = buffer.toString();
-      modelExports.add("export '$fileName';");
+          className: className, fields: fields, buffer: classBuffer);
+      classBuffers.add(classBuffer);
     }
 
-    if (modelExports.isNotEmpty) {
-      final barrelBuffer = StringBuffer();
-      barrelBuffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
-      barrelBuffer.writeln('// ignore_for_file: type=lint');
-      for (final exp in modelExports) {
-        barrelBuffer.writeln(exp);
-      }
-      result['models/models.dart'] = barrelBuffer.toString();
+    final buffer = StringBuffer();
+    buffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
+    buffer.writeln('// ignore_for_file: type=lint');
+    buffer.writeln(
+        "import 'package:freezed_annotation/freezed_annotation.dart';");
+    if (needsEnumImport) {
+      buffer.writeln("import '${resolveGeneratedImport(
+        packageName: packageName,
+        generatedDir: generatedDir,
+        targetSubDir: 'enums',
+        targetFile: 'enums.dart',
+        fromSubDir: 'models',
+      )}';");
+    }
+    if (needsInputImport) {
+      buffer.writeln("import '${resolveGeneratedImport(
+        packageName: packageName,
+        generatedDir: generatedDir,
+        targetSubDir: 'inputs',
+        targetFile: 'inputs.dart',
+        fromSubDir: 'models',
+      )}';");
+    }
+    buffer.writeln();
+    buffer.writeln("part 'models.freezed.dart';");
+    buffer.writeln("part 'models.g.dart';");
+    buffer.writeln();
+    for (final classBuffer in classBuffers) {
+      buffer.write(classBuffer);
     }
 
-    return result;
+    return {'models/models.dart': buffer.toString()};
   }
 
   static FieldTypeInfo parseFieldType(

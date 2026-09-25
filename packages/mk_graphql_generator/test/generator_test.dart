@@ -1330,6 +1330,122 @@ void main() {
     });
 
     test(
+        'an input type referencing another input type needs no import — '
+        'both live in the same merged inputs.dart', () {
+      const schema = '''
+        input AddressInput {
+          street: String!
+        }
+
+        input CreateUserInput {
+          name: String!
+          address: AddressInput
+        }
+
+        type Query {
+          placeholder: String
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      final inputsFile = bundle.files['generated/inputs/inputs.dart']!;
+      // Class names are the GraphQL input type name as-is (pascalCase, no
+      // suffix appended) — unlike models, which get "Model" appended.
+      expect(inputsFile, contains('class AddressInput'));
+      expect(inputsFile, contains('class CreateUserInput'));
+      expect(inputsFile, isNot(contains("import 'inputs.dart';")));
+    });
+
+    test(
+        'a models.dart import flag is unioned across every model in the '
+        'file, not just the last one generated — only the third of three '
+        'models here references an enum, and the file must still import '
+        'enums.dart', () {
+      const schema = '''
+        enum Status {
+          ACTIVE
+          INACTIVE
+        }
+
+        type Alpha {
+          id: ID!
+        }
+
+        type Beta {
+          id: ID!
+        }
+
+        type Gamma {
+          id: ID!
+          status: Status!
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      final modelsFile = bundle.files['generated/models/models.dart']!;
+      expect(modelsFile, contains("import '../enums/enums.dart';"));
+      expect(modelsFile, contains('class AlphaModel'));
+      expect(modelsFile, contains('class BetaModel'));
+      expect(modelsFile, contains('class GammaModel'));
+    });
+
+    test(
+        'a self-referencing model type compiles with no self-import — the '
+        'field and its declaring class are in the same merged models.dart', () {
+      const schema = '''
+        type User {
+          id: ID!
+          name: String!
+          friend: User
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      final modelsFile = bundle.files['generated/models/models.dart']!;
+      expect(modelsFile, contains('class UserModel'));
+      expect(modelsFile, contains('UserModel? friend'));
+      expect(modelsFile, isNot(contains("import 'models.dart';")));
+    });
+
+    test(
+        'an enum-only schema (no inputs, no non-root object types) merges '
+        'correctly and produces no inputs.dart or models.dart at all', () {
+      const schema = '''
+        enum Status {
+          ACTIVE
+          INACTIVE
+        }
+
+        type Query {
+          status: Status
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      expect(bundle.files.keys, contains('generated/enums/enums.dart'));
+      expect(
+          bundle.files.keys, isNot(contains('generated/inputs/inputs.dart')));
+      expect(
+          bundle.files.keys, isNot(contains('generated/models/models.dart')));
+    });
+
+    test(
         'a field named after a Dart core type (int/double/bool/num) maps to '
         'g{Name} — using the raw name would shadow that type for the whole '
         'class (e.g. `final double double;` fails to compile since `double` '

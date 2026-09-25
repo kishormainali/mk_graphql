@@ -1,4 +1,4 @@
-## Unreleased
+## 1.2.1-dev.2
 
 - **Fix**: a GraphQL field named after a Dart core type (`int`, `double`, `bool`, or `num`) — e.g. `double: Float!` — now maps to `g{Name}` (`gDouble`, `@JsonKey(name: 'double')`) the same way a real reserved keyword already did. Previously it generated e.g. `final double double;`, which fails to compile: declaring a field named `double` shadows the *type* `double` for the rest of the enclosing class, so any other field actually typed `double` in that same class stops resolving too.
 - **Fix**: the reserved-keyword list is now generated from `package:_fe_analyzer_shared`'s own `Keyword` table (every reserved word, built-in identifier, and pseudo keyword Dart's scanner recognizes), so fields named `base`, `sealed`, `when`, `augment`, `inout`, `out`, `patch`, or `source` are now also escaped — previously only a partial hand-maintained list was covered.

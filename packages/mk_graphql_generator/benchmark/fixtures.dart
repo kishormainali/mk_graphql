@@ -7,7 +7,8 @@ library;
 const enumCount = 30;
 const inputCount = 30;
 const typeCount = 30;
-const sharedReturnTypeCount = 5; // deliberately small: many fields return the same few types
+const sharedReturnTypeCount =
+    5; // deliberately small: many fields return the same few types
 const queryFieldCount = 30;
 const mutationFieldCount = 30;
 

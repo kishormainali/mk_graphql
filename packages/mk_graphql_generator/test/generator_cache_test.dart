@@ -47,11 +47,14 @@ void main() {
         'entry that was only ever written', () async {
       GeneratorCache.maxMemoryEntries = 2;
 
-      GeneratorCache.put('lru_touch_a', GeneratedBundle(files: {'a.dart': 'a'}));
-      GeneratorCache.put('lru_touch_b', GeneratedBundle(files: {'a.dart': 'b'}));
+      GeneratorCache.put(
+          'lru_touch_a', GeneratedBundle(files: {'a.dart': 'a'}));
+      GeneratorCache.put(
+          'lru_touch_b', GeneratedBundle(files: {'a.dart': 'b'}));
       // Touch "a" so it becomes the most-recently-used of the two.
       GeneratorCache.get('lru_touch_a');
-      GeneratorCache.put('lru_touch_c', GeneratedBundle(files: {'a.dart': 'c'}));
+      GeneratorCache.put(
+          'lru_touch_c', GeneratedBundle(files: {'a.dart': 'c'}));
 
       final dir = Directory(GeneratorCache.cacheDir);
       if (dir.existsSync()) dir.deleteSync(recursive: true);

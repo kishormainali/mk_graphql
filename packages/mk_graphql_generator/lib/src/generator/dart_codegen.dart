@@ -338,7 +338,8 @@ String emitOperationMethodTriple({
   required String varsClassName,
   required Map<String, FieldTypeInfo> args,
 }) {
-  final refetchMethodName = 'refetch${methodName[0].toUpperCase()}${methodName.substring(1)}';
+  final refetchMethodName =
+      'refetch${methodName[0].toUpperCase()}${methodName.substring(1)}';
   final buffer = StringBuffer();
   for (final method in [
     clientExtensionMethod(

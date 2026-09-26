@@ -706,7 +706,8 @@ class GeneratorOrchestrator {
             packageName,
             p.join(ctx.resolvedSharedDir, 'inputs', 'inputs.dart'),
             fragmentsDirPath);
-        final fragEnumsImport = _importFor(packageName,
+        final fragEnumsImport = _importFor(
+            packageName,
             p.join(ctx.resolvedSharedDir, 'enums', 'enums.dart'),
             fragmentsDirPath);
         if (_referencesAny(fragmentsBody, ctx.inputNames))
@@ -819,8 +820,8 @@ class GeneratorOrchestrator {
         rootBarrelBuffer.writeln("export '$barrelModelImport';");
       }
       if (ops.fragmentClassNames.isNotEmpty) {
-        final barrelFragmentsExport = _importFor(
-            packageName, ops.fragmentsFilePath, targetGeneratedDir);
+        final barrelFragmentsExport =
+            _importFor(packageName, ops.fragmentsFilePath, targetGeneratedDir);
         rootBarrelBuffer.writeln("export '$barrelFragmentsExport';");
       }
     }
@@ -929,7 +930,8 @@ class GeneratorOrchestrator {
 
     final results = await Future.wait([
       for (final bucket in buckets)
-        if (bucket.isNotEmpty) Isolate.run(() => _formatFilesOnThisIsolate(bucket)),
+        if (bucket.isNotEmpty)
+          Isolate.run(() => _formatFilesOnThisIsolate(bucket)),
     ]);
 
     final formattedFiles = <String, String>{};

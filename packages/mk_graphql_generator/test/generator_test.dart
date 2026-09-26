@@ -488,7 +488,8 @@ void main() {
       expect(modelsFile, isNot(contains("import '../")));
     });
 
-    test('supports Upload scalar in operations and maps to MultipartFile', () async {
+    test('supports Upload scalar in operations and maps to MultipartFile',
+        () async {
       const schemaContent = '''
         scalar Upload
 
@@ -997,7 +998,8 @@ void main() {
         'a schema gaining a type while `build_runner watch` kept running '
         'used to write an undeclared per-type file, which build_runner '
         'rejects, aborting that build before models.dart/inputs.dart got '
-        'rewritten and leaving them on disk with a stale export list', () async {
+        'rewritten and leaving them on disk with a stale export list',
+        () async {
       const schemaV1 = '''
         enum Status {
           DRAFT
@@ -1469,7 +1471,8 @@ void main() {
 
     test(
         'a self-referencing model type compiles with no self-import — the '
-        'field and its declaring class are in the same merged models.dart', () async {
+        'field and its declaring class are in the same merged models.dart',
+        () async {
       const schema = '''
         type User {
           id: ID!
@@ -1491,7 +1494,8 @@ void main() {
 
     test(
         'an enum-only schema (no inputs, no non-root object types) merges '
-        'correctly and produces no inputs.dart or models.dart at all', () async {
+        'correctly and produces no inputs.dart or models.dart at all',
+        () async {
       const schema = '''
         enum Status {
           ACTIVE
@@ -1519,7 +1523,8 @@ void main() {
         'a field named after a Dart core type (int/double/bool/num) maps to '
         'g{Name} — using the raw name would shadow that type for the whole '
         'class (e.g. `final double double;` fails to compile since `double` '
-        'no longer resolves to dart:core\'s type inside the class body)', () async {
+        'no longer resolves to dart:core\'s type inside the class body)',
+        () async {
       const schema = '''
         type Reading {
           id: ID!

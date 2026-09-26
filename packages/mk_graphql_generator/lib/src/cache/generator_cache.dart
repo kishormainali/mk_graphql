@@ -138,8 +138,8 @@ class GeneratorCache {
           .toList();
       if (entries.length <= maxDiskEntries) return;
 
-      entries.sort((a, b) =>
-          a.statSync().modified.compareTo(b.statSync().modified));
+      entries.sort(
+          (a, b) => a.statSync().modified.compareTo(b.statSync().modified));
       final toDelete = entries.length - maxDiskEntries;
       for (var i = 0; i < toDelete; i++) {
         try {

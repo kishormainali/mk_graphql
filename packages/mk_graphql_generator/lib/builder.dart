@@ -145,10 +145,9 @@ class MkGraphQLBuilder implements Builder {
     }
 
     final cachedParse = _parsedCache[inputId.path];
-    final preParsed =
-        cachedParse != null && cachedParse.content == content
-            ? cachedParse.parsed
-            : null;
+    final preParsed = cachedParse != null && cachedParse.content == content
+        ? cachedParse.parsed
+        : null;
 
     final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
       content: content,

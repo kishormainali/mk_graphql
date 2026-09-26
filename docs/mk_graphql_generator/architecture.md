@@ -6,19 +6,20 @@ For contributors working on `mk_graphql_generator` itself. See [Generated Output
 
 ```
 builder.dart (MkGraphQLBuilder)
-  └─ GeneratorOrchestrator.generateForGraphQLFile(...)
-       ├─ ParsedGraphQLDocument.parse(content)     [parser/graphql_parser.dart]
-       ├─ SchemaGenerator.*                        [generator/schema/schema_generator.dart]
-       │    ├─ generateEnums
-       │    ├─ generateInputs
-       │    └─ generateObjectTypes
-       ├─ SchemaUtilityGenerator.generateSchemaUtilities  [generator/schema/schema_utility_generator.dart]
-       └─ per-operation generation (inline in the orchestrator)
-            ├─ _resolveSelectionModel / _collectEffectiveFields / _collectUsedFragmentNames
-            └─ _generateFreezedClassWithTypes / _generateFreezedRequest
+  └─ await GeneratorOrchestrator.generateForGraphQLFile(...)   [async — see below]
+       ├─ _resolveGenerationContext   — paths, isSchemaFile, schema-derived name sets
+       ├─ _generateSchemaSharedFiles  — SchemaGenerator.generateEnums/generateInputs/generateObjectTypes
+       ├─ _generateSchemaUtilitiesCode — SchemaUtilityGenerator.generateSchemaUtilities
+       ├─ _generateOperations         — per-operation generation
+       │    ├─ _resolveSelectionModel / _collectEffectiveFields / _collectUsedFragmentNames
+       │    └─ _generateFreezedClassWithTypes / _generateFreezedRequest
+       ├─ _generateRootBarrel         — assembles generated/{fileName}.gql.dart
+       └─ _formatGeneratedFiles       — DartFormatter, parallelized across isolates (see below)
 ```
 
-`MkGraphQLBuilder` (`lib/builder.dart`) is the `build_runner` entry point. Its `buildExtensions` are computed once at builder construction time by scanning `lib/` and calling `GeneratorOrchestrator.computeOutputPaths` for every `.graphql`/`.gql` file — this lets `build_runner` know the full output set cheaply, without running actual code generation, before any `build()` call happens.
+`generateForGraphQLFile` is `async` (`Future<GeneratedBundle>`) — required so `_formatGeneratedFiles` can fan formatting out across isolates (each `DartFormatter.format()` call is independent, pure, and CPU-bound; profiling found it dominates generation time, and a schema's root barrel — which bundles every schema utility and every operation's client extension method into one file — is disproportionately expensive to format). `computeOutputPaths` stays synchronous; it never formats anything.
+
+`MkGraphQLBuilder` (`lib/builder.dart`) is the `build_runner` entry point. Its `buildExtensions` are computed once at builder construction time by scanning `lib/` and calling `GeneratorOrchestrator.computeOutputPaths` for every `.graphql`/`.gql` file — this lets `build_runner` know the full output set cheaply, without running actual code generation, before any `build()` call happens. The factory also caches the `ParsedGraphQLDocument` it parses during that scan (keyed by exact file content, so a `watch`-mode edit correctly invalidates it) and threads it into both `computeOutputPaths` and the later `generateForGraphQLFile` call via their `preParsed` parameter — avoiding parsing the same unchanged file twice per build.
 
 ## `ParsedGraphQLDocument` (parser)
 
@@ -43,7 +44,7 @@ Generates, for every field on `Query`/`Mutation`, a `{Field}Vars`/`{Field}Req` p
 
 ## `GeneratorOrchestrator` (per-file, per-operation generation)
 
-The largest and most important file (`lib/src/generator/orchestrator/generator_orchestrator.dart`). Its entry point `generateForGraphQLFile` handles both schema files (delegates to `SchemaGenerator`) and operation files (the per-operation logic below), returning a `GeneratedBundle` — a `Map<String, String>` of relative output path → formatted Dart source.
+The largest and most important file (`lib/src/generator/orchestrator/generator_orchestrator.dart`). Its entry point `generateForGraphQLFile` handles both schema files (delegates to `SchemaGenerator`) and operation files (the per-operation logic below), returning a `Future<GeneratedBundle>` — a `Map<String, String>` of relative output path → formatted Dart source. Internally it's six named stages run in sequence (see the pipeline diagram above) rather than one large method — each stage takes the specific inputs it needs (mostly a shared `_GenContext` record built once by `_resolveGenerationContext`) and either returns its own output or mutates the shared `files` map in place, matching the rest of the codebase's imperative style.
 
 ### Response model resolution — the core design decision
 
@@ -63,6 +64,8 @@ A request's wire document must be self-contained: if an operation spreads `...Us
 ## Caching (`GeneratorCache`)
 
 Two-tier (in-memory `Map`, then on-disk JSON under `.dart_tool/mk_graphql_cache/`) cache keyed by SHA-256 of `{cache format version}::{input path}::{input content}::{schema content}::{shared_dir}::{package name}`. Bump `GeneratorCache.version` whenever a change to the orchestrator/schema generator would produce different output for the *same* inputs — otherwise stale disk-cached bundles from a previous generator version would be served unchanged. `useCache: false` (or the [`cache: false`](configuration.md#cache) `build.yaml` option) bypasses both tiers.
+
+The in-memory map is LRU-capped (`GeneratorCache.maxMemoryEntries`, default 500) — insertion order doubles as recency order, `get` re-inserts a hit at the end, and `put` evicts the oldest entry once over the cap — so a long-lived `build_runner watch` session doesn't grow it forever. The on-disk cache is pruned by mtime past `GeneratorCache.maxDiskEntries` (default 2000), checked every 200 writes rather than on every single one, to amortize the directory-listing cost.
 
 ## Testing
 

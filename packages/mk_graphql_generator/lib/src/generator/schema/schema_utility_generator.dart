@@ -36,6 +36,16 @@ class SchemaUtilityGenerator {
     final unionTypeMap = {for (final u in unionTypes) u.name.value: u};
     final interfaceTypeMap = {for (final i in interfaceTypes) i.name.value: i};
 
+    // Memoizes buildSelectionSetNode's top-level result by return type name
+    // across this loop — a CRUD-style schema commonly has several
+    // query/mutation fields returning the same object type (e.g. `User`
+    // from both `updateUser` and `createUser`), which would otherwise each
+    // re-walk that type's whole subtree from scratch. Keyed by the
+    // unwrapped type name (buildSelectionSetNode itself resolves `User`,
+    // `User!`, and `[User!]!` to the same subtree), scoped to this one
+    // generateSchemaUtilities call only.
+    final selectionSetMemo = <String, SelectionSetNode?>{};
+
     // 1. Generate Vars & Req classes for each schema operation field
     for (final item in allFields) {
       final field = item.field;
@@ -83,15 +93,18 @@ class SchemaUtilityGenerator {
           .map((a) => '${a.name.value}: \$${a.name.value}')
           .join(', ');
 
-      final selSetNode = buildSelectionSetNode(
-        type: field.type,
-        objectTypesByName: objectTypeMap,
-        unionTypesByName: unionTypeMap,
-        interfaceTypesByName: interfaceTypeMap,
-        enumNames: enumNames,
-        scalarNames: scalarNames,
-        customScalars: customScalars,
-      );
+      final returnTypeName = SchemaGenerator.unwrapTypeName(field.type);
+      final selSetNode = selectionSetMemo.containsKey(returnTypeName)
+          ? selectionSetMemo[returnTypeName]
+          : selectionSetMemo[returnTypeName] = buildSelectionSetNode(
+              type: field.type,
+              objectTypesByName: objectTypeMap,
+              unionTypesByName: unionTypeMap,
+              interfaceTypesByName: interfaceTypeMap,
+              enumNames: enumNames,
+              scalarNames: scalarNames,
+              customScalars: customScalars,
+            );
       final selSetStr = selSetNode != null
           ? ' ${printNode(selSetNode).replaceAll(RegExp(r'\s+'), ' ')}'
           : '';
@@ -139,40 +152,13 @@ class SchemaUtilityGenerator {
               dartType: argTypeInfo.dartType),
         );
       }
-      final refetchMethodName = 'refetch$opName';
-
-      for (final method in [
-        codegen.clientExtensionMethod(
-          kind: 'future',
-          methodName: methodName,
-          modelClassName: returnTypeModel,
-          reqClassName: reqClassName,
-          varsClassName: varsClassName,
-          args: fieldArgs,
-          docComment: 'Future execution for $methodName',
-        ),
-        codegen.clientExtensionMethod(
-          kind: 'stream',
-          methodName: '${methodName}Stream',
-          modelClassName: returnTypeModel,
-          reqClassName: reqClassName,
-          varsClassName: varsClassName,
-          args: fieldArgs,
-          docComment: 'Stream execution for $methodName',
-        ),
-        codegen.clientExtensionMethod(
-          kind: 'refetch',
-          methodName: refetchMethodName,
-          modelClassName: returnTypeModel,
-          reqClassName: reqClassName,
-          varsClassName: varsClassName,
-          args: fieldArgs,
-          docComment:
-              'Refetch execution for $methodName (bypasses cache with FetchPolicy.networkOnly)',
-        ),
-      ]) {
-        buffer.writeln(codegen.emitSpec(method));
-      }
+      buffer.writeln(codegen.emitOperationMethodTriple(
+        methodName: methodName,
+        modelClassName: returnTypeModel,
+        reqClassName: reqClassName,
+        varsClassName: varsClassName,
+        args: fieldArgs,
+      ));
     }
 
     buffer.writeln('}');

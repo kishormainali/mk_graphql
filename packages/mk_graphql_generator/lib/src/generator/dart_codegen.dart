@@ -323,3 +323,54 @@ Method clientExtensionMethod({
     ])
     ..body = Code('return $kind($reqClassName($callArgs));'));
 }
+
+/// Emits the standard `future`/`Stream`/`refetch` trio of
+/// [clientExtensionMethod]s for one operation, already rendered and
+/// newline-joined — the shape every operation's client extension needs,
+/// whether it comes from a `.graphql` feature file (per-operation) or from
+/// a schema field (`SchemaUtilityGenerator`'s per-Query/Mutation-field
+/// utilities). Both call sites built this same three-method list and
+/// doc-comment wording independently before this was factored out.
+String emitOperationMethodTriple({
+  required String methodName,
+  required String modelClassName,
+  required String reqClassName,
+  required String varsClassName,
+  required Map<String, FieldTypeInfo> args,
+}) {
+  final refetchMethodName = 'refetch${methodName[0].toUpperCase()}${methodName.substring(1)}';
+  final buffer = StringBuffer();
+  for (final method in [
+    clientExtensionMethod(
+      kind: 'future',
+      methodName: methodName,
+      modelClassName: modelClassName,
+      reqClassName: reqClassName,
+      varsClassName: varsClassName,
+      args: args,
+      docComment: 'Future execution for $methodName',
+    ),
+    clientExtensionMethod(
+      kind: 'stream',
+      methodName: '${methodName}Stream',
+      modelClassName: modelClassName,
+      reqClassName: reqClassName,
+      varsClassName: varsClassName,
+      args: args,
+      docComment: 'Stream execution for $methodName',
+    ),
+    clientExtensionMethod(
+      kind: 'refetch',
+      methodName: refetchMethodName,
+      modelClassName: modelClassName,
+      reqClassName: reqClassName,
+      varsClassName: varsClassName,
+      args: args,
+      docComment:
+          'Refetch execution for $methodName (bypasses cache with FetchPolicy.networkOnly)',
+    ),
+  ]) {
+    buffer.writeln(emitSpec(method));
+  }
+  return buffer.toString();
+}

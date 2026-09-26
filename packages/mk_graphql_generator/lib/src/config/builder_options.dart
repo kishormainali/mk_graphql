@@ -24,7 +24,18 @@ class MkGraphQLConfig {
     this.scalars = const {},
   });
 
-  factory MkGraphQLConfig.fromOptions(BuilderOptions options) {
+  /// [autoDetectedSchemaPath] lets a caller that already walked `lib/` for
+  /// its own purposes (e.g. [MkGraphQLBuilder]'s factory, which scans it for
+  /// every `.graphql`/`.gql` file anyway) hand over the schema file it found
+  /// instead of this doing its own separate recursive [Directory.listSync]
+  /// of the same tree — two full scans back-to-back in the same builder
+  /// construction otherwise. Only consulted when `schema_path` isn't set in
+  /// `build.yaml`; still falls back to [_findSchemaPath]'s own scan when
+  /// omitted, so any other caller (tests included) keeps working unchanged.
+  factory MkGraphQLConfig.fromOptions(
+    BuilderOptions options, {
+    String? autoDetectedSchemaPath,
+  }) {
     final cfg = options.config;
 
     // 1. Schema path
@@ -33,7 +44,7 @@ class MkGraphQLConfig {
     if (rawSchemaPath is String && rawSchemaPath.trim().isNotEmpty) {
       schemaPath = p.normalize(rawSchemaPath.trim());
     } else {
-      schemaPath = _findSchemaPath();
+      schemaPath = autoDetectedSchemaPath ?? _findSchemaPath();
     }
 
     // 2. Shared directory

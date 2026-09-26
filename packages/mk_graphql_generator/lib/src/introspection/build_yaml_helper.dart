@@ -9,7 +9,11 @@ String? findSchemaPathFromBuildYaml({String buildYamlPath = 'build.yaml'}) {
   try {
     final content = file.readAsStringSync();
     return parseSchemaPathFromYaml(content);
-  } catch (_) {
+  } catch (e) {
+    stderr.writeln(
+      'mk_graphql_generator: could not read/parse $buildYamlPath ($e) — '
+      'falling back as if no schema_path were configured there.',
+    );
     return null;
   }
 }
@@ -53,7 +57,12 @@ String? parseSchemaPathFromYaml(String yamlContent) {
         if (path != null) return path;
       }
     }
-  } catch (_) {}
+  } catch (e) {
+    stderr.writeln(
+      'mk_graphql_generator: malformed build.yaml content ($e) — falling '
+      'back as if no schema_path were configured there.',
+    );
+  }
 
   return null;
 }

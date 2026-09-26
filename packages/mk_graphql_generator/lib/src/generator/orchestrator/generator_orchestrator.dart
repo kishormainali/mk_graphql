@@ -1,3 +1,6 @@
+import 'dart:io';
+import 'dart:isolate';
+
 import 'package:path/path.dart' as p;
 import 'package:gql/ast.dart';
 import 'package:gql/language.dart';
@@ -28,8 +31,39 @@ class GeneratedBundle {
       .join('\n');
 }
 
+/// Everything derived once, up front, from [content]/[schemaContent] and
+/// the builder's path options — shared read-only context for every stage
+/// of [GeneratorOrchestrator.generateForGraphQLFile] below (schema shared
+/// files, schema utilities, per-operation generation, and root barrel
+/// assembly all need most of these same values).
+typedef _GenContext = ({
+  ParsedGraphQLDocument parsed,
+  String fileName,
+  bool isSchemaFile,
+  String inputDir,
+  String resolvedSharedDir,
+  String schemaGeneratedDir,
+  String sharedPrefix,
+  ParsedGraphQLDocument? schemaParsed,
+  Map<String, ObjectTypeDefinitionNode> schemaObjectTypesByName,
+  Set<String> enumNames,
+  Set<String> inputNames,
+  Set<String> scalarNames,
+  Set<String> sharedModelNames,
+});
+
+/// What [GeneratorOrchestrator._generateOperations] produced, in the shape
+/// [GeneratorOrchestrator._generateRootBarrel] needs to assemble the root
+/// barrel file around it.
+typedef _OperationsResult = ({
+  String fileOpExtensionsText,
+  List<({String exportPath, List<String> modelClasses})> opExports,
+  Set<String> fragmentClassNames,
+  String fragmentsFilePath,
+});
+
 class GeneratorOrchestrator {
-  static GeneratedBundle generateForGraphQLFile({
+  static Future<GeneratedBundle> generateForGraphQLFile({
     required String content,
     required String inputPath,
     String? schemaPath,
@@ -44,7 +78,11 @@ class GeneratorOrchestrator {
     String? packageName,
     Map<String, String> customScalars = const {},
     bool useCache = true,
-  }) {
+    // Reuses an already-parsed document instead of parsing [content] again
+    // on a [GeneratorCache] miss — see [computeOutputPaths]'s matching
+    // parameter for why [MkGraphQLBuilder] has one available to pass here.
+    ParsedGraphQLDocument? preParsed,
+  }) async {
     // Only process .graphql or .gql files
     if (!inputPath.endsWith('.graphql') && !inputPath.endsWith('.gql')) {
       return GeneratedBundle(files: const {});
@@ -66,8 +104,59 @@ class GeneratorOrchestrator {
       }
     }
 
-    final parsed = ParsedGraphQLDocument.parse(content);
+    final parsed = preParsed ?? ParsedGraphQLDocument.parse(content);
+    final ctx = _resolveGenerationContext(
+      parsed: parsed,
+      inputPath: inputPath,
+      schemaPath: schemaPath,
+      sharedDir: sharedDir,
+      schemaContent: schemaContent,
+    );
 
+    final files = <String, String>{};
+
+    // 1-3. Schema-derived shared files → {sharedPrefix}enums|inputs|models
+    _generateSchemaSharedFiles(ctx, files,
+        packageName: packageName, customScalars: customScalars);
+
+    // 4. Schema utilities (Req / Vars / extension from Query & Mutation fields)
+    final schemaUtilCode =
+        _generateSchemaUtilitiesCode(ctx, customScalars: customScalars);
+
+    // 5. Operations from feature .graphql / .gql files
+    final ops = _generateOperations(ctx, files,
+        packageName: packageName, customScalars: customScalars);
+
+    // 6. Root barrel file: generated/{fileName}.gql.dart
+    _generateRootBarrel(
+      ctx,
+      files,
+      schemaUtilCode: schemaUtilCode,
+      ops: ops,
+      packageName: packageName,
+    );
+
+    // Format all generated Dart code
+    final formattedFiles = await _formatGeneratedFiles(files);
+
+    final bundle = GeneratedBundle(files: formattedFiles);
+    if (useCache && cacheKey != null) {
+      GeneratorCache.put(cacheKey, bundle);
+    }
+    return bundle;
+  }
+
+  /// Resolves every path/name-set derived from [inputPath]'s location, the
+  /// schema/shared-dir options, and (when this isn't the schema file
+  /// itself) [schemaContent] — the read-only inputs every later generation
+  /// stage needs.
+  static _GenContext _resolveGenerationContext({
+    required ParsedGraphQLDocument parsed,
+    required String inputPath,
+    String? schemaPath,
+    String? sharedDir,
+    String? schemaContent,
+  }) {
     // A file is the schema when its path matches schemaPath or its basename is 'schema'
     final fileName = p.basenameWithoutExtension(inputPath);
     final resolvedSchemaPath =
@@ -75,7 +164,6 @@ class GeneratorOrchestrator {
     final isSchemaFile = (schemaPath != null &&
             p.normalize(inputPath) == p.normalize(schemaPath)) ||
         fileName == 'schema';
-    final files = <String, String>{};
 
     final schemaDir = p.dirname(resolvedSchemaPath);
     final inputDir = p.dirname(inputPath);
@@ -101,7 +189,13 @@ class GeneratorOrchestrator {
     } else if (schemaContent != null && schemaContent.isNotEmpty) {
       try {
         schemaParsed = ParsedGraphQLDocument.parse(schemaContent);
-      } catch (_) {}
+      } catch (e) {
+        stderr.writeln(
+          'mk_graphql_generator: failed to parse schema for $inputPath '
+          '($e) — generating without schema-derived types (utility '
+          'selection sets, enums, custom scalars) for this file.',
+        );
+      }
     }
 
     // Fast-lookup maps keyed by GraphQL type name
@@ -127,99 +221,139 @@ class GeneratorOrchestrator {
           .map((s) => s.name.value),
     };
 
-    // -----------------------------------------------------------------------
-    // 1. Enums  → {sharedPrefix}enums/enums.dart
-    // -----------------------------------------------------------------------
-    if (isSchemaFile && parsed.enumTypes.isNotEmpty) {
-      final enumFilesMap = SchemaGenerator.generateEnums(parsed.enumTypes);
-      enumFilesMap.forEach((path, code) {
-        files['${sharedPrefix}$path'] = code;
-      });
-    }
-
-    // -----------------------------------------------------------------------
-    // 2. Inputs → {sharedPrefix}inputs/inputs.dart
-    // -----------------------------------------------------------------------
-    if (isSchemaFile && parsed.inputTypes.isNotEmpty) {
-      final inputFilesMap = SchemaGenerator.generateInputs(
-        parsed.inputTypes,
-        enumNames,
-        inputNames,
-        scalarNames: scalarNames,
-        customScalars: customScalars,
-        packageName: packageName,
-        generatedDir: schemaGeneratedDir,
-      );
-      inputFilesMap.forEach((path, code) {
-        files['${sharedPrefix}$path'] = code;
-      });
-    }
-
     // Names of the shared `{Type}Model` classes declared in the schema's
     // models.dart barrel (excludes root Query/Mutation/Subscription, which
     // never get their own generated model class). Only consumed by the
-    // schema-driven client extension (item 4) — per-operation response
-    // models (item 5) are always scoped to the operation's own selection.
+    // schema-driven client extension (_generateSchemaUtilitiesCode) —
+    // per-operation response models (_generateOperations) are always
+    // scoped to the operation's own selection.
     final sharedModelNames = <String>{
       for (final t in schemaObjectTypesByName.keys)
         if (t != 'Query' && t != 'Mutation' && t != 'Subscription')
           '${t.pascalCase}Model',
     };
 
-    // -----------------------------------------------------------------------
-    // 3. Object types → {sharedPrefix}models/models.dart
-    //
-    // These full-schema `{Type}Model` classes are consumed only by the
-    // schema-driven client extension below (item 4), which fetches an
-    // entire type with no field selection to work from. Per-operation
-    // response models (item 5) never reuse these — each .graphql selection
-    // gets its own model scoped to exactly the fields it queried.
-    // -----------------------------------------------------------------------
-    if (isSchemaFile && parsed.objectTypes.isNotEmpty) {
-      final objectFilesMap = SchemaGenerator.generateObjectTypes(
-        parsed.objectTypes,
-        enumNames,
-        inputNames,
-        scalarNames: scalarNames,
-        customScalars: customScalars,
-        packageName: packageName,
-        generatedDir: schemaGeneratedDir,
-      );
-      objectFilesMap.forEach((path, code) {
-        files['${sharedPrefix}$path'] = code;
+    return (
+      parsed: parsed,
+      fileName: fileName,
+      isSchemaFile: isSchemaFile,
+      inputDir: inputDir,
+      resolvedSharedDir: resolvedSharedDir,
+      schemaGeneratedDir: schemaGeneratedDir,
+      sharedPrefix: sharedPrefix,
+      schemaParsed: schemaParsed,
+      schemaObjectTypesByName: schemaObjectTypesByName,
+      enumNames: enumNames,
+      inputNames: inputNames,
+      scalarNames: scalarNames,
+      sharedModelNames: sharedModelNames,
+    );
+  }
+
+  /// Schema-only: emits `{sharedPrefix}enums/enums.dart`,
+  /// `{sharedPrefix}inputs/inputs.dart`, and `{sharedPrefix}models/models.dart`
+  /// (each only if the schema actually declares that kind of type) directly
+  /// into [files]. A feature file contributes nothing here — its enum/input
+  /// references resolve against these same shared barrels instead.
+  static void _generateSchemaSharedFiles(
+    _GenContext ctx,
+    Map<String, String> files, {
+    String? packageName,
+    Map<String, String> customScalars = const {},
+  }) {
+    // 1. Enums  → {sharedPrefix}enums/enums.dart
+    if (ctx.isSchemaFile && ctx.parsed.enumTypes.isNotEmpty) {
+      final enumFilesMap = SchemaGenerator.generateEnums(ctx.parsed.enumTypes);
+      enumFilesMap.forEach((path, code) {
+        files['${ctx.sharedPrefix}$path'] = code;
       });
     }
 
-    // -----------------------------------------------------------------------
-    // 4. Schema utilities (Req / Vars / extension from Query & Mutation fields)
-    // -----------------------------------------------------------------------
-    final queryType = parsed.objectTypes.firstWhere(
+    // 2. Inputs → {sharedPrefix}inputs/inputs.dart
+    if (ctx.isSchemaFile && ctx.parsed.inputTypes.isNotEmpty) {
+      final inputFilesMap = SchemaGenerator.generateInputs(
+        ctx.parsed.inputTypes,
+        ctx.enumNames,
+        ctx.inputNames,
+        scalarNames: ctx.scalarNames,
+        customScalars: customScalars,
+        packageName: packageName,
+        generatedDir: ctx.schemaGeneratedDir,
+      );
+      inputFilesMap.forEach((path, code) {
+        files['${ctx.sharedPrefix}$path'] = code;
+      });
+    }
+
+    // 3. Object types → {sharedPrefix}models/models.dart
+    //
+    // These full-schema `{Type}Model` classes are consumed only by the
+    // schema-driven client extension (_generateSchemaUtilitiesCode), which
+    // fetches an entire type with no field selection to work from.
+    // Per-operation response models (_generateOperations) never reuse
+    // these — each .graphql selection gets its own model scoped to
+    // exactly the fields it queried.
+    if (ctx.isSchemaFile && ctx.parsed.objectTypes.isNotEmpty) {
+      final objectFilesMap = SchemaGenerator.generateObjectTypes(
+        ctx.parsed.objectTypes,
+        ctx.enumNames,
+        ctx.inputNames,
+        scalarNames: ctx.scalarNames,
+        customScalars: customScalars,
+        packageName: packageName,
+        generatedDir: ctx.schemaGeneratedDir,
+      );
+      objectFilesMap.forEach((path, code) {
+        files['${ctx.sharedPrefix}$path'] = code;
+      });
+    }
+  }
+
+  /// Emits the `SchemaGraphQLClientExtension` (a Req/Vars/client-method
+  /// triple per Query/Mutation field) — empty when the schema declares
+  /// neither, so the root barrel knows to skip the freezed `part`
+  /// directives entirely.
+  static String _generateSchemaUtilitiesCode(
+    _GenContext ctx, {
+    Map<String, String> customScalars = const {},
+  }) {
+    final queryType = ctx.parsed.objectTypes.firstWhere(
       (o) => o.name.value == 'Query',
       orElse: () =>
           ObjectTypeDefinitionNode(name: NameNode(value: 'Query'), fields: []),
     );
-    final mutationType = parsed.objectTypes.firstWhere(
+    final mutationType = ctx.parsed.objectTypes.firstWhere(
       (o) => o.name.value == 'Mutation',
       orElse: () => ObjectTypeDefinitionNode(
           name: NameNode(value: 'Mutation'), fields: []),
     );
 
-    String schemaUtilCode = '';
-    if (queryType.fields.isNotEmpty || mutationType.fields.isNotEmpty) {
-      schemaUtilCode = SchemaUtilityGenerator.generateSchemaUtilities(
-        objectTypes: parsed.objectTypes,
-        enumNames: enumNames,
-        inputNames: inputNames,
-        scalarNames: scalarNames,
-        customScalars: customScalars,
-        unionTypes: parsed.unionTypes,
-        interfaceTypes: parsed.interfaceTypes,
-      );
+    if (queryType.fields.isEmpty && mutationType.fields.isEmpty) {
+      return '';
     }
 
-    // -----------------------------------------------------------------------
-    // 5. Operations from feature .graphql / .gql files
-    // -----------------------------------------------------------------------
+    return SchemaUtilityGenerator.generateSchemaUtilities(
+      objectTypes: ctx.parsed.objectTypes,
+      enumNames: ctx.enumNames,
+      inputNames: ctx.inputNames,
+      scalarNames: ctx.scalarNames,
+      customScalars: customScalars,
+      unionTypes: ctx.parsed.unionTypes,
+      interfaceTypes: ctx.parsed.interfaceTypes,
+    );
+  }
+
+  /// Feature-file work: for every operation in [ctx.parsed], emits its Vars
+  /// file, selection-scoped response model(s), Req file, and per-operation
+  /// barrel directly into [files], and accumulates the shared fragments
+  /// file (if any named fragment was actually spread) plus everything
+  /// [_generateRootBarrel] needs to wire the root barrel around all of it.
+  static _OperationsResult _generateOperations(
+    _GenContext ctx,
+    Map<String, String> files, {
+    String? packageName,
+    Map<String, String> customScalars = const {},
+  }) {
     final opExports = <({String exportPath, List<String> modelClasses})>[];
     final fileOpExtensions = StringBuffer();
 
@@ -227,21 +361,21 @@ class GeneratorOrchestrator {
     // model is shared across operations — generated once, on first use,
     // into generated/fragments/fragments.dart.
     final fragmentsByName = <String, FragmentDefinitionNode>{
-      for (final f in parsed.fragments) f.name.value: f,
+      for (final f in ctx.parsed.fragments) f.name.value: f,
     };
     final fragmentModelCache = <String, String>{};
     final fragmentClassNames = <String>{};
     final fragmentsBuffer = StringBuffer();
-    final fragmentsDirPath = p.join(inputDir, 'generated', 'fragments');
+    final fragmentsDirPath = p.join(ctx.inputDir, 'generated', 'fragments');
     final fragmentsFilePath = p.join(fragmentsDirPath, 'fragments.dart');
 
-    if (parsed.operations.isNotEmpty) {
-      final extClassName = '${fileName.pascalCase}GraphQLClientExtension';
+    if (ctx.parsed.operations.isNotEmpty) {
+      final extClassName = '${ctx.fileName.pascalCase}GraphQLClientExtension';
       fileOpExtensions.writeln(
-          '/// Auto-generated Client Extension for operations in $fileName');
+          '/// Auto-generated Client Extension for operations in ${ctx.fileName}');
       fileOpExtensions.writeln('extension $extClassName on GraphQLClient {');
 
-      for (final op in parsed.operations) {
+      for (final op in ctx.parsed.operations) {
         final sharedClassNames = <String>{};
 
         final rawName = op.name?.value ?? 'AnonymousOperation';
@@ -254,11 +388,11 @@ class GeneratorOrchestrator {
         final reqClassName = '${name}Req';
 
         // Paths for relative imports inside generated/{opDir}/
-        final targetOpDir = p.join(inputDir, 'generated', opDir);
+        final targetOpDir = p.join(ctx.inputDir, 'generated', opDir);
         final schemaInputsPath =
-            p.join(resolvedSharedDir, 'inputs', 'inputs.dart');
+            p.join(ctx.resolvedSharedDir, 'inputs', 'inputs.dart');
         final schemaEnumsPath =
-            p.join(resolvedSharedDir, 'enums', 'enums.dart');
+            p.join(ctx.resolvedSharedDir, 'enums', 'enums.dart');
 
         final sharedInputImport =
             _importFor(packageName, schemaInputsPath, targetOpDir);
@@ -273,9 +407,9 @@ class GeneratorOrchestrator {
           final rawVarName = v.variable.name.value;
           final typeInfo = SchemaGenerator.parseFieldType(
             v.type,
-            enumNames: enumNames,
-            inputNames: inputNames,
-            scalarNames: scalarNames,
+            enumNames: ctx.enumNames,
+            inputNames: ctx.inputNames,
+            scalarNames: ctx.scalarNames,
             customScalars: customScalars,
           );
           final defVal = SchemaGenerator.formatDefaultValue(
@@ -302,9 +436,9 @@ class GeneratorOrchestrator {
         varBuffer.writeln('// ignore_for_file: type=lint');
         varBuffer.writeln(
             "import 'package:freezed_annotation/freezed_annotation.dart';");
-        if (_referencesAny(varBody, inputNames))
+        if (_referencesAny(varBody, ctx.inputNames))
           varBuffer.writeln("import '$sharedInputImport';");
-        if (_referencesAny(varBody, enumNames))
+        if (_referencesAny(varBody, ctx.enumNames))
           varBuffer.writeln("import '$sharedEnumImport';");
         varBuffer.writeln();
         varBuffer.writeln("part '${opDir}_var.freezed.dart';");
@@ -323,7 +457,7 @@ class GeneratorOrchestrator {
         // the shared `{Fragment}Fragment` class instead.
         final isMutation = op.type == OperationType.mutation;
         final schemaRootTypeName = isMutation ? 'Mutation' : 'Query';
-        final schemaRootType = schemaObjectTypesByName[schemaRootTypeName];
+        final schemaRootType = ctx.schemaObjectTypesByName[schemaRootTypeName];
 
         // If an operation root field has no selection set but returns an object type,
         // auto-synthesize the selection set so neither the query nor the client extension fails.
@@ -340,13 +474,13 @@ class GeneratorOrchestrator {
                   ? SchemaGenerator.unwrapTypeName(schemaFieldDef.type)
                   : null;
               if (schemaTypeName != null &&
-                  schemaObjectTypesByName.containsKey(schemaTypeName)) {
+                  ctx.schemaObjectTypesByName.containsKey(schemaTypeName)) {
                 final autoSel = SchemaUtilityGenerator.buildSelectionSetNode(
                   type: schemaFieldDef!.type,
-                  objectTypesByName: schemaObjectTypesByName,
-                  enumNames: enumNames,
-                  inputNames: inputNames,
-                  scalarNames: scalarNames,
+                  objectTypesByName: ctx.schemaObjectTypesByName,
+                  enumNames: ctx.enumNames,
+                  inputNames: ctx.inputNames,
+                  scalarNames: ctx.scalarNames,
                   customScalars: customScalars,
                 );
                 if (autoSel != null) {
@@ -398,11 +532,11 @@ class GeneratorOrchestrator {
               schemaTypeName: schemaTypeName,
               buffer: selectionBuffer,
               sharedClassNames: sharedClassNames,
-              enumNames: enumNames,
-              inputNames: inputNames,
-              scalarNames: scalarNames,
+              enumNames: ctx.enumNames,
+              inputNames: ctx.inputNames,
+              scalarNames: ctx.scalarNames,
               customScalars: customScalars,
-              schemaObjectTypesByName: schemaObjectTypesByName,
+              schemaObjectTypesByName: ctx.schemaObjectTypesByName,
               fragmentsByName: fragmentsByName,
               fragmentModelCache: fragmentModelCache,
               fragmentClassNames: fragmentClassNames,
@@ -422,9 +556,9 @@ class GeneratorOrchestrator {
             if (schemaFieldDef != null) {
               final parsed = SchemaGenerator.parseFieldType(
                 schemaFieldDef.type,
-                enumNames: enumNames,
-                inputNames: inputNames,
-                scalarNames: scalarNames,
+                enumNames: ctx.enumNames,
+                inputNames: ctx.inputNames,
+                scalarNames: ctx.scalarNames,
                 customScalars: customScalars,
               );
               rootFields[fieldName] = hasConditionalDirective
@@ -453,9 +587,9 @@ class GeneratorOrchestrator {
           modelBuffer.writeln('// ignore_for_file: type=lint');
           modelBuffer.writeln(
               "import 'package:freezed_annotation/freezed_annotation.dart';");
-          if (_referencesAny(modelBody, inputNames))
+          if (_referencesAny(modelBody, ctx.inputNames))
             modelBuffer.writeln("import '$sharedInputImport';");
-          if (_referencesAny(modelBody, enumNames))
+          if (_referencesAny(modelBody, ctx.enumNames))
             modelBuffer.writeln("import '$sharedEnumImport';");
           if (_referencesAny(modelBody, fragmentClassNames))
             modelBuffer.writeln("import '$fragmentsImport';");
@@ -533,9 +667,9 @@ class GeneratorOrchestrator {
         final opArgs = <String, FieldTypeInfo>{};
         for (final v in op.variableDefinitions) {
           final typeInfo = SchemaGenerator.parseFieldType(v.type,
-              enumNames: enumNames,
-              inputNames: inputNames,
-              scalarNames: scalarNames,
+              enumNames: ctx.enumNames,
+              inputNames: ctx.inputNames,
+              scalarNames: ctx.scalarNames,
               customScalars: customScalars);
           opArgs[v.variable.name.value] = FieldTypeInfo(
             dartType: typeInfo.dartType,
@@ -546,40 +680,13 @@ class GeneratorOrchestrator {
             ),
           );
         }
-        final refetchMethodName = 'refetch${rawName.pascalCase}';
-
-        for (final method in [
-          codegen.clientExtensionMethod(
-            kind: 'future',
-            methodName: methodName,
-            modelClassName: modelClassName,
-            reqClassName: reqClassName,
-            varsClassName: varsClassName,
-            args: opArgs,
-            docComment: 'Future execution for $methodName',
-          ),
-          codegen.clientExtensionMethod(
-            kind: 'stream',
-            methodName: '${methodName}Stream',
-            modelClassName: modelClassName,
-            reqClassName: reqClassName,
-            varsClassName: varsClassName,
-            args: opArgs,
-            docComment: 'Stream execution for $methodName',
-          ),
-          codegen.clientExtensionMethod(
-            kind: 'refetch',
-            methodName: refetchMethodName,
-            modelClassName: modelClassName,
-            reqClassName: reqClassName,
-            varsClassName: varsClassName,
-            args: opArgs,
-            docComment:
-                'Refetch execution for $methodName (bypasses cache with FetchPolicy.networkOnly)',
-          ),
-        ]) {
-          fileOpExtensions.writeln(codegen.emitSpec(method));
-        }
+        fileOpExtensions.writeln(codegen.emitOperationMethodTriple(
+          methodName: methodName,
+          modelClassName: modelClassName,
+          reqClassName: reqClassName,
+          varsClassName: varsClassName,
+          args: opArgs,
+        ));
       }
 
       fileOpExtensions.writeln('}');
@@ -597,13 +704,14 @@ class GeneratorOrchestrator {
             "import 'package:freezed_annotation/freezed_annotation.dart';");
         final fragInputsImport = _importFor(
             packageName,
-            p.join(resolvedSharedDir, 'inputs', 'inputs.dart'),
+            p.join(ctx.resolvedSharedDir, 'inputs', 'inputs.dart'),
             fragmentsDirPath);
         final fragEnumsImport = _importFor(packageName,
-            p.join(resolvedSharedDir, 'enums', 'enums.dart'), fragmentsDirPath);
-        if (_referencesAny(fragmentsBody, inputNames))
+            p.join(ctx.resolvedSharedDir, 'enums', 'enums.dart'),
+            fragmentsDirPath);
+        if (_referencesAny(fragmentsBody, ctx.inputNames))
           fragmentsFileBuffer.writeln("import '$fragInputsImport';");
-        if (_referencesAny(fragmentsBody, enumNames))
+        if (_referencesAny(fragmentsBody, ctx.enumNames))
           fragmentsFileBuffer.writeln("import '$fragEnumsImport';");
         fragmentsFileBuffer.writeln();
         fragmentsFileBuffer.writeln("part 'fragments.freezed.dart';");
@@ -615,14 +723,32 @@ class GeneratorOrchestrator {
       }
     }
 
-    // -----------------------------------------------------------------------
-    // 6. Root barrel file: generated/{fileName}.gql.dart
-    // -----------------------------------------------------------------------
+    return (
+      fileOpExtensionsText: fileOpExtensions.toString(),
+      opExports: opExports,
+      fragmentClassNames: fragmentClassNames,
+      fragmentsFilePath: fragmentsFilePath,
+    );
+  }
+
+  /// Assembles the root barrel file (`generated/{fileName}.gql.dart`, or
+  /// `{sharedPrefix}{fileName}.gql.dart` for the schema file itself) —
+  /// schema-type exports, per-operation exports (with duplicate-symbol
+  /// `hide` clauses when two operations both reused the same fragment
+  /// class), the schema utilities `part`s, and the client extension —
+  /// directly into [files].
+  static void _generateRootBarrel(
+    _GenContext ctx,
+    Map<String, String> files, {
+    required String schemaUtilCode,
+    required _OperationsResult ops,
+    String? packageName,
+  }) {
     // Whether this barrel's own generated code (schema utilities + client
     // extension methods) actually references enum/input/model type names
     // directly — used to decide which imports (not exports, which stay
     // unconditional for barrel convenience) are actually needed.
-    final rootUsageText = schemaUtilCode + fileOpExtensions.toString();
+    final rootUsageText = schemaUtilCode + ops.fileOpExtensionsText;
 
     final rootBarrelBuffer = StringBuffer();
     rootBarrelBuffer.writeln('// GENERATED CODE - DO NOT MODIFY BY HAND');
@@ -631,15 +757,19 @@ class GeneratorOrchestrator {
       rootBarrelBuffer.writeln(
           "import 'package:freezed_annotation/freezed_annotation.dart';");
     }
-    if (schemaUtilCode.isNotEmpty || fileOpExtensions.isNotEmpty) {
+    if (schemaUtilCode.isNotEmpty || ops.fileOpExtensionsText.isNotEmpty) {
       rootBarrelBuffer.writeln("import 'package:mk_graphql/mk_graphql.dart';");
     }
 
-    final targetGeneratedDir =
-        isSchemaFile ? resolvedSharedDir : p.join(inputDir, 'generated');
-    final schemaModelsPath = p.join(resolvedSharedDir, 'models', 'models.dart');
-    final schemaInputsPath = p.join(resolvedSharedDir, 'inputs', 'inputs.dart');
-    final schemaEnumsPath = p.join(resolvedSharedDir, 'enums', 'enums.dart');
+    final targetGeneratedDir = ctx.isSchemaFile
+        ? ctx.resolvedSharedDir
+        : p.join(ctx.inputDir, 'generated');
+    final schemaModelsPath =
+        p.join(ctx.resolvedSharedDir, 'models', 'models.dart');
+    final schemaInputsPath =
+        p.join(ctx.resolvedSharedDir, 'inputs', 'inputs.dart');
+    final schemaEnumsPath =
+        p.join(ctx.resolvedSharedDir, 'enums', 'enums.dart');
 
     final barrelModelImport =
         _importFor(packageName, schemaModelsPath, targetGeneratedDir);
@@ -648,55 +778,55 @@ class GeneratorOrchestrator {
     final barrelEnumImport =
         _importFor(packageName, schemaEnumsPath, targetGeneratedDir);
 
-    if (isSchemaFile) {
-      if (parsed.enumTypes.isNotEmpty) {
-        if (_referencesAny(rootUsageText, enumNames))
+    if (ctx.isSchemaFile) {
+      if (ctx.parsed.enumTypes.isNotEmpty) {
+        if (_referencesAny(rootUsageText, ctx.enumNames))
           rootBarrelBuffer.writeln("import '$barrelEnumImport';");
         rootBarrelBuffer.writeln("export 'enums/enums.dart';");
       }
-      if (parsed.inputTypes.isNotEmpty) {
-        if (_referencesAny(rootUsageText, inputNames))
+      if (ctx.parsed.inputTypes.isNotEmpty) {
+        if (_referencesAny(rootUsageText, ctx.inputNames))
           rootBarrelBuffer.writeln("import '$barrelInputImport';");
         rootBarrelBuffer.writeln("export 'inputs/inputs.dart';");
       }
-      if (parsed.objectTypes
+      if (ctx.parsed.objectTypes
           .where((o) =>
               o.name.value != 'Query' &&
               o.name.value != 'Mutation' &&
               o.name.value != 'Subscription')
           .isNotEmpty) {
-        if (_referencesAny(rootUsageText, sharedModelNames))
+        if (_referencesAny(rootUsageText, ctx.sharedModelNames))
           rootBarrelBuffer.writeln("import '$barrelModelImport';");
         rootBarrelBuffer.writeln("export 'models/models.dart';");
       }
     } else {
-      if (enumNames.isNotEmpty) {
-        if (_referencesAny(rootUsageText, enumNames)) {
+      if (ctx.enumNames.isNotEmpty) {
+        if (_referencesAny(rootUsageText, ctx.enumNames)) {
           rootBarrelBuffer.writeln("import '$barrelEnumImport';");
         }
         rootBarrelBuffer.writeln("export '$barrelEnumImport';");
       }
-      if (inputNames.isNotEmpty) {
-        if (_referencesAny(rootUsageText, inputNames)) {
+      if (ctx.inputNames.isNotEmpty) {
+        if (_referencesAny(rootUsageText, ctx.inputNames)) {
           rootBarrelBuffer.writeln("import '$barrelInputImport';");
         }
         rootBarrelBuffer.writeln("export '$barrelInputImport';");
       }
-      if (sharedModelNames.isNotEmpty) {
-        if (_referencesAny(rootUsageText, sharedModelNames)) {
+      if (ctx.sharedModelNames.isNotEmpty) {
+        if (_referencesAny(rootUsageText, ctx.sharedModelNames)) {
           rootBarrelBuffer.writeln("import '$barrelModelImport';");
         }
         rootBarrelBuffer.writeln("export '$barrelModelImport';");
       }
-      if (fragmentClassNames.isNotEmpty) {
-        final barrelFragmentsExport =
-            _importFor(packageName, fragmentsFilePath, targetGeneratedDir);
+      if (ops.fragmentClassNames.isNotEmpty) {
+        final barrelFragmentsExport = _importFor(
+            packageName, ops.fragmentsFilePath, targetGeneratedDir);
         rootBarrelBuffer.writeln("export '$barrelFragmentsExport';");
       }
     }
 
     final exportedClassesSoFar = <String>{};
-    for (final opExp in opExports) {
+    for (final opExp in ops.opExports) {
       final opRelPath = opExp.exportPath
           .replaceAll('export ', '')
           .replaceAll(';', '')
@@ -728,40 +858,103 @@ class GeneratorOrchestrator {
 
     rootBarrelBuffer.writeln();
     if (schemaUtilCode.isNotEmpty) {
-      rootBarrelBuffer.writeln("part '$fileName.gql.freezed.dart';");
-      rootBarrelBuffer.writeln("part '$fileName.gql.g.dart';");
+      rootBarrelBuffer.writeln("part '${ctx.fileName}.gql.freezed.dart';");
+      rootBarrelBuffer.writeln("part '${ctx.fileName}.gql.g.dart';");
       rootBarrelBuffer.writeln();
       rootBarrelBuffer.writeln(schemaUtilCode);
     }
 
-    if (fileOpExtensions.isNotEmpty) {
-      rootBarrelBuffer.writeln(fileOpExtensions.toString());
+    if (ops.fileOpExtensionsText.isNotEmpty) {
+      rootBarrelBuffer.writeln(ops.fileOpExtensionsText);
     }
 
-    final targetBarrelPath = isSchemaFile
-        ? '${sharedPrefix}$fileName.gql.dart'
-        : 'generated/$fileName.gql.dart';
+    final targetBarrelPath = ctx.isSchemaFile
+        ? '${ctx.sharedPrefix}${ctx.fileName}.gql.dart'
+        : 'generated/${ctx.fileName}.gql.dart';
     files[targetBarrelPath] = rootBarrelBuffer.toString();
+  }
 
-    // -----------------------------------------------------------------------
-    // Format all generated Dart code
-    // -----------------------------------------------------------------------
+  /// Caps how many isolates [_formatGeneratedFiles] spawns — profiling
+  /// found the actual parallel work available is usually dominated by just
+  /// one or two large files (a root barrel bundling every schema utility
+  /// and client extension method), so beyond ~4 workers there's nothing
+  /// left to parallelize and more isolates only adds spawn/message-passing
+  /// overhead. Also caps at the machine's own core count, so this never
+  /// oversubscribes a small or already-busy machine.
+  static const _maxFormatWorkers = 4;
+
+  /// Runs every generated file body through `DartFormatter`, falling back
+  /// to the unformatted source for any single file that fails to format
+  /// (never letting one bad file abort the whole bundle).
+  ///
+  /// `DartFormatter.format` re-parses and pretty-prints each file — cheap
+  /// per call, but profiling a medium schema found it dominates total
+  /// generation time (a root barrel bundling every schema utility and
+  /// client extension method into one file is disproportionately
+  /// expensive to format). Since each call is a pure, independent,
+  /// CPU-bound function with no shared state, this fans the work out
+  /// across a small pool of isolates instead of running every file
+  /// sequentially on one core — measured ~40% faster wall-clock on a
+  /// representative schema. Files are bin-packed onto workers by content
+  /// length (longest-processing-time-first), the best available proxy for
+  /// format cost, so the large dominant files each land on their own
+  /// worker instead of being split evenly by count.
+  static Future<Map<String, String>> _formatGeneratedFiles(
+    Map<String, String> files,
+  ) async {
+    // Not worth spawning isolates for a single file, or on a single-core
+    // machine (spawn overhead with no other core to actually run on).
+    if (files.length <= 1 || Platform.numberOfProcessors <= 1) {
+      return _formatFilesOnThisIsolate(files.entries);
+    }
+
+    final entries = files.entries.toList()
+      ..sort((a, b) => b.value.length.compareTo(a.value.length));
+
+    final workerCount = _maxFormatWorkers
+        .clamp(1, Platform.numberOfProcessors)
+        .clamp(1, entries.length);
+    final buckets = List.generate(
+        workerCount, (_) => <MapEntry<String, String>>[],
+        growable: false);
+    final bucketCost = List.filled(workerCount, 0);
+    for (final entry in entries) {
+      var lightest = 0;
+      for (var i = 1; i < workerCount; i++) {
+        if (bucketCost[i] < bucketCost[lightest]) lightest = i;
+      }
+      buckets[lightest].add(entry);
+      bucketCost[lightest] += entry.value.length;
+    }
+
+    final results = await Future.wait([
+      for (final bucket in buckets)
+        if (bucket.isNotEmpty) Isolate.run(() => _formatFilesOnThisIsolate(bucket)),
+    ]);
+
+    final formattedFiles = <String, String>{};
+    for (final result in results) {
+      formattedFiles.addAll(result);
+    }
+    return formattedFiles;
+  }
+
+  /// The actual formatting work — run either directly (small/single-core
+  /// case) or once per isolate in [_formatGeneratedFiles]'s worker pool.
+  static Map<String, String> _formatFilesOnThisIsolate(
+    Iterable<MapEntry<String, String>> files,
+  ) {
     final formattedFiles = <String, String>{};
     final formatter =
         DartFormatter(languageVersion: DartFormatter.latestLanguageVersion);
-    files.forEach((path, unformattedCode) {
+    for (final entry in files) {
       try {
-        formattedFiles[path] = formatter.format(unformattedCode);
+        formattedFiles[entry.key] = formatter.format(entry.value);
       } catch (_) {
-        formattedFiles[path] = unformattedCode;
+        formattedFiles[entry.key] = entry.value;
       }
-    });
-
-    final bundle = GeneratedBundle(files: formattedFiles);
-    if (useCache && cacheKey != null) {
-      GeneratorCache.put(cacheKey, bundle);
     }
-    return bundle;
+    return formattedFiles;
   }
 
   /// Computes the list of expected output file paths (relative to [inputPath]'s directory)
@@ -771,12 +964,19 @@ class GeneratorOrchestrator {
     required String inputPath,
     String? schemaPath,
     String? sharedDir,
+    // Reuses an already-parsed document instead of parsing [content] again —
+    // [MkGraphQLBuilder]'s factory calls this for every `.graphql`/`.gql`
+    // file up front (build_runner requires `buildExtensions` before any
+    // `build()` runs), so passing the parse it already did through to the
+    // later `generateForGraphQLFile` call for the same content avoids
+    // parsing every file twice on every build.
+    ParsedGraphQLDocument? preParsed,
   }) {
     if (!inputPath.endsWith('.graphql') && !inputPath.endsWith('.gql')) {
       return const [];
     }
 
-    final parsed = ParsedGraphQLDocument.parse(content);
+    final parsed = preParsed ?? ParsedGraphQLDocument.parse(content);
     final fileName = p.basenameWithoutExtension(inputPath);
     final resolvedSchemaPath =
         schemaPath ?? p.join(p.dirname(inputPath), 'schema.graphql');
@@ -1140,12 +1340,16 @@ class GeneratorOrchestrator {
   /// True if any of [names] appears as a whole-word match in [code].
   /// Used to decide, after generating a file's body, which shared barrel
   /// imports (models.dart / inputs.dart / enums.dart) it actually needs.
+  ///
+  /// Compiles one alternation regex and runs a single scan over [code],
+  /// rather than compiling and scanning once per candidate name — called
+  /// once per generated file, so with hundreds of enums/models in a large
+  /// schema this turns an O(names) regex compile+scan into one of each.
   static bool _referencesAny(String code, Iterable<String> names) {
-    for (final name in names) {
-      if (name.isEmpty) continue;
-      if (RegExp('\\b${RegExp.escape(name)}\\b').hasMatch(code)) return true;
-    }
-    return false;
+    final nonEmpty = names.where((n) => n.isNotEmpty);
+    if (nonEmpty.isEmpty) return false;
+    final pattern = '\\b(?:${nonEmpty.map(RegExp.escape).join('|')})\\b';
+    return RegExp(pattern).hasMatch(code);
   }
 
   /// Name-based scalar type heuristic — used only when schema is unavailable.

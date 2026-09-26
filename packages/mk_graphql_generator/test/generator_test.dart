@@ -2,12 +2,13 @@ import 'package:test/test.dart';
 import 'package:mk_graphql_generator/src/cache/generator_cache.dart';
 import 'package:mk_graphql_generator/src/generator/orchestrator/generator_orchestrator.dart';
 import 'package:mk_graphql_generator/src/generator/schema/schema_generator.dart';
+import 'package:mk_graphql_generator/src/parser/graphql_parser.dart';
 
 void main() {
   group('GeneratorOrchestrator Tests with Structured Folders & Extensions', () {
     test(
         'generates enums/, inputs/, models/, and operation directories for schema.graphql',
-        () {
+        () async {
       const graphqlContent = '''
         enum UserRole {
           ADMIN
@@ -33,7 +34,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: graphqlContent,
         inputPath: 'schema.graphql',
       );
@@ -100,7 +101,7 @@ void main() {
 
     test(
         'non-schema .graphql file in nested directory references shared schema code via relative imports',
-        () {
+        () async {
       const schemaContent = '''
         type User {
           id: ID!
@@ -121,7 +122,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: opContent,
         inputPath: 'lib/features/auth/queries.graphql',
         schemaPath: 'lib/graphql/schema.graphql',
@@ -165,7 +166,7 @@ void main() {
 
     test(
         'enum values are generated as camelCase Dart identifiers with @JsonValue preserving the wire name',
-        () {
+        () async {
       const graphqlContent = '''
         enum UserRole {
           ADMIN_USER
@@ -177,7 +178,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: graphqlContent,
         inputPath: 'schema.graphql',
       );
@@ -192,7 +193,7 @@ void main() {
     });
 
     test('.gql schema file produces the same structured output as .graphql',
-        () {
+        () async {
       const graphqlContent = '''
         type UserResponse {
           id: String!
@@ -206,7 +207,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: graphqlContent,
         inputPath: 'schema.gql',
       );
@@ -216,7 +217,7 @@ void main() {
     });
 
     test('feature .gql file (not just .graphql) generates operation output',
-        () {
+        () async {
       const opContent = '''
         query GetUser(\$id: ID!) {
           user(id: \$id) {
@@ -225,7 +226,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: opContent,
         inputPath: 'lib/features/auth/queries.gql',
         schemaPath: 'lib/graphql/schema.graphql',
@@ -238,7 +239,7 @@ void main() {
 
     test(
         'feature file field types are resolved from the schema AST (enums resolved for real, never guessed)',
-        () {
+        () async {
       const schemaContent = '''
         enum UserRole {
           ADMIN
@@ -266,7 +267,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: opContent,
         inputPath: 'lib/features/auth/queries.graphql',
         schemaPath: 'lib/graphql/schema.graphql',
@@ -289,7 +290,7 @@ void main() {
 
     test(
         'generated model/input files only import enums/inputs/models barrels they actually reference',
-        () {
+        () async {
       const graphqlContent = '''
         enum UserRole {
           ADMIN
@@ -322,7 +323,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: graphqlContent,
         inputPath: 'schema.graphql',
       );
@@ -347,7 +348,7 @@ void main() {
 
     test(
         'operation request files never import the shared enums/inputs/models barrels directly',
-        () {
+        () async {
       const schemaContent = '''
         enum UserRole {
           ADMIN
@@ -373,7 +374,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: opContent,
         inputPath: 'lib/features/auth/queries.graphql',
         schemaPath: 'lib/graphql/schema.graphql',
@@ -390,7 +391,7 @@ void main() {
 
     test(
         'emits package: imports instead of relative imports when packageName is provided',
-        () {
+        () async {
       const schemaContent = '''
         enum UserRole {
           ADMIN
@@ -416,7 +417,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: opContent,
         inputPath: 'lib/features/auth/queries.graphql',
         schemaPath: 'lib/graphql/schema.graphql',
@@ -460,7 +461,7 @@ void main() {
 
     test(
         'schema-level model/input files use package: imports for shared barrels when packageName is provided',
-        () {
+        () async {
       const graphqlContent = '''
         enum UserRole {
           ADMIN
@@ -473,7 +474,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: graphqlContent,
         inputPath: 'lib/graphql/schema.graphql',
         packageName: 'my_app',
@@ -487,7 +488,7 @@ void main() {
       expect(modelsFile, isNot(contains("import '../")));
     });
 
-    test('supports Upload scalar in operations and maps to MultipartFile', () {
+    test('supports Upload scalar in operations and maps to MultipartFile', () async {
       const schemaContent = '''
         scalar Upload
 
@@ -508,7 +509,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: opContent,
         inputPath: 'lib/features/upload/upload.graphql',
         schemaPath: 'lib/graphql/schema.graphql',
@@ -521,7 +522,7 @@ void main() {
     });
 
     test('generates CancelToken? in client extensions and schema utilities',
-        () {
+        () async {
       const schemaContent = '''
         type User {
           id: ID!
@@ -540,7 +541,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schemaContent,
         inputPath: 'schema.graphql',
       );
@@ -552,7 +553,7 @@ void main() {
       expect(reqFile, contains('CancelToken? cancelToken'));
     });
 
-    test('respects custom schemaPath and sharedDir options', () {
+    test('respects custom schemaPath and sharedDir options', () async {
       const schemaContent = '''
         enum Status {
           ACTIVE
@@ -569,7 +570,7 @@ void main() {
         }
       ''';
 
-      final schemaBundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final schemaBundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schemaContent,
         inputPath: 'lib/api/custom_schema.graphql',
         schemaPath: 'lib/api/custom_schema.graphql',
@@ -595,7 +596,7 @@ void main() {
         }
       ''';
 
-      final featureBundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final featureBundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: featureOp,
         inputPath: 'lib/features/profile/status.graphql',
         schemaPath: 'lib/api/custom_schema.graphql',
@@ -619,22 +620,22 @@ void main() {
 
     test(
         'only generates for .graphql or .gql files and ignores other file extensions',
-        () {
+        () async {
       const content = 'type User { id: ID! }';
 
-      final dartBundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final dartBundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: content,
         inputPath: 'lib/models/user.dart',
       );
       expect(dartBundle.files, isEmpty);
 
-      final jsonBundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final jsonBundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: content,
         inputPath: 'lib/schema.json',
       );
       expect(jsonBundle.files, isEmpty);
 
-      final txtBundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final txtBundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: content,
         inputPath: 'readme.txt',
       );
@@ -643,17 +644,17 @@ void main() {
   });
 
   group('Cached Generation Tests', () {
-    setUp(() {
+    setUp(() async {
       GeneratorCache.clear();
     });
 
-    tearDown(() {
+    tearDown(() async {
       GeneratorCache.clear();
     });
 
     test(
         'caches generated bundle and reuses on subsequent calls with identical inputs',
-        () {
+        () async {
       const content = '''
         type User {
           id: ID!
@@ -664,12 +665,12 @@ void main() {
         }
       ''';
 
-      final bundle1 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle1 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: content,
         inputPath: 'lib/get_user.graphql',
       );
 
-      final bundle2 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle2 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: content,
         inputPath: 'lib/get_user.graphql',
       );
@@ -679,7 +680,7 @@ void main() {
       expect(bundle2.files.keys, equals(bundle1.files.keys));
     });
 
-    test('re-generates when input content or schema content changes', () {
+    test('re-generates when input content or schema content changes', () async {
       const content1 = '''
         type User { id: ID! }
       ''';
@@ -687,12 +688,12 @@ void main() {
         type User { id: ID! name: String! }
       ''';
 
-      final bundle1 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle1 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: content1,
         inputPath: 'schema.graphql',
       );
 
-      final bundle2 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle2 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: content2,
         inputPath: 'schema.graphql',
       );
@@ -708,18 +709,18 @@ void main() {
           contains('required String name'));
     });
 
-    test('useCache: false bypasses cache', () {
+    test('useCache: false bypasses cache', () async {
       const content = '''
         type User { id: ID! }
       ''';
 
-      final bundle1 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle1 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: content,
         inputPath: 'schema.graphql',
         useCache: false,
       );
 
-      final bundle2 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle2 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: content,
         inputPath: 'schema.graphql',
         useCache: false,
@@ -728,8 +729,30 @@ void main() {
       expect(identical(bundle1, bundle2), isFalse);
     });
 
+    test(
+        'preParsed is used instead of re-parsing content on a cache miss — '
+        'proven by passing content that would fail to parse on its own',
+        () async {
+      const unparseableContent = 'this is not valid GraphQL {{{';
+      final realParsed = ParsedGraphQLDocument.parse('''
+        type User { id: ID! name: String! }
+      ''');
+
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
+        content: unparseableContent,
+        inputPath: 'schema.graphql',
+        useCache: false,
+        preParsed: realParsed,
+      );
+
+      expect(bundle.files['generated/models/models.dart'],
+          contains('required String name'),
+          reason: 'generated output must come from preParsed\'s real '
+              'schema, proving content was never parsed at all');
+    });
+
     test('disk cache restores bundle even after in-memory cache is cleared',
-        () {
+        () async {
       const content = '''
         type User { id: ID! }
       ''';
@@ -739,7 +762,7 @@ void main() {
         content: content,
       );
 
-      final bundle1 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle1 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: content,
         inputPath: 'schema.graphql',
       );
@@ -752,7 +775,7 @@ void main() {
     });
 
     test('in-memory cache does not block generation when query fields change',
-        () {
+        () async {
       const schema = '''
         type User {
           id: ID!
@@ -783,7 +806,7 @@ void main() {
       ''';
 
       // 1. Initial generation with id only
-      final bundle1 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle1 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: queryWithIdOnly,
         inputPath: 'lib/features/user/get_user.graphql',
         schemaPath: 'lib/schema.graphql',
@@ -795,7 +818,7 @@ void main() {
       expect(req1, isNot(contains('email')));
 
       // 2. Query fields change - in-memory cache MUST NOT block generation
-      final bundle2 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle2 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: queryWithIdNameEmail,
         inputPath: 'lib/features/user/get_user.graphql',
         schemaPath: 'lib/schema.graphql',
@@ -811,7 +834,7 @@ void main() {
       expect(req2, contains('email'));
 
       // 3. Second call with the modified query uses the updated in-memory cache
-      final bundle2Cached = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle2Cached = await GeneratorOrchestrator.generateForGraphQLFile(
         content: queryWithIdNameEmail,
         inputPath: 'lib/features/user/get_user.graphql',
         schemaPath: 'lib/schema.graphql',
@@ -820,7 +843,7 @@ void main() {
       expect(identical(bundle2, bundle2Cached), isTrue);
 
       // 4. Switching back to the original query resolves to original cached bundle without collision
-      final bundle1Cached = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle1Cached = await GeneratorOrchestrator.generateForGraphQLFile(
         content: queryWithIdOnly,
         inputPath: 'lib/features/user/get_user.graphql',
         schemaPath: 'lib/schema.graphql',
@@ -834,7 +857,7 @@ void main() {
 
     test(
         'in-memory cache updates generated inline selection models when sub-fields change',
-        () {
+        () async {
       const queryV1 = '''
         query Search {
           search {
@@ -853,7 +876,7 @@ void main() {
         }
       ''';
 
-      final bundleV1 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundleV1 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: queryV1,
         inputPath: 'lib/features/search/search.graphql',
       );
@@ -864,7 +887,7 @@ void main() {
       expect(modelV1, isNot(contains('url')));
 
       // Modify fields in query
-      final bundleV2 = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundleV2 = await GeneratorOrchestrator.generateForGraphQLFile(
         content: queryV2,
         inputPath: 'lib/features/search/search.graphql',
       );
@@ -881,7 +904,7 @@ void main() {
   group('computeOutputPaths Tests', () {
     test(
         'computes fast expected output paths for schema file without full code generation',
-        () {
+        () async {
       const schemaContent = '''
         enum Status { ACTIVE, INACTIVE }
         input CreateUserInput { name: String! }
@@ -905,7 +928,7 @@ void main() {
       expect(paths, hasLength(4));
     });
 
-    test('computes fast expected output paths for operation file', () {
+    test('computes fast expected output paths for operation file', () async {
       const opContent = '''
         query GetUser {
           user { id }
@@ -932,7 +955,7 @@ void main() {
       expect(paths, contains('generated/user_operations.gql.dart'));
     });
 
-    test('returns empty set for non-graphql files', () {
+    test('returns empty set for non-graphql files', () async {
       const content = 'type User { id: ID! }';
 
       final paths = GeneratorOrchestrator.computeOutputPaths(
@@ -944,13 +967,37 @@ void main() {
     });
 
     test(
+        'preParsed is used instead of re-parsing content — proven by '
+        'passing content that would fail to parse on its own', () async {
+      // Deliberately mismatched: if computeOutputPaths ever parsed [content]
+      // itself instead of trusting preParsed, this would throw.
+      const unparseableContent = 'this is not valid GraphQL {{{';
+      final realParsed = ParsedGraphQLDocument.parse('''
+        query GetUser {
+          user { id }
+        }
+      ''');
+
+      final paths = GeneratorOrchestrator.computeOutputPaths(
+        content: unparseableContent,
+        inputPath: 'lib/features/user/user_operations.graphql',
+        schemaPath: 'lib/schema.graphql',
+        preParsed: realParsed,
+      );
+
+      expect(paths, contains('generated/get_user/get_user_req.dart'),
+          reason: 'output paths must come from preParsed\'s real operation '
+              '(GetUser), proving content was never parsed at all');
+    });
+
+    test(
         'growing an already-populated category during a live watch session '
         'never produces an output outside what was declared when the '
         'builder started — this is the actual bug this generator once had: '
         'a schema gaining a type while `build_runner watch` kept running '
         'used to write an undeclared per-type file, which build_runner '
         'rejects, aborting that build before models.dart/inputs.dart got '
-        'rewritten and leaving them on disk with a stale export list', () {
+        'rewritten and leaving them on disk with a stale export list', () async {
       const schemaV1 = '''
         enum Status {
           DRAFT
@@ -999,7 +1046,7 @@ void main() {
           name: String!
         }
       ''';
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schemaV2,
         inputPath: 'lib/schema.graphql',
         schemaPath: 'lib/schema.graphql',
@@ -1028,7 +1075,7 @@ void main() {
         'session is a known, accepted limitation this fix does not close — '
         'unlike growing an already-populated category, this still needs a '
         'watch restart, and this test exists so that remains true and '
-        'documented rather than silently assumed', () {
+        'documented rather than silently assumed', () async {
       const schemaV1 = '''
         type Post {
           id: ID!
@@ -1054,7 +1101,7 @@ void main() {
           PUBLISHED
         }
       ''';
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schemaV2,
         inputPath: 'lib/schema.graphql',
         schemaPath: 'lib/schema.graphql',
@@ -1087,8 +1134,8 @@ void main() {
       }
     ''';
 
-    test('generates shared models with strict non-nullable fields', () {
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+    test('generates shared models with strict non-nullable fields', () async {
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schemaContent,
         inputPath: 'lib/graphql/schema.graphql',
       );
@@ -1104,7 +1151,7 @@ void main() {
 
     test(
         'generates an operation-scoped model when query selects partial required fields',
-        () {
+        () async {
       const partialOp = '''
         query GetCountriesBasic {
           countries {
@@ -1114,7 +1161,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: partialOp,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: schemaContent,
@@ -1140,7 +1187,7 @@ void main() {
 
     test(
         'still generates its own operation-scoped model when query selects every required field',
-        () {
+        () async {
       const fullOp = '''
         query GetCountryFull {
           country(code: "us") {
@@ -1152,7 +1199,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: fullOp,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: schemaContent,
@@ -1172,7 +1219,7 @@ void main() {
 
     test(
         'a fragment spread as the whole selection reuses one shared class across operations',
-        () {
+        () async {
       const opWithFrag = '''
         fragment CountryBase on Country {
           code
@@ -1192,7 +1239,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: opWithFrag,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: schemaContent,
@@ -1215,7 +1262,7 @@ void main() {
 
     test(
         'a fragment spread mixed with extra fields still flattens all fields (no silent drop)',
-        () {
+        () async {
       const mixedOp = '''
         fragment CountryBase on Country {
           code
@@ -1230,7 +1277,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: mixedOp,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: schemaContent,
@@ -1283,7 +1330,7 @@ void main() {
 
     test(
         'response Model/Input classes declare a __typename field; '
-        'Vars/Input classes sent to the server do not', () {
+        'Vars/Input classes sent to the server do not', () async {
       const query = '''
         query GetItemById(\$id: UUID!, \$filter: FilterInput) {
           getItem(id: \$id, filter: \$filter) {
@@ -1292,7 +1339,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: query,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: conventionSchema,
@@ -1317,8 +1364,8 @@ void main() {
     });
 
     test('Dart reserved keywords map to g{Keyword} with @JsonKey(name: raw)',
-        () {
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        () async {
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: conventionSchema,
         inputPath: 'lib/graphql/schema.graphql',
       );
@@ -1354,7 +1401,7 @@ void main() {
 
     test(
         'an input type referencing another input type needs no import — '
-        'both live in the same merged inputs.dart', () {
+        'both live in the same merged inputs.dart', () async {
       const schema = '''
         input AddressInput {
           street: String!
@@ -1370,7 +1417,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schema,
         inputPath: 'lib/graphql/schema.graphql',
       );
@@ -1387,7 +1434,7 @@ void main() {
         'a models.dart import flag is unioned across every model in the '
         'file, not just the last one generated — only the third of three '
         'models here references an enum, and the file must still import '
-        'enums.dart', () {
+        'enums.dart', () async {
       const schema = '''
         enum Status {
           ACTIVE
@@ -1408,7 +1455,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schema,
         inputPath: 'lib/graphql/schema.graphql',
       );
@@ -1422,7 +1469,7 @@ void main() {
 
     test(
         'a self-referencing model type compiles with no self-import — the '
-        'field and its declaring class are in the same merged models.dart', () {
+        'field and its declaring class are in the same merged models.dart', () async {
       const schema = '''
         type User {
           id: ID!
@@ -1431,7 +1478,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schema,
         inputPath: 'lib/graphql/schema.graphql',
       );
@@ -1444,7 +1491,7 @@ void main() {
 
     test(
         'an enum-only schema (no inputs, no non-root object types) merges '
-        'correctly and produces no inputs.dart or models.dart at all', () {
+        'correctly and produces no inputs.dart or models.dart at all', () async {
       const schema = '''
         enum Status {
           ACTIVE
@@ -1456,7 +1503,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schema,
         inputPath: 'lib/graphql/schema.graphql',
       );
@@ -1472,7 +1519,7 @@ void main() {
         'a field named after a Dart core type (int/double/bool/num) maps to '
         'g{Name} — using the raw name would shadow that type for the whole '
         'class (e.g. `final double double;` fails to compile since `double` '
-        'no longer resolves to dart:core\'s type inside the class body)', () {
+        'no longer resolves to dart:core\'s type inside the class body)', () async {
       const schema = '''
         type Reading {
           id: ID!
@@ -1487,7 +1534,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schema,
         inputPath: 'lib/graphql/schema.graphql',
       );
@@ -1506,7 +1553,7 @@ void main() {
         '(package:_fe_analyzer_shared\'s Keyword table: reserved words, '
         'built-in identifiers, and pseudo keywords) — a future Dart release '
         'adding one should fail this test rather than silently generate '
-        'broken code', () {
+        'broken code', () async {
       // Source of truth: every lower-cased lexeme in
       // _fe_analyzer_shared's `Keyword` table (`Function` is the sole
       // entry that's capitalized — generated field names are always
@@ -1603,7 +1650,7 @@ void main() {
 
     test(
         '@include and @skip directives make non-null fields nullable in response model',
-        () {
+        () async {
       const queryWithDirectives = '''
         query GetItemWithCondition(\$skipDefault: Boolean!, \$includeClass: Boolean!) {
           getItem(id: "123") {
@@ -1615,7 +1662,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: queryWithDirectives,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: conventionSchema,
@@ -1636,7 +1683,7 @@ void main() {
 
     test(
         'Variable definitions with default values generate @Default(...) in Vars and extension',
-        () {
+        () async {
       const queryWithVarDefaults = '''
         query GetItemWithDefaults(\$limit: Int = 30, \$order: String = "asc") {
           getItem(id: "123") {
@@ -1645,7 +1692,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: queryWithVarDefaults,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: conventionSchema,
@@ -1664,7 +1711,7 @@ void main() {
 
     test(
         'ErrorPolicy is included in request constructor, copyWithRequest, and client extensions',
-        () {
+        () async {
       const query = '''
         query GetSimpleItem {
           getItem(id: "123") {
@@ -1673,7 +1720,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: query,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: conventionSchema,
@@ -1692,7 +1739,7 @@ void main() {
 
     test(
         'staleTime/cacheTime/retry/refetchInterval are included in request '
-        'constructor and copyWithRequest', () {
+        'constructor and copyWithRequest', () async {
       const query = '''
         query GetSimpleItem {
           getItem(id: "123") {
@@ -1701,7 +1748,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: query,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: conventionSchema,
@@ -1724,7 +1771,7 @@ void main() {
     });
 
     test('Custom scalars are mapped according to customScalars configuration',
-        () {
+        () async {
       const query = '''
         query GetCustomItem {
           getItem(id: "123") {
@@ -1733,7 +1780,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: query,
         inputPath: 'lib/graphql/operations.graphql',
         schemaContent: conventionSchema,
@@ -1748,7 +1795,7 @@ void main() {
 
     test(
         'Schema client extensions include subfield selection sets for mutations returning object types',
-        () {
+        () async {
       const schema = '''
         input RegisterInput {
           email: String!
@@ -1765,7 +1812,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schema,
         inputPath: 'schema.graphql',
       );
@@ -1791,7 +1838,7 @@ void main() {
 
     test(
         'Schema client extensions handle nested object selections and circular references',
-        () {
+        () async {
       const schema = '''
         type MobileNumber {
           dialCode: String!
@@ -1810,7 +1857,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: schema,
         inputPath: 'schema.graphql',
       );
@@ -1826,7 +1873,7 @@ void main() {
 
     test(
         'Feature operation with missing selection set on object field has selection set auto-synthesized',
-        () {
+        () async {
       const schema = '''
         input RegisterInput {
           email: String!
@@ -1847,7 +1894,7 @@ void main() {
         }
       ''';
 
-      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
         content: opContent,
         inputPath: 'lib/features/auth/register.graphql',
         schemaContent: schema,

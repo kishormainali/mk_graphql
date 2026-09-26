@@ -49,6 +49,14 @@ class WebSocketLink extends Link {
   bool _isDisposed = false;
   int _nextId = 0;
 
+  /// Set after the first successful connect. Distinguishes a reconnect
+  /// (where [_activeRequests] must be resent, since the server has no
+  /// memory of them on the new socket) from the initial connect (where each
+  /// subscription's own [_sendSubscribe] call already sends it exactly
+  /// once — resending here too would send a duplicate `subscribe` for the
+  /// same id).
+  bool _hasConnectedOnce = false;
+
   /// Consecutive failed reconnect attempts since the last successful
   /// `connection_ack` — drives the exponential backoff in
   /// [_reconnectDelay]. Reset to `0` on every `connection_ack`.
@@ -57,6 +65,13 @@ class WebSocketLink extends Link {
   static final Random _random = Random();
 
   final _activeSubscriptions = <String, StreamController<Response>>{};
+
+  /// The original [Request] behind each entry in [_activeSubscriptions],
+  /// kept so a reconnect can resend `subscribe` for every subscription that
+  /// survived the drop — the server has no memory of them across a new
+  /// socket, so without this a resumed connection silently stops delivering
+  /// data to callers who never cancelled.
+  final _activeRequests = <String, Request>{};
 
   WebSocketLink(
     this.url, {
@@ -124,8 +139,23 @@ class WebSocketLink extends Link {
         onError: _onError,
         onDone: _onDone,
       );
+
+      if (_hasConnectedOnce) {
+        _resendActiveSubscriptions();
+      }
+      _hasConnectedOnce = true;
     } catch (e) {
       _onError(e);
+    }
+  }
+
+  /// Resends `subscribe` for every subscription still in [_activeRequests]
+  /// on the new socket after a reconnect, so subscribers that survived the
+  /// drop resume delivery instead of hanging forever — the server has no
+  /// memory of a `subscribe` sent on the previous, now-dead socket.
+  void _resendActiveSubscriptions() {
+    for (final entry in _activeRequests.entries) {
+      _sendSubscribeMessage(entry.key, entry.value);
     }
   }
 
@@ -168,6 +198,7 @@ class WebSocketLink extends Link {
         } else if (type == 'complete') {
           controller.close();
           _activeSubscriptions.remove(id);
+          _activeRequests.remove(id);
         }
       }
     } catch (_) {
@@ -208,11 +239,13 @@ class WebSocketLink extends Link {
     final controller = StreamController<Response>();
 
     _activeSubscriptions[subId] = controller;
+    _activeRequests[subId] = req;
     _sendSubscribe(subId, req);
 
     controller.onCancel = () {
       _sendComplete(subId);
       _activeSubscriptions.remove(subId);
+      _activeRequests.remove(subId);
       controller.close();
     };
 
@@ -221,6 +254,10 @@ class WebSocketLink extends Link {
 
   Future<void> _sendSubscribe(String id, Request req) async {
     await _connect();
+    _sendSubscribeMessage(id, req);
+  }
+
+  void _sendSubscribeMessage(String id, Request req) {
     final docString = printDocumentCached(req.operation.document);
     _channel?.sink.add(jsonEncode({
       'id': id,
@@ -248,6 +285,7 @@ class WebSocketLink extends Link {
       await controller.close();
     }
     _activeSubscriptions.clear();
+    _activeRequests.clear();
     await _channelSubscription?.cancel();
     await _channel?.sink.close();
     _channel = null;

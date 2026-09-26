@@ -88,7 +88,7 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
 class _TestMutationReq extends GraphQLRequest<_TestData, _TestVars> {
   @override
   final _TestVars variables;
-  _TestMutationReq(this.variables);
+  _TestMutationReq(this.variables, {super.fetchPolicy});
 
   @override
   String get document => 'mutation Test { user { id name } }';
@@ -111,13 +111,16 @@ class _TestMutationReq extends GraphQLRequest<_TestData, _TestVars> {
     dio.CancelToken? cancelToken,
     _TestData? optimisticResponse,
   }) =>
-      _TestMutationReq(variables ?? this.variables);
+      _TestMutationReq(
+        variables ?? this.variables,
+        fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+      );
 }
 
 class _TestSubscriptionReq extends GraphQLRequest<_TestData, _TestVars> {
   @override
   final _TestVars variables;
-  _TestSubscriptionReq(this.variables);
+  _TestSubscriptionReq(this.variables, {super.fetchPolicy});
 
   @override
   String get document => 'subscription Test { user { id name } }';
@@ -140,7 +143,10 @@ class _TestSubscriptionReq extends GraphQLRequest<_TestData, _TestVars> {
     dio.CancelToken? cancelToken,
     _TestData? optimisticResponse,
   }) =>
-      _TestSubscriptionReq(variables ?? this.variables);
+      _TestSubscriptionReq(
+        variables ?? this.variables,
+        fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+      );
 }
 
 class _TypedData {
@@ -193,6 +199,24 @@ class _CountingLink extends Link {
   @override
   Stream<gql.Response> request(gql.Request req, [NextLink? forward]) async* {
     onRequest();
+    yield const gql.Response(data: {'id': '1', 'name': 'Dedup'}, response: {});
+  }
+}
+
+/// Tracks how many requests are in flight at once, reporting the highest
+/// concurrency it ever observed via [peakConcurrency] — used to verify
+/// [GraphQLClient.maxConcurrentBackgroundRefetches] actually caps how many
+/// background refetches run at the same time.
+class _ConcurrencyTrackingLink extends Link {
+  int _current = 0;
+  int peakConcurrency = 0;
+
+  @override
+  Stream<gql.Response> request(gql.Request req, [NextLink? forward]) async* {
+    _current++;
+    if (_current > peakConcurrency) peakConcurrency = _current;
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    _current--;
     yield const gql.Response(data: {'id': '1', 'name': 'Dedup'}, response: {});
   }
 }
@@ -580,6 +604,64 @@ void main() {
           reason: 'subscriptions must each hit the network independently — '
               'they have their own reconnect semantics in WebSocketLink/'
               'SseLink and are excluded from dedup entirely');
+    });
+
+    test(
+        'a mutation never reads or writes the cache, even with an explicit '
+        'caching fetchPolicy', () async {
+      final cache = InMemoryCache();
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {}),
+        cache: cache,
+      );
+
+      // Pre-seed the cache under this exact request key, so a mistaken
+      // cache read would return it instead of hitting the network.
+      final probe = _TestMutationReq(const _TestVars('1'));
+      cache.writeQuery(probe, const _TestData(id: 'stale', name: 'Stale'));
+
+      final result = await client.future(_TestMutationReq(
+        const _TestVars('1'),
+        fetchPolicy: FetchPolicy.cacheFirst,
+      ));
+
+      expect(result.name, equals('Dedup'),
+          reason: 'must come from the network response, not the '
+              'pre-seeded cache entry, despite requesting cacheFirst');
+      expect(
+        cache.readQuery(_TestMutationReq(const _TestVars('1')))?.name,
+        equals('Stale'),
+        reason: 'the mutation response must never overwrite the cache '
+            'under its own operation key',
+      );
+    });
+
+    test(
+        'a subscription never reads or writes the cache, even with an '
+        'explicit caching fetchPolicy', () async {
+      final cache = InMemoryCache();
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {}),
+        cache: cache,
+      );
+
+      final probe = _TestSubscriptionReq(const _TestVars('1'));
+      cache.writeQuery(probe, const _TestData(id: 'stale', name: 'Stale'));
+
+      final result = await client.future(_TestSubscriptionReq(
+        const _TestVars('1'),
+        fetchPolicy: FetchPolicy.cacheAndNetwork,
+      ));
+
+      expect(result.name, equals('Dedup'),
+          reason: 'must come from the network response, not the '
+              'pre-seeded cache entry, despite requesting cacheAndNetwork');
+      expect(
+        cache.readQuery(_TestSubscriptionReq(const _TestVars('1')))?.name,
+        equals('Stale'),
+        reason: 'the subscription response must never overwrite the cache '
+            'under its own operation key',
+      );
     });
 
     test(
@@ -1169,6 +1251,75 @@ void main() {
 
       expect(listenerCalled, isTrue);
       GraphQLClient.clearRevokeTokenListeners();
+    });
+
+    test(
+        'refreshTimeout treats a hanging onTokenRefresh as a failed refresh '
+        'instead of waiting forever', () async {
+      bool listenerCalled = false;
+      GraphQLClient.registerRevokeTokenListener(() => listenerCalled = true);
+
+      final chain = Link.from([
+        AuthLink(
+          url: 'https://api.example.com/graphql',
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
+          refreshTimeout: const Duration(milliseconds: 20),
+          onTokenRefresh: (_) async {
+            // Never completes within refreshTimeout.
+            await Future<void>.delayed(const Duration(seconds: 30));
+            return {'Authorization': 'Bearer new'};
+          },
+        ),
+        _ErrorLink(errors: [
+          const gql.GraphQLError(
+              message: 'Unauthorized', extensions: {'code': 'UNAUTHORIZED'}),
+        ]),
+      ]);
+
+      await expectLater(
+        chain
+            .request(gql.Request(
+              operation: gql.Operation(
+                document: parseString('query Test { user { id } }'),
+                operationName: 'Test',
+              ),
+            ))
+            .drain<void>(),
+        throwsA(isA<RevokeTokenException>()),
+      );
+
+      expect(listenerCalled, isTrue,
+          reason: 'a timed-out refresh must revoke exactly like a thrown '
+              'refresh failure, not hang the request forever');
+      GraphQLClient.clearRevokeTokenListeners();
+    });
+
+    test(
+        'without refreshTimeout, a slow-but-eventually-successful '
+        'onTokenRefresh still succeeds — the default keeps waiting '
+        'indefinitely', () async {
+      final chain = Link.from([
+        AuthLink(
+          url: 'https://api.example.com/graphql',
+          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
+          onTokenRefresh: (_) async {
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+            return {'Authorization': 'Bearer new'};
+          },
+        ),
+        _ServerExceptionOnceLink(const ServerException(statusCode: 401)),
+      ]);
+
+      final responses = await chain
+          .request(gql.Request(
+            operation: gql.Operation(
+              document: parseString('query Test { user { id } }'),
+              operationName: 'Test',
+            ),
+          ))
+          .toList();
+
+      expect(responses, isNotEmpty);
     });
 
     test('deduplicates concurrent token refreshes', () async {
@@ -2405,6 +2556,61 @@ void main() {
       expect(networkCalls, equals(1),
           reason: 'only the watched query refetches on reconnect');
       await sub.cancel();
+    });
+
+    test(
+        'maxConcurrentBackgroundRefetches caps how many background '
+        'refetches run at once', () async {
+      final link = _ConcurrencyTrackingLink();
+      final client = GraphQLClient.fromLink(
+        link,
+        maxConcurrentBackgroundRefetches: 2,
+      );
+
+      final subs = <StreamSubscription>[];
+      for (var i = 0; i < 6; i++) {
+        final req = _TestReq(_TestVars('$i'),
+            staleTime: const Duration(minutes: 5));
+        client.cache
+            .writeQuery(req, _TestData(id: '$i', name: 'v$i'));
+        subs.add(client.watchQuery(req).listen((_) {}));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      await client.notifyReconnected();
+
+      expect(link.peakConcurrency, lessThanOrEqualTo(2),
+          reason: 'no more than maxConcurrentBackgroundRefetches requests '
+              'should ever be in flight at once');
+      for (final sub in subs) {
+        await sub.cancel();
+      }
+    });
+
+    test(
+        'without maxConcurrentBackgroundRefetches, background refetches all '
+        'run at once (default, unbounded)', () async {
+      final link = _ConcurrencyTrackingLink();
+      final client = GraphQLClient.fromLink(link);
+
+      final subs = <StreamSubscription>[];
+      for (var i = 0; i < 6; i++) {
+        final req = _TestReq(_TestVars('$i'),
+            staleTime: const Duration(minutes: 5));
+        client.cache
+            .writeQuery(req, _TestData(id: '$i', name: 'v$i'));
+        subs.add(client.watchQuery(req).listen((_) {}));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      await client.notifyReconnected();
+
+      expect(link.peakConcurrency, equals(6),
+          reason: 'the default preserves prior behavior: every active '
+              'watched query refetches concurrently, uncapped');
+      for (final sub in subs) {
+        await sub.cancel();
+      }
     });
 
     test('notifyAppResumed behaves the same as notifyReconnected', () async {

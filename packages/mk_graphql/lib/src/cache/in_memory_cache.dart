@@ -15,6 +15,31 @@ class InMemoryCache implements Cache {
 
   final _watchers = <String, Set<StreamController<dynamic>>>{};
 
+  /// Bumped by every call that can change what [_getRecord]/[_denormalize]
+  /// would produce for *any* key — [writeQuery], [writeFragment], [evict],
+  /// [clear], [recordOptimistic], [removeOptimistic]. [_readCache] entries
+  /// are stamped with the version current when they were computed, so a
+  /// stale entry (anything written since) is never served — this is
+  /// deliberately coarse (any write anywhere invalidates every cached read,
+  /// not just reads of records that write actually touched), trading away
+  /// some cache hits a precise per-record dependency graph would keep, for
+  /// a scheme simple enough to be confident is never wrong. A real per-
+  /// record invalidation graph is a legitimate future improvement, not a
+  /// correctness requirement this trades away.
+  int _version = 0;
+
+  /// Per-query-key memo of [readQuery]'s already-denormalized-and-parsed
+  /// result, valid only while [_ReadCacheEntry.version] still matches
+  /// [_version]. Skips a full denormalize + [GraphQLRequest.parseData] walk
+  /// for two routine cases: several [GraphQLClient.watchQuery] subscribers
+  /// attaching to the same key back-to-back with no write in between (each
+  /// otherwise independently denormalizes from scratch), and this class's
+  /// own [watchQuery] computing an initial value that a caller going
+  /// through `GraphQLClient.watchQuery` immediately recomputes itself (see
+  /// that method's doc comment) — with this, the second computation is
+  /// close to free instead of a second full walk.
+  final Map<String, _ReadCacheEntry> _readCache = {};
+
   InMemoryCache({KeyGetter? keyGetter})
       : _keyGetter = keyGetter ?? defaultKeyGetter;
 
@@ -33,13 +58,25 @@ class InMemoryCache implements Cache {
 
   @override
   TData? readQuery<TData, TVars>(GraphQLRequest<TData, TVars> request) {
-    final queryKey = 'ROOT_QUERY:${computeRequestKey(request)}';
+    final key = computeRequestKey(request);
+
+    final cached = _readCache[key];
+    if (cached != null && cached.version == _version) {
+      return cached.data as TData?;
+    }
+
+    final queryKey = 'ROOT_QUERY:$key';
     final rootRecord = _getRecord(queryKey);
-    if (rootRecord == null) return null;
+    if (rootRecord == null) {
+      _readCache.remove(key);
+      return null;
+    }
 
     try {
       final denormalized = _denormalize(rootRecord);
-      return request.parseData(denormalized);
+      final data = request.parseData(denormalized);
+      _readCache[key] = _ReadCacheEntry(_version, data);
+      return data;
     } catch (_) {
       return null;
     }
@@ -55,16 +92,18 @@ class InMemoryCache implements Cache {
     final json = _dataToJson(data);
 
     if (json is Map<String, dynamic>) {
-      final normalized = _normalize(json);
+      // Collected during the same walk that builds [normalized] (see
+      // _normalize/_normalizeValue's `typenames` parameter) rather than by
+      // denormalizing it again afterwards purely to re-walk it for
+      // __typename — a write with a large nested/paginated response
+      // otherwise pays for two full tree walks where one already visits
+      // every field.
+      final typenames = <String>{};
+      final normalized = _normalize(json, typenames);
       _store.set(queryKey, normalized);
       _writtenAt[key] = DateTime.now();
-      // Collected from the already-normalized (and therefore already
-      // JSON-safe — see _normalizeValue) record rather than the raw [json]:
-      // a field toJson() didn't recursively serialize itself (the common
-      // case for generated wrapper models) would otherwise hide its
-      // __typename from here even though _normalize() itself handles it
-      // fine.
-      _queryTypenames[key] = _collectTypenames(_denormalize(normalized));
+      _queryTypenames[key] = typenames;
+      _version++;
       _notifyWatchers(request);
     }
   }
@@ -86,6 +125,7 @@ class InMemoryCache implements Cache {
   }) {
     final normalized = _normalize(data);
     _store.set(id, normalized);
+    _version++;
   }
 
   @override
@@ -95,7 +135,9 @@ class InMemoryCache implements Cache {
       final requestKey = key.substring('ROOT_QUERY:'.length);
       _writtenAt.remove(requestKey);
       _queryTypenames.remove(requestKey);
+      _readCache.remove(requestKey);
     }
+    _version++;
   }
 
   @override
@@ -111,6 +153,8 @@ class InMemoryCache implements Cache {
     _optimisticLayers.clear();
     _writtenAt.clear();
     _queryTypenames.clear();
+    _readCache.clear();
+    _version++;
   }
 
   @override
@@ -158,6 +202,7 @@ class InMemoryCache implements Cache {
       final normalized = _normalize(json);
       layer.set(queryKey, normalized);
       _optimisticLayers[request.requestId] = layer;
+      _version++;
       _notifyWatchers(request);
     }
   }
@@ -166,6 +211,7 @@ class InMemoryCache implements Cache {
   void removeOptimistic(String requestId) {
     if (_optimisticLayers.containsKey(requestId)) {
       _optimisticLayers.remove(requestId);
+      _version++;
     }
   }
 
@@ -189,20 +235,39 @@ class InMemoryCache implements Cache {
   }
 
   Map<String, dynamic>? _getRecord(String key) {
-    // Check optimistic layers first (most recent to oldest)
-    for (final layer in _optimisticLayers.values.toList().reversed) {
-      final opt = layer.get(key);
-      if (opt != null) return opt;
+    // The overwhelmingly common case — no optimistic response in flight —
+    // skips the allocation of a reversed layer list entirely; this runs
+    // once per ref per record on every denormalizing read.
+    if (_optimisticLayers.isNotEmpty) {
+      // Check optimistic layers first (most recent to oldest).
+      for (final layer in _optimisticLayers.values.toList().reversed) {
+        final opt = layer.get(key);
+        if (opt != null) return opt;
+      }
     }
     return _store.get(key);
   }
 
-  Map<String, dynamic> _normalize(Map<String, dynamic> json) {
+  /// Normalizes [json], writing every nested entity it finds into [_store].
+  ///
+  /// When [typenames] is supplied, every `__typename` this walk encounters
+  /// — at this map and every map nested under it, whether or not that
+  /// nested map ends up replaced by a [RecordSource] ref — is added to it.
+  /// This lets [writeQuery] collect a write's touched typenames in the same
+  /// pass that builds the normalized record, instead of denormalizing the
+  /// result afterwards purely to re-walk it for __typename.
+  Map<String, dynamic> _normalize(
+    Map<String, dynamic> json, [
+    Set<String>? typenames,
+  ]) {
     final result = <String, dynamic>{};
 
     json.forEach((key, value) {
-      result[key] = _normalizeValue(value);
+      result[key] = _normalizeValue(value, typenames);
     });
+
+    final t = result['__typename'];
+    if (t is String) typenames?.add(t);
 
     final entityKey = _keyGetter(json);
     if (entityKey != null) {
@@ -213,16 +278,16 @@ class InMemoryCache implements Cache {
     return result;
   }
 
-  dynamic _normalizeValue(dynamic value) {
+  dynamic _normalizeValue(dynamic value, [Set<String>? typenames]) {
     if (value is Map<String, dynamic>) {
       final entityKey = _keyGetter(value);
-      final normalizedMap = _normalize(value);
+      final normalizedMap = _normalize(value, typenames);
       if (entityKey != null) {
         return RecordSource.makeRef(entityKey);
       }
       return normalizedMap;
     } else if (value is List) {
-      return value.map(_normalizeValue).toList();
+      return value.map((v) => _normalizeValue(v, typenames)).toList();
     } else if (value != null &&
         value is! String &&
         value is! num &&
@@ -236,7 +301,9 @@ class InMemoryCache implements Cache {
       // normalize/denormalize always operates on JSON-safe data, whatever
       // the field's own toJson() behavior is.
       final asJson = _dataToJson(value);
-      if (asJson is Map<String, dynamic>) return _normalizeValue(asJson);
+      if (asJson is Map<String, dynamic>) {
+        return _normalizeValue(asJson, typenames);
+      }
     }
     return value;
   }
@@ -331,5 +398,14 @@ class InMemoryCache implements Cache {
         _denormalize(entry.value),
       );
     }
+    _version++;
   }
+}
+
+/// A [InMemoryCache._readCache] entry: [data] as of [version] — see that
+/// field's doc comment for the invalidation scheme this is part of.
+class _ReadCacheEntry {
+  const _ReadCacheEntry(this.version, this.data);
+  final int version;
+  final dynamic data;
 }

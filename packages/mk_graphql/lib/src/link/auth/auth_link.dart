@@ -37,6 +37,7 @@ class AuthLink extends Link {
     this.onTokenRefresh,
     this.onRevokeToken,
     this.defaultHeaders = const {},
+    this.refreshTimeout,
   }) : _ownedDio = dio == null ? Dio() : null {
     final dioLink = DioLink(
       url,
@@ -77,6 +78,14 @@ class AuthLink extends Link {
 
   /// Callback to perform token refresh.
   final OnRefreshCallback? onTokenRefresh;
+
+  /// Bounds how long a single [onTokenRefresh] call may take before it's
+  /// treated as a failed refresh (same outcome as it throwing: the session
+  /// is revoked). `null` (the default) waits indefinitely, preserving prior
+  /// behavior — set this when your refresh endpoint can hang, so a stuck
+  /// request doesn't block every request queued behind
+  /// [_ongoingRefresh] forever.
+  final Duration? refreshTimeout;
 
   /// Called when the token is revoked.
   final OnRevokeTokenCallback? onRevokeToken;
@@ -271,7 +280,17 @@ class AuthLink extends Link {
 
   Future<void> _runRefresh(Completer<Map<String, String>?> completer) async {
     try {
-      final newHeaders = await onTokenRefresh!(_refreshClient);
+      // onTokenRefresh's declared return type is FutureOr, so it has no
+      // .timeout of its own — Future.sync normalizes it to a real Future
+      // first (also correctly capturing a synchronous throw as an async
+      // error, same as the plain `await` this replaces would have).
+      final refreshFuture = Future<Map<String, String>?>.sync(
+        () => onTokenRefresh!(_refreshClient),
+      );
+      final timeout = refreshTimeout;
+      final newHeaders = timeout != null
+          ? await refreshFuture.timeout(timeout)
+          : await refreshFuture;
       Logger.s('Access token refreshed successfully.', tag: 'AuthLink');
       completer.complete(newHeaders);
     } catch (exception, stackTrace) {

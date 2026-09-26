@@ -306,6 +306,12 @@ class DioLink extends Link {
       serializer.serializeRequest,
     )(request);
 
+    // A cheap existence check first: the overwhelmingly common request has
+    // no `Upload` scalar at all, and without this, every single request
+    // walks its whole variables tree allocating a fresh path-list at every
+    // nesting level just to conclude there's nothing to extract.
+    if (!_containsMultipartFile(body)) return body;
+
     final fileMap = _extractFlattenedFileMap(body);
     if (fileMap.isEmpty) return body;
 
@@ -482,6 +488,23 @@ class DioLink extends Link {
         response: res,
       );
     }
+  }
+
+  static bool _containsMultipartFile(dynamic body) {
+    if (body is dio.MultipartFile) return true;
+    if (body is Map) {
+      for (final value in body.values) {
+        if (_containsMultipartFile(value)) return true;
+      }
+      return false;
+    }
+    if (body is List) {
+      for (final value in body) {
+        if (_containsMultipartFile(value)) return true;
+      }
+      return false;
+    }
+    return false;
   }
 
   static Map<String, dio.MultipartFile> _extractFlattenedFileMap(

@@ -73,6 +73,14 @@ class GraphQLClient {
   /// `retry`; `null` disables auto-retry. Mutations never auto-retry.
   final RetryOptions? defaultRetry;
 
+  /// Caps how many of [_refetchActiveQueries]/[invalidateQueries]'s
+  /// background `networkOnly` refetches run concurrently. `null` (the
+  /// default) runs them all at once, preserving prior behavior. Set this if
+  /// your app can have many simultaneously active [watchQuery] subscribers,
+  /// so [notifyReconnected]/[notifyAppResumed]/[invalidateQueries] don't
+  /// fire an unbounded burst of concurrent requests at the server.
+  final int? maxConcurrentBackgroundRefetches;
+
   /// In-flight *query* network calls keyed by [computeRequestKey] —
   /// concurrent identical calls share one entry instead of each starting a
   /// separate pipeline request. Mutations, subscriptions, and any request
@@ -210,6 +218,13 @@ class GraphQLClient {
     /// yet.
     RefreshCallback? refreshCallback,
 
+    /// Bounds how long a single [refreshCallback] call may take before it's
+    /// treated as a failed refresh (revokes the session, same as it
+    /// throwing). `null` (the default) waits indefinitely. Set this when
+    /// your refresh endpoint can hang, so a stuck refresh doesn't block
+    /// every request queued behind it forever.
+    Duration? refreshTimeout,
+
     /// Whether to inject `__typename` into every selection set. Defaults to `true`.
     bool addTypename = true,
 
@@ -242,6 +257,12 @@ class GraphQLClient {
     /// own transport link).
     RetryOptions? defaultRetry,
 
+    /// Caps concurrent background `networkOnly` refetches from
+    /// [GraphQLClient.notifyReconnected]/[GraphQLClient.notifyAppResumed]/
+    /// [GraphQLClient.invalidateQueries]. `null` (the default) runs them
+    /// all at once.
+    int? maxConcurrentBackgroundRefetches,
+
     /// Logger Options
     LoggerOptions loggerOptions = const LoggerOptions(),
   }) {
@@ -272,6 +293,7 @@ class GraphQLClient {
       defaultStaleTime: defaultStaleTime,
       defaultCacheTime: defaultCacheTime,
       defaultRetry: defaultRetry,
+      maxConcurrentBackgroundRefetches: maxConcurrentBackgroundRefetches,
       loggerOptions: loggerOptions,
       ownedDio: dio == null ? dioInstance : null,
       pipeline: _buildPipeline(
@@ -288,6 +310,7 @@ class GraphQLClient {
         isUnauthorized: isUnauthorized,
         onTokenRefresh: resolvedCallbacks.onTokenRefresh,
         onRevokeToken: resolvedCallbacks.onRevokeToken,
+        refreshTimeout: refreshTimeout,
         addTypename: addTypename,
       ),
     );
@@ -310,6 +333,7 @@ class GraphQLClient {
     IsUnauthorizedCallback? isUnauthorized,
     OnRevokeTokenCallback? onRevokeToken,
     RefreshCallback? refreshCallback,
+    Duration? refreshTimeout,
     bool addTypename = true,
     FutureOr<Cache>? cache,
     FetchPolicy defaultFetchPolicy = FetchPolicy.noCache,
@@ -317,6 +341,7 @@ class GraphQLClient {
     Duration defaultStaleTime = Duration.zero,
     Duration? defaultCacheTime,
     RetryOptions? defaultRetry,
+    int? maxConcurrentBackgroundRefetches,
     LoggerOptions loggerOptions = const LoggerOptions(),
   }) async {
     final resolvedCache = await (cache ?? InMemoryCache());
@@ -333,6 +358,7 @@ class GraphQLClient {
       isUnauthorized: isUnauthorized,
       onRevokeToken: onRevokeToken,
       refreshCallback: refreshCallback,
+      refreshTimeout: refreshTimeout,
       addTypename: addTypename,
       cache: resolvedCache,
       defaultFetchPolicy: defaultFetchPolicy,
@@ -340,6 +366,7 @@ class GraphQLClient {
       defaultStaleTime: defaultStaleTime,
       defaultCacheTime: defaultCacheTime,
       defaultRetry: defaultRetry,
+      maxConcurrentBackgroundRefetches: maxConcurrentBackgroundRefetches,
       loggerOptions: loggerOptions,
     );
   }
@@ -352,6 +379,7 @@ class GraphQLClient {
     required this.defaultStaleTime,
     required this.defaultCacheTime,
     required this.defaultRetry,
+    this.maxConcurrentBackgroundRefetches,
     required Dio? ownedDio,
     required Link pipeline,
   })  : _ownedDio = ownedDio,
@@ -367,6 +395,7 @@ class GraphQLClient {
     this.defaultStaleTime = Duration.zero,
     this.defaultCacheTime,
     this.defaultRetry,
+    this.maxConcurrentBackgroundRefetches,
   })  : cache = cache ?? InMemoryCache(),
         _ownedDio = null,
         _pipeline = link;
@@ -443,6 +472,7 @@ class GraphQLClient {
     IsUnauthorizedCallback? isUnauthorized,
     OnRefreshCallback? onTokenRefresh,
     OnRevokeTokenCallback? onRevokeToken,
+    Duration? refreshTimeout,
     bool addTypename = true,
   }) {
     final dioInstance = dio;
@@ -461,6 +491,7 @@ class GraphQLClient {
         isUnauthorized: isUnauthorized,
         onTokenRefresh: onTokenRefresh,
         onRevokeToken: onRevokeToken,
+        refreshTimeout: refreshTimeout,
       ));
     }
 
@@ -513,30 +544,55 @@ class GraphQLClient {
     return Link.from(links);
   }
 
-  static bool _isSubscription(gql.Request req) {
-    final defs =
-        req.operation.document.definitions.whereType<OperationDefinitionNode>();
-    if (req.operation.operationName != null) {
-      final match =
-          defs.where((d) => d.name?.value == req.operation.operationName);
+  static bool _isSubscription(gql.Request req) => _operationIs(
+        req.operation.document,
+        req.operation.operationName,
+        OperationType.subscription,
+      );
+
+  static bool _isMutation(gql.Request req) => _operationIs(
+        req.operation.document,
+        req.operation.operationName,
+        OperationType.mutation,
+      );
+
+  /// Whether the operation named [operationName] in [document] (or, absent a
+  /// name, any operation in it) is of [type] — shared by [_isMutation]/
+  /// [_isSubscription] (checked against the wire-level [gql.Request]) and
+  /// [_forcedNoCachePolicy] (checked directly against a [GraphQLRequest],
+  /// before a [gql.Request] even exists).
+  static bool _operationIs(
+    DocumentNode document,
+    String? operationName,
+    OperationType type,
+  ) {
+    final defs = document.definitions.whereType<OperationDefinitionNode>();
+    if (operationName != null) {
+      final match = defs.where((d) => d.name?.value == operationName);
       if (match.isNotEmpty) {
-        return match.first.type == OperationType.subscription;
+        return match.first.type == type;
       }
     }
-    return defs.any((d) => d.type == OperationType.subscription);
+    return defs.any((d) => d.type == type);
   }
 
-  static bool _isMutation(gql.Request req) {
-    final defs =
-        req.operation.document.definitions.whereType<OperationDefinitionNode>();
-    if (req.operation.operationName != null) {
-      final match =
-          defs.where((d) => d.name?.value == req.operation.operationName);
-      if (match.isNotEmpty) {
-        return match.first.type == OperationType.mutation;
-      }
-    }
-    return defs.any((d) => d.type == OperationType.mutation);
+  /// Forces [FetchPolicy.noCache] for a mutation or subscription, regardless
+  /// of the request's own [GraphQLRequest.fetchPolicy] or
+  /// [defaultFetchPolicy] — reading or writing the normalized cache under a
+  /// mutation/subscription's own operation key never makes sense (there is
+  /// no "cached mutation result" to serve), and a mistaken override (e.g. a
+  /// hand-built request or a future generator default) must not be able to
+  /// make one happen. [GraphQLRequest.optimisticResponse] is unaffected —
+  /// it writes to the optimistic layer other *queries* read from, which is
+  /// how mutations opt into optimistic UI updates, and stays available no
+  /// matter the resolved policy.
+  static FetchPolicy _resolveFetchPolicy(GraphQLRequest req, FetchPolicy fallback) {
+    final policy = req.fetchPolicy ?? fallback;
+    if (policy == FetchPolicy.noCache) return policy;
+    final isMutationOrSubscription =
+        _operationIs(req.documentNode, req.operationName, OperationType.mutation) ||
+            _operationIs(req.documentNode, req.operationName, OperationType.subscription);
+    return isMutationOrSubscription ? FetchPolicy.noCache : policy;
   }
 
   /// Routes [gqlReq] through [_pipeline], deduplicating concurrent identical
@@ -695,7 +751,7 @@ class GraphQLClient {
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
   }) async* {
-    final policy = req.fetchPolicy ?? defaultFetchPolicy;
+    final policy = _resolveFetchPolicy(req, defaultFetchPolicy);
 
     if (req.optimisticResponse != null) {
       cache.recordOptimistic(req, req.optimisticResponse as TData);
@@ -893,21 +949,47 @@ class GraphQLClient {
       types: types,
     );
 
-    final refetches = <Future<void>>[];
+    final toRefetch = <GraphQLRequest>[];
     for (final key in keys) {
       cache.evict('ROOT_QUERY:$key');
       final active = _activeQueries[key];
       if (refetchActive && active != null && active.refCount > 0) {
-        refetches.add(_backgroundRefetch(active.latestRequest));
+        toRefetch.add(active.latestRequest);
       }
     }
-    await Future.wait(refetches);
+    await _backgroundRefetchAll(toRefetch);
   }
 
-  Future<void> _refetchActiveQueries() => Future.wait([
+  Future<void> _refetchActiveQueries() => _backgroundRefetchAll([
         for (final active in _activeQueries.values)
-          if (active.refCount > 0) _backgroundRefetch(active.latestRequest),
+          if (active.refCount > 0) active.latestRequest,
       ]);
+
+  /// Runs [_backgroundRefetch] for every request in [requests], honoring
+  /// [maxConcurrentBackgroundRefetches] when set. Each request only starts
+  /// once a free slot is available — unlike a plain `Future.wait` over an
+  /// eagerly-built list, which would already have started every one of them
+  /// before this ever got a chance to limit anything.
+  Future<void> _backgroundRefetchAll(List<GraphQLRequest> requests) async {
+    final limit = maxConcurrentBackgroundRefetches;
+    if (limit == null || requests.length <= limit) {
+      await Future.wait(requests.map(_backgroundRefetch));
+      return;
+    }
+
+    final inFlight = <Future<void>>{};
+    for (final req in requests) {
+      late final Future<void> future;
+      future = _backgroundRefetch(req).whenComplete(() {
+        inFlight.remove(future);
+      });
+      inFlight.add(future);
+      if (inFlight.length >= limit) {
+        await Future.any(inFlight);
+      }
+    }
+    await Future.wait(inFlight);
+  }
 
   /// Runs [req] as a `networkOnly` fetch purely to refresh the cache — used
   /// by staleness-on-attach, `refetchInterval`, [invalidateQueries], and

@@ -97,6 +97,8 @@ await TokenStorage.i.deleteToken();
 
    The real cause still reaches the caller as a thrown exception — see [Errors](client-and-requests.md#errors--validation).
 
+By default step 2 waits for `refreshCallback` indefinitely. If your refresh endpoint can hang, pass `GraphQLClient(refreshTimeout: const Duration(seconds: 10))` (or whatever fits your API) to treat a refresh that takes too long as a failed one — same outcome as it throwing, the session is revoked — instead of blocking every request queued behind it forever.
+
 ### Two listener families
 
 | Listener | Fires on | Not on |

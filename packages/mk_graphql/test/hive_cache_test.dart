@@ -197,6 +197,52 @@ void main() {
   });
 
   test(
+      'incremental writes persist every touched query, not just the most '
+      'recent one — regression for the diff-based persist that replaced a '
+      'full box clear()+putAll() on every batch', () async {
+    final reqA = _TestReq(const _TestVars('a'));
+    final reqB = _TestReq(const _TestVars('b'));
+    final reqC = _TestReq(const _TestVars('c'));
+
+    final cache1 = await HiveCache.open(boxName: 'gql_cache_incremental_test');
+    cache1.writeQuery(reqA, const _TestData(id: 'a', name: 'Alice'));
+    await pumpEventQueue();
+    cache1.writeQuery(reqB, const _TestData(id: 'b', name: 'Bob'));
+    await pumpEventQueue();
+    cache1.writeQuery(reqC, const _TestData(id: 'c', name: 'Carol'));
+    await pumpEventQueue();
+    await cache1.close();
+
+    final cache2 = await HiveCache.open(boxName: 'gql_cache_incremental_test');
+    expect(cache2.readQuery(reqA)?.name, equals('Alice'));
+    expect(cache2.readQuery(reqB)?.name, equals('Bob'));
+    expect(cache2.readQuery(reqC)?.name, equals('Carol'));
+    await cache2.close();
+  });
+
+  test(
+      'evicting one query leaves a separately persisted query untouched on '
+      'disk', () async {
+    final reqA = _TestReq(const _TestVars('a'));
+    final reqB = _TestReq(const _TestVars('b'));
+
+    final cache = await HiveCache.open(boxName: 'gql_cache_partial_evict_test');
+    cache.writeQuery(reqA, const _TestData(id: 'a', name: 'Alice'));
+    await pumpEventQueue();
+    cache.writeQuery(reqB, const _TestData(id: 'b', name: 'Bob'));
+    await pumpEventQueue();
+
+    cache.evictQuery(reqA);
+    await pumpEventQueue();
+    await cache.close();
+
+    final reopened = await HiveCache.open(boxName: 'gql_cache_partial_evict_test');
+    expect(reopened.readQuery(reqA), isNull);
+    expect(reopened.readQuery(reqB)?.name, equals('Bob'));
+    await reopened.close();
+  });
+
+  test(
       'a query hydrated from a reopened box is timestamped arbitrarily old, '
       'not "just written" — so it stays correctly stale under any '
       'configured staleTime, not just the default Duration.zero', () async {

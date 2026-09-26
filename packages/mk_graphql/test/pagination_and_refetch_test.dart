@@ -506,6 +506,61 @@ void main() {
     });
 
     test(
+        'GraphQLPaginator.loadAll with interPageDelay waits between pages, '
+        'not before the first one', () async {
+      final requestTimes = <DateTime>[];
+      final link = _MockDataLink((req) {
+        requestTimes.add(DateTime.now());
+        final offset = req.variables['offset'] as int? ?? 0;
+        if (offset == 0) {
+          return {
+            'items': ['1', '2'],
+          };
+        } else if (offset == 2) {
+          return {
+            'items': ['3', '4'],
+          };
+        } else {
+          return {
+            'items': ['5'],
+          };
+        }
+      });
+
+      final client = GraphQLClient.fromLink(link);
+      final req = _PageReq(const _PageVars(offset: 0, limit: 2));
+
+      final paginator = GraphQLPaginator<_PageData, _PageVars, String>.offset(
+        client: client,
+        initialRequest: req,
+        getItems: (d) => d.items,
+        updateOffset: (curr, offset, limit) =>
+            _PageVars(offset: offset, limit: limit),
+        limit: 2,
+      );
+
+      await paginator.loadAll(
+        interPageDelay: const Duration(milliseconds: 60),
+      );
+
+      expect(requestTimes, hasLength(3),
+          reason: 'loadInitial + two loadNext calls to exhaust 5 items '
+              'at a page size of 2');
+      final gapBeforeSecondPage =
+          requestTimes[1].difference(requestTimes[0]).inMilliseconds;
+      final gapBeforeThirdPage =
+          requestTimes[2].difference(requestTimes[1]).inMilliseconds;
+      expect(gapBeforeSecondPage, lessThan(30),
+          reason: 'no delay between loadInitial and the first loadNext — '
+              'interPageDelay only spaces out subsequent page requests');
+      expect(gapBeforeThirdPage, greaterThanOrEqualTo(55),
+          reason: 'interPageDelay must be waited before the second '
+              'loadNext call');
+
+      paginator.dispose();
+    });
+
+    test(
         'GraphQLPaginator applyVariables updates variables and refetch preserves them',
         () async {
       int receivedLimit = 0;

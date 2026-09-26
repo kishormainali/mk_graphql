@@ -139,7 +139,7 @@ Stops when `getHasNextPage` returns `false` or `getEndCursor` is null or empty.
 | `applyVariables(updateFn, {cancelToken})` | `Future<List<TItem>>` | Dynamically updates variables (e.g. search, filters, sorting), updates the base request on page 1, and fetches the new results without tearing down streams or resetting other active criteria. |
 | `updateVariables(newVariables, {cancelToken})` | `Future<List<TItem>>` | Replaces variables on page 1 and fetches new results. |
 | `refetch({cancelToken})` | `Future<List<TItem>>` | Restores the query back to `initialRequest` (resetting applied search/filters to default), fetches page 1 with `FetchPolicy.networkOnly`, and resets pagination state. |
-| `loadAll({maxPages = 100})` | `Future<List<TItem>>` | Continuously fetches subsequent pages until `hasMore` is `false` or `maxPages` is reached. |
+| `loadAll({maxPages = 100, interPageDelay})` | `Future<List<TItem>>` | Continuously fetches subsequent pages until `hasMore` is `false` or `maxPages` is reached. Pass `interPageDelay` (a `Duration?`, default `null`) to wait between pages after the first, instead of requesting every page as fast as each resolves — useful against a rate-limited API. |
 | `dispose()` | `void` | Closes internal streams and controllers. |
 
 ### Filter & Search Lifecycle: Reset vs Persistence

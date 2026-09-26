@@ -22,6 +22,14 @@ class HiveCache implements Cache {
 
   bool _persistScheduled = false;
 
+  /// The record instance persisted under each key as of the last successful
+  /// persist. [RecordSource.set] always installs a brand-new [Map] instance
+  /// whenever a key is touched (see its source), so a key whose record is
+  /// still `identical()` to the one captured here has not changed since —
+  /// letting [_schedulePersist] write only the records that actually
+  /// changed instead of dumping and rewriting the whole box on every batch.
+  Map<String, Map<String, dynamic>> _lastPersisted = {};
+
   /// Opens (creating if needed) the Hive box named [boxName], hydrates a
   /// fresh [InMemoryCache] from its contents, and returns a ready
   /// [HiveCache].
@@ -37,7 +45,9 @@ class HiveCache implements Cache {
         key as String: Map<String, dynamic>.from(box.get(key)!),
     };
     delegate.seed(seedData);
-    return HiveCache._(delegate, box, onPersistError);
+    final cache = HiveCache._(delegate, box, onPersistError);
+    cache._lastPersisted = Map.of(delegate.exportAll());
+    return cache;
   }
 
   void _schedulePersist() {
@@ -47,8 +57,21 @@ class HiveCache implements Cache {
       _persistScheduled = false;
       try {
         final snapshot = _delegate.exportAll();
-        await _box.clear();
-        await _box.putAll(snapshot);
+
+        final toPut = <String, Map<String, dynamic>>{};
+        for (final entry in snapshot.entries) {
+          if (!identical(_lastPersisted[entry.key], entry.value)) {
+            toPut[entry.key] = entry.value;
+          }
+        }
+        final toDelete = _lastPersisted.keys
+            .where((key) => !snapshot.containsKey(key))
+            .toList();
+
+        if (toPut.isNotEmpty) await _box.putAll(toPut);
+        if (toDelete.isNotEmpty) await _box.deleteAll(toDelete);
+
+        _lastPersisted = Map.of(snapshot);
       } catch (e, st) {
         _onPersistError?.call(e, st);
       }

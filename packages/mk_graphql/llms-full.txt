@@ -162,6 +162,8 @@ enum FetchPolicy {
 
 Set client-wide via `GraphQLClient(defaultFetchPolicy: ...)` (default `FetchPolicy.noCache`), override per request via `req.fetchPolicy` or `req.copyWithFetchPolicy(...)`.
 
+**Mutations and subscriptions always force `noCache`, unconditionally.** The client detects the operation type from the request's own document and ignores whatever `fetchPolicy` a mutation/subscription request carries (client default, per-request override, or a future generator default) — there is no cache entry for a mutation/subscription's own result to read or write, so this is enforced centrally rather than left to configuration. `optimisticResponse` is unaffected: it still writes to the optimistic layer other *queries* read from, which is how a mutation drives an optimistic UI update elsewhere in the cache.
+
 ### `ErrorPolicy`
 
 ```dart
@@ -326,6 +328,8 @@ await TokenStorage.i.deleteToken();
 3. On success, `TokenStorage.i.updateToken(...)` runs (silent) and the failed requests are retried once with the new access token.
 4. If it returns `null`/throws, or no refresh token is stored, or the failure classified as revoke: `TokenStorage.i.deleteToken()` runs (→ `setTokenListener` fires with `null`), `onRevokeToken` (if passed) is called, and every `GraphQLClient.registerRevokeTokenListener` listener fires. The real cause still reaches the caller as a thrown exception.
 
+`GraphQLClient(refreshTimeout: ...)` bounds how long a single `refreshCallback` call may take before it's treated as a failed refresh (same outcome as it throwing — the session is revoked). `null` (the default) waits indefinitely. Set this if your refresh endpoint can hang, so a stuck refresh doesn't block every request queued behind it forever.
+
 ### Two listener families
 
 | Listener | Fires on | Not on |
@@ -477,6 +481,8 @@ client.notifyAppPaused();     // call on background — skips opportunistic back
 
 Only queries with an active `watchQuery` subscriber are affected. `GraphQLRequest.refetchInterval` (a `Duration?`) polls a specific watched query on a timer.
 
+`GraphQLClient(maxConcurrentBackgroundRefetches: ...)` caps how many of `notifyReconnected`/`notifyAppResumed`/`invalidateQueries`'s background refetches run at once. `null` (the default) runs every active watched query's refetch concurrently, unbounded. Set this if your app can have many simultaneously active `watchQuery` subscribers, so reconnecting/resuming doesn't fire an unbounded burst of concurrent requests at your server.
+
 ### Persistent cache: `HiveCache`
 
 Backed by `hive_ce`. Drop-in normalized cache that mirrors to disk (writes go to an in-memory delegate synchronously, then debounce-export to a Hive `Box`). Optimistic writes are never persisted.
@@ -558,7 +564,7 @@ API:
 | `applyVariables(updateFn, {cancelToken})` | `Future<List<TItem>>` | Updates variables (search, filters) without tearing down streams; resets to page 1. |
 | `updateVariables(newVariables, {cancelToken})` | `Future<List<TItem>>` | Replaces variables on page 1 and fetches. |
 | `refetch({cancelToken})` | `Future<List<TItem>>` | Resets to `initialRequest` (clears filters), `FetchPolicy.networkOnly`, resets pagination state. |
-| `loadAll({maxPages = 100})` | `Future<List<TItem>>` | Fetches subsequent pages until `hasMore` is false or `maxPages` reached. |
+| `loadAll({maxPages = 100, interPageDelay})` | `Future<List<TItem>>` | Fetches subsequent pages until `hasMore` is false or `maxPages` reached. `interPageDelay` (a `Duration?`, default `null`) waits between pages after the first — set it to throttle against a rate-limited API instead of requesting every page back-to-back as fast as each resolves. |
 | `dispose()` | `void` | Closes internal streams/controllers. |
 
 Properties: `items` (`List<TItem>`), `accumulatedData` (`TData?`), `itemsStream` (`Stream<List<TItem>>`, deduped), `state` (`PaginationState<TItem>`: `items`, `isLoading`, `isLoadingMore`, `hasMore`, `error`), `stream` (`Stream<PaginationState<TItem>>`), `isLoading`, `isLoadingMore`, `hasMore`.

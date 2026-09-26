@@ -70,6 +70,78 @@ class _Req extends GraphQLRequest<_Wrapper, _Vars> {
       _Req(variables ?? this.variables);
 }
 
+/// Same shape as [_Req] but a distinct operation — used to prove the
+/// read-cache's invalidation is correct across different queries that
+/// share a normalized entity, not just within one query's own key.
+class _ReqB extends GraphQLRequest<_Wrapper, _Vars> {
+  @override
+  final _Vars variables;
+  const _ReqB(this.variables);
+
+  @override
+  String get document =>
+      'query GetMediaB(\$id: Int) { Media(id: \$id) { id title } }';
+
+  @override
+  String get operationName => 'GetMediaB';
+
+  @override
+  Map<String, dynamic> toJsonVars(_Vars vars) => vars.toJson();
+
+  @override
+  _Wrapper parseData(Map<String, dynamic> json) => _Wrapper.fromJson(json);
+
+  @override
+  _ReqB copyWithRequest({
+    _Vars? variables,
+    FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
+    Map<String, String>? headers,
+    CancelToken? cancelToken,
+    _Wrapper? optimisticResponse,
+  }) =>
+      _ReqB(variables ?? this.variables);
+}
+
+/// Same shape as [_Req], but counts every [parseData] call via [onParse] —
+/// used to prove the read-cache actually skips recomputation on a hit,
+/// not just that it returns the right value (which a bug that always
+/// recomputes would also do).
+class _CountingReq extends GraphQLRequest<_Wrapper, _Vars> {
+  _CountingReq(this.variables, this.onParse);
+
+  @override
+  final _Vars variables;
+  final void Function() onParse;
+
+  @override
+  String get document =>
+      'query GetMedia(\$id: Int) { Media(id: \$id) { id title } }';
+
+  @override
+  String get operationName => 'GetMedia';
+
+  @override
+  Map<String, dynamic> toJsonVars(_Vars vars) => vars.toJson();
+
+  @override
+  _Wrapper parseData(Map<String, dynamic> json) {
+    onParse();
+    return _Wrapper.fromJson(json);
+  }
+
+  @override
+  _CountingReq copyWithRequest({
+    _Vars? variables,
+    FetchPolicy? fetchPolicy,
+    ErrorPolicy? errorPolicy,
+    Map<String, String>? headers,
+    CancelToken? cancelToken,
+    _Wrapper? optimisticResponse,
+  }) =>
+      _CountingReq(variables ?? this.variables, onParse);
+}
+
 void main() {
   test(
       'writeQuery/readQuery round-trip a wrapper whose toJson() embeds a '
@@ -101,5 +173,77 @@ void main() {
     );
 
     expect(cache.matchingQueryKeys(types: const ['Media']), isNotEmpty);
+  });
+
+  group('readQuery memoization', () {
+    test(
+        'reading the same query repeatedly with no write in between reuses '
+        'the memoized result instead of denormalizing and parsing again',
+        () {
+      final cache = InMemoryCache();
+      var parseCount = 0;
+      final req = _CountingReq(const _Vars(1), () => parseCount++);
+
+      cache.writeQuery(
+        req,
+        const _Wrapper(media: _MediaEntity(id: 1, title: 'Cowboy Bebop')),
+      );
+      expect(parseCount, 0, reason: 'writeQuery never calls parseData');
+
+      final first = cache.readQuery(req);
+      final second = cache.readQuery(req);
+      final third = cache.readQuery(req);
+
+      expect(parseCount, 1,
+          reason: 'only the first read actually denormalizes and parses; '
+              'the next two are served from the memoized result since '
+              'nothing was written in between');
+      expect(second?.media?.title, first?.media?.title);
+      expect(third?.media?.title, first?.media?.title);
+    });
+
+    test(
+        'a write to a different query sharing the same normalized entity '
+        'invalidates a previously memoized read — the coarse invalidation '
+        'never serves stale data', () {
+      final cache = InMemoryCache();
+      const reqA = _Req(_Vars(1));
+      const reqB = _ReqB(_Vars(1));
+
+      cache.writeQuery(
+        reqA,
+        const _Wrapper(media: _MediaEntity(id: 1, title: 'Original Title')),
+      );
+      final firstRead = cache.readQuery(reqA);
+      expect(firstRead?.media?.title, 'Original Title');
+
+      // A completely different query, but it writes the same Media:1
+      // entity with a new title.
+      cache.writeQuery(
+        reqB,
+        const _Wrapper(media: _MediaEntity(id: 1, title: 'Updated Title')),
+      );
+
+      final secondRead = cache.readQuery(reqA);
+      expect(secondRead?.media?.title, 'Updated Title',
+          reason: 'reqA\'s memoized read must be invalidated by a write '
+              'that happened through a completely different query, since '
+              'both reference the same normalized Media:1 entity');
+    });
+
+    test('evicting a query invalidates its memoized read', () {
+      final cache = InMemoryCache();
+      const req = _Req(_Vars(1));
+
+      cache.writeQuery(
+        req,
+        const _Wrapper(media: _MediaEntity(id: 1, title: 'Cowboy Bebop')),
+      );
+      expect(cache.readQuery(req), isNotNull);
+
+      cache.evictQuery(req);
+
+      expect(cache.readQuery(req), isNull);
+    });
   });
 }

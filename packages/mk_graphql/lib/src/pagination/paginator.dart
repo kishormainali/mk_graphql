@@ -406,16 +406,27 @@ class GraphQLPaginator<TData, TVars, TItem> {
 
   /// Fetches all remaining pages until [hasMore] is false or [maxPages] is reached.
   ///
+  /// Requests pages back-to-back as fast as each resolves by default. Pass
+  /// [interPageDelay] to wait between pages instead — a slow or
+  /// rate-limited API otherwise gets hit by every page request as fast as
+  /// possible, with nothing to stop it.
+  ///
   /// Returns the complete accumulated list of [items].
   Future<List<TItem>> loadAll({
     int maxPages = 100,
     CancelToken? cancelToken,
+    Duration? interPageDelay,
   }) async {
     if (_state.items.isEmpty && !_state.isLoading) {
       await loadInitial(cancelToken: cancelToken);
     }
     var pagesCount = 1;
+    var isFirstNextPage = true;
     while (hasMore && pagesCount < maxPages && !_state.hasError) {
+      if (interPageDelay != null && !isFirstNextPage) {
+        await Future<void>.delayed(interPageDelay);
+      }
+      isFirstNextPage = false;
       final prevCount = _state.items.length;
       await loadNext(cancelToken: cancelToken);
       if (_state.items.length == prevCount) {

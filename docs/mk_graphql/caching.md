@@ -42,6 +42,8 @@ abstract class Cache {
 
 A successful network response is written to cache under all policies except `noCache`.
 
+**Mutations and subscriptions always force `noCache`, unconditionally.** The client detects the operation type from the request's own document and ignores whatever `fetchPolicy` a mutation/subscription request carries — the client default, a per-request override, or a future generator default — since there is no "cached mutation result" to serve. This is enforced centrally, not something you can opt out of. `GraphQLRequest.optimisticResponse` is unaffected: it still writes to the optimistic layer other *queries* read from, which is how a mutation drives an optimistic UI update elsewhere in the cache.
+
 ## Watching the cache
 
 `client.watchQuery(req)` returns a `Stream<TData?>` that emits whenever the entry backing `req` changes in the cache — independent of whether *this* client call triggered the write. Use it to keep a widget in sync with writes made elsewhere (e.g. a mutation's response, or a subscription payload landing via `writeQuery`).
@@ -151,6 +153,8 @@ Three ways to tell the client "re-run whatever's currently being watched":
 - `GraphQLRequest.refetchInterval` — a `Duration?` (default `null`) that, while the request has an active `watchQuery` subscriber, triggers a periodic background refetch; the timer is canceled once the last subscriber cancels.
 
 Both `notifyReconnected`/`notifyAppResumed` only refetch queries that currently have at least one active `watchQuery` subscriber — nothing fires for queries nobody's watching.
+
+By default, every one of those refetches (plus `invalidateQueries`'s background refetches) fires concurrently, with no cap. If your app can have many simultaneously active `watchQuery` subscribers, pass `GraphQLClient(maxConcurrentBackgroundRefetches: 6)` (or whatever fits your server) to bound how many run at once — reconnecting/resuming then no longer sends an unbounded burst of concurrent requests.
 
 ### Pausing background refetches: `notifyAppPaused`
 

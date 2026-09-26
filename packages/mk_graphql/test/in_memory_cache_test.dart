@@ -178,8 +178,7 @@ void main() {
   group('readQuery memoization', () {
     test(
         'reading the same query repeatedly with no write in between reuses '
-        'the memoized result instead of denormalizing and parsing again',
-        () {
+        'the memoized result instead of denormalizing and parsing again', () {
       final cache = InMemoryCache();
       var parseCount = 0;
       final req = _CountingReq(const _Vars(1), () => parseCount++);

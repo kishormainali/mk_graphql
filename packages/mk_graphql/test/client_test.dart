@@ -2569,10 +2569,9 @@ void main() {
 
       final subs = <StreamSubscription>[];
       for (var i = 0; i < 6; i++) {
-        final req = _TestReq(_TestVars('$i'),
-            staleTime: const Duration(minutes: 5));
-        client.cache
-            .writeQuery(req, _TestData(id: '$i', name: 'v$i'));
+        final req =
+            _TestReq(_TestVars('$i'), staleTime: const Duration(minutes: 5));
+        client.cache.writeQuery(req, _TestData(id: '$i', name: 'v$i'));
         subs.add(client.watchQuery(req).listen((_) {}));
       }
       await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -2595,10 +2594,9 @@ void main() {
 
       final subs = <StreamSubscription>[];
       for (var i = 0; i < 6; i++) {
-        final req = _TestReq(_TestVars('$i'),
-            staleTime: const Duration(minutes: 5));
-        client.cache
-            .writeQuery(req, _TestData(id: '$i', name: 'v$i'));
+        final req =
+            _TestReq(_TestVars('$i'), staleTime: const Duration(minutes: 5));
+        client.cache.writeQuery(req, _TestData(id: '$i', name: 'v$i'));
         subs.add(client.watchQuery(req).listen((_) {}));
       }
       await Future<void>.delayed(const Duration(milliseconds: 10));

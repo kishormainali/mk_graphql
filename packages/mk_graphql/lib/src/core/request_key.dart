@@ -21,7 +21,8 @@ String computeRequestKey(GraphQLRequest request) {
 
   final vars = request.toJsonVars(request.variables);
   final sortedVars = _canonicalJson(vars);
-  final key = '${request.operationName}:${request.document.hashCode}:$sortedVars';
+  final key =
+      '${request.operationName}:${request.document.hashCode}:$sortedVars';
   _requestKeyCache[request] = key;
   return key;
 }

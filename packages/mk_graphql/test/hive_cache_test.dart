@@ -236,7 +236,8 @@ void main() {
     await pumpEventQueue();
     await cache.close();
 
-    final reopened = await HiveCache.open(boxName: 'gql_cache_partial_evict_test');
+    final reopened =
+        await HiveCache.open(boxName: 'gql_cache_partial_evict_test');
     expect(reopened.readQuery(reqA), isNull);
     expect(reopened.readQuery(reqB)?.name, equals('Bob'));
     await reopened.close();

@@ -37,8 +37,8 @@ class _PageData {
   const _PageData(this.items);
   factory _PageData.fromJson(Map<String, dynamic> json) => _PageData(
         (json['items'] as List)
-            .map((e) => _Item(
-                e['id'] as String, e['name'] as String, e['description'] as String))
+            .map((e) => _Item(e['id'] as String, e['name'] as String,
+                e['description'] as String))
             .toList(),
       );
   Map<String, dynamic> toJson() =>

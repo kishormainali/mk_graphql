@@ -586,12 +586,14 @@ class GraphQLClient {
   /// it writes to the optimistic layer other *queries* read from, which is
   /// how mutations opt into optimistic UI updates, and stays available no
   /// matter the resolved policy.
-  static FetchPolicy _resolveFetchPolicy(GraphQLRequest req, FetchPolicy fallback) {
+  static FetchPolicy _resolveFetchPolicy(
+      GraphQLRequest req, FetchPolicy fallback) {
     final policy = req.fetchPolicy ?? fallback;
     if (policy == FetchPolicy.noCache) return policy;
-    final isMutationOrSubscription =
-        _operationIs(req.documentNode, req.operationName, OperationType.mutation) ||
-            _operationIs(req.documentNode, req.operationName, OperationType.subscription);
+    final isMutationOrSubscription = _operationIs(
+            req.documentNode, req.operationName, OperationType.mutation) ||
+        _operationIs(
+            req.documentNode, req.operationName, OperationType.subscription);
     return isMutationOrSubscription ? FetchPolicy.noCache : policy;
   }
 

@@ -187,17 +187,19 @@ final client = GraphQLClient(
   // sseUrl: 'https://api.example.com/graphql/sse',
   // wsUrl: 'wss://api.example.com/graphql',
 
-  // Optional: Dynamic token header
-  tokenHeader: () async {
-    final token = await secureStorage.read(key: 'jwt');
-    return token != null ? {'Authorization': 'Bearer $token'} : {};
+  // Optional: sole source of truth for token refresh. The client manages
+  // TokenStorage.i and the `Authorization` header itself — no app-side
+  // storage or header plumbing needed.
+  refreshCallback: (refreshClient, refreshToken) async {
+    return authService.refresh(refreshToken); // returns a TokenPair, or null/throw to revoke
   },
 
-  // Optional: Proactive or 401 token refresh callback
-  onTokenRefresh: (dioLink) async {
-    final refreshedToken = await authService.refresh();
-    return refreshedToken != null ? {'Authorization': 'Bearer $refreshedToken'} : null;
-  },
+  // Optional: if your refresh endpoint expects the refresh token in a
+  // header (rather than as the `refreshToken` param above), this attaches
+  // it to every request made through `refreshClient` instead of the
+  // access-token header. No default — only attached if you pass this.
+  // refreshTokenHeader: (refreshToken) async =>
+  //     {'Authorization': 'Bearer $refreshToken'},
 
   // Default fetch policy (cacheFirst, networkOnly, cacheAndNetwork, noCache)
   defaultFetchPolicy: FetchPolicy.cacheFirst,

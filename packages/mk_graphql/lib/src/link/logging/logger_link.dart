@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 
+import '../../core/document_print_cache.dart';
 import 'logger.dart';
 import 'logger_options.dart';
 
@@ -95,7 +95,7 @@ class LoggerLink extends Link {
   void _addQueryToMessages(Request request, List<String> messages) {
     try {
       if (options.requestBody) {
-        messages.add(printNode(request.operation.document));
+        messages.add(printDocumentCached(request.operation.document));
       }
     } catch (_) {
       messages.add('Query::: [Failed to encode]');

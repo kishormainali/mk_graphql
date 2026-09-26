@@ -35,16 +35,12 @@ final client = GraphQLClient(
   sseUrl: 'https://api.example.com/graphql/sse',
   // wsUrl: 'wss://api.example.com/graphql',
 
-  // Optional: auth headers attached to every request
-  tokenHeader: () async {
-    final token = await getStoredToken();
-    return token != null ? {'Authorization': 'Bearer $token'} : {};
-  },
-
-  // Optional: called on 401 response to refresh token and retry
-  onTokenRefresh: (dioLink) async {
-    final newToken = await refreshUserToken();
-    return newToken != null ? {'Authorization': 'Bearer $newToken'} : null;
+  // Optional: the sole source of truth for token refresh. The client manages
+  // TokenStorage.i and the `Authorization` header on its own — no app-side
+  // storage or header plumbing needed.
+  refreshCallback: (refreshClient, refreshToken) async {
+    final newToken = await refreshUserToken(refreshClient, refreshToken);
+    return newToken; // a TokenPair, or null/throw to revoke
   },
 
   // Optional: default fetch policy (defaults to FetchPolicy.noCache)
@@ -64,6 +60,21 @@ AuthLink?  →  TypenameLink?  →  LoggerLink  →  split(subscription?, WebSoc
 ```
 
 See [Link Pipeline](links.md) for details on customizing links or using `GraphQLClient.fromLink(...)`.
+
+`GraphQLClient` reads and writes tokens through the `TokenStorage.i` singleton
+— it never needs app-side storage plumbing when `refreshCallback` is
+configured. On explicit logout, call `TokenStorage.i.deleteToken()` and
+`AuthLink.notifyRevokeToken()` to drive app-wide auth state (e.g. navigate to
+the login screen) via `GraphQLClient.registerRevokeTokenListener(...)`.
+
+`TokenStorage.i.setTokenListener(...)` fires when a session is saved
+(`saveToken`, e.g. on login) and when it is cleared (`deleteToken`, with
+`null`) — but **not** when `refreshCallback` refreshes the tokens. A refresh is
+written silently via `TokenStorage.i.updateToken(...)`, so app routing driven by
+the listener isn't rebuilt; the next request just picks up the new tokens from
+storage. `TokenPair.createdAt`/`updatedAt` (from `TokenStorage.i.getToken()`)
+record when the session started and when it was last refreshed. See
+[Authentication & Token Storage](authentication.md) for the full picture.
 
 ---
 

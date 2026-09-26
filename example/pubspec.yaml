@@ -21,11 +21,13 @@ dependencies:
   get_it: ^9.2.1
   flutter_bloc: ^9.1.1
   bloc_concurrency: ^0.3.0
+  hive_ce_flutter: ^2.3.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   bloc_test: ^10.0.0
+  hive_ce: ^2.20.0
   mk_graphql_generator: ^1.0.0
   build_runner: ^2.16.1
   auto_route_generator: ^10.6.0

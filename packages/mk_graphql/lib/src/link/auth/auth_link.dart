@@ -3,31 +3,16 @@ import 'dart:async';
 import 'package:dio/dio.dart' hide Response;
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
-import '../transport/dio_link.dart';
-import '../logging/logger.dart';
 
+import '../../auth/token_storage.dart';
 import '../../client/client.dart';
-import '../../core/error.dart';
+import '../../core/error.dart' hide GraphQLError;
+import '../logging/logger.dart';
+import '../transport/dio_link.dart';
+import 'auth_types.dart';
+import 'refresh_header_link.dart';
 
-/// Callback that supplies the current access-token headers (e.g. Authorization).
-/// Return null or empty map when no token is available.
-typedef AccessTokenCallback = FutureOr<Map<String, String>?> Function();
-
-/// Callback invoked when the access token is expired.
-/// Receives a plain [GraphQLClient] (no auth link attached) that can be used
-/// to perform the refresh request via its normal typed API (e.g. `refreshClient.future(...)`).
-/// Should return new headers to use (e.g. `{'Authorization': 'Bearer <newToken>'}`),
-/// or return null / throw to trigger token revocation.
-typedef OnRefreshCallback = FutureOr<Map<String, String>?> Function(
-    GraphQLClient refreshClient);
-
-/// Optional callback that returns whether the current token is expired.
-/// If omitted, expiry is not checked proactively — only unauthorized responses trigger refresh.
-typedef IsTokenExpiredCallback = FutureOr<bool> Function();
-
-/// Callback invoked when the token is revoked (refresh failed or server returned
-/// unauthorized and refresh is not possible).
-typedef OnRevokeTokenCallback = void Function();
+export 'auth_types.dart';
 
 /// {@template auth_link}
 /// A [Link] that injects authentication headers into every request.
@@ -45,21 +30,50 @@ class AuthLink extends Link {
   AuthLink({
     required this.url,
     Dio? dio,
-    this.tokenHeader,
+    this.accessTokenHeader,
+    this.refreshTokenHeader,
     this.isTokenExpired,
+    this.isUnauthorized,
     this.onTokenRefresh,
     this.onRevokeToken,
-  }) : _refreshClient =
-            GraphQLClient.fromLink(DioLink(url, client: dio ?? Dio()));
+    this.defaultHeaders = const {},
+  }) : _ownedDio = dio == null ? Dio() : null {
+    final dioLink = DioLink(
+      url,
+      client: dio ?? _ownedDio!,
+      defaultHeaders: defaultHeaders,
+    );
+    _refreshClient = GraphQLClient.fromLink(
+      refreshTokenHeader != null
+          ? Link.from([RefreshHeaderLink(refreshTokenHeader!), dioLink])
+          : dioLink,
+    );
+  }
 
   /// The GraphQL endpoint URL — also used for token refresh requests.
   final String url;
 
-  /// Callback that returns the current auth headers (e.g. `Authorization`).
-  final AccessTokenCallback? tokenHeader;
+  /// Default HTTP headers for the internal refresh client's requests — the
+  /// same ones the app's terminating link sends, so a token refresh reaches
+  /// the server looking like any other request from this client.
+  final Map<String, String> defaultHeaders;
+
+  /// Callback that returns the current auth headers built from the access
+  /// token (e.g. `Authorization`) — attached to every normal outgoing
+  /// request.
+  final TokenHeaderCallback? accessTokenHeader;
+
+  /// Callback that returns headers built from the refresh token (e.g.
+  /// `Authorization`) — when provided, attached to every request sent
+  /// through [_refreshClient] instead of [accessTokenHeader].
+  final TokenHeaderCallback? refreshTokenHeader;
 
   /// Optional callback to check whether the current token is expired.
   final IsTokenExpiredCallback? isTokenExpired;
+
+  /// Optional override for classifying a possibly-unauthorized response.
+  /// Falls back to [_defaultClassify]'s built-in convention when omitted.
+  final IsUnauthorizedCallback? isUnauthorized;
 
   /// Callback to perform token refresh.
   final OnRefreshCallback? onTokenRefresh;
@@ -69,6 +83,11 @@ class AuthLink extends Link {
 
   /// Internal [GraphQLClient] (no auth link) used exclusively for refresh requests.
   late final GraphQLClient _refreshClient;
+
+  /// The [Dio] this [AuthLink] created for itself (no `dio:` argument was
+  /// supplied) — closed by [dispose]. Null when the caller supplied their
+  /// own [Dio], which stays theirs to close.
+  final Dio? _ownedDio;
 
   /// Concurrent-refresh lock.
   Future<Map<String, String>?>? _ongoingRefresh;
@@ -112,7 +131,7 @@ class AuthLink extends Link {
     var currentHeaders = Map<String, String>.from(contextHeaders);
 
     // 2. Proactive token-expiry check
-    if (tokenHeader != null &&
+    if (accessTokenHeader != null &&
         isTokenExpired != null &&
         onTokenRefresh != null) {
       final expired = await isTokenExpired!();
@@ -123,18 +142,18 @@ class AuthLink extends Link {
         try {
           final newHeaders = await _refreshToken();
           if (newHeaders != null) currentHeaders.addAll(newHeaders);
-        } on RevokeTokenException {
+        } on RevokeTokenException catch (e) {
           _handleRevokeToken();
-          return;
+          throw e; // surfaces the real refresh failure to the caller
         }
       } else {
-        final authHeaders = await tokenHeader!();
+        final authHeaders = await _buildAccessHeaders();
         if (authHeaders != null && authHeaders.isNotEmpty) {
           currentHeaders.addAll(authHeaders);
         }
       }
-    } else if (tokenHeader != null) {
-      final authHeaders = await tokenHeader!();
+    } else if (accessTokenHeader != null) {
+      final authHeaders = await _buildAccessHeaders();
       if (authHeaders != null && authHeaders.isNotEmpty) {
         currentHeaders.addAll(authHeaders);
       }
@@ -149,35 +168,93 @@ class AuthLink extends Link {
         ? req.withContextEntry(HttpLinkHeaders(headers: currentHeaders))
         : req;
 
-    // 3. Execute and watch for unauthorized responses mid-stream
-    await for (final response in forward(authReq)) {
-      if (_isUnauthorized(response) && onTokenRefresh != null) {
-        Logger.w(
-            'Unauthorized response received — attempting token refresh and retry.',
-            tag: 'AuthLink');
-        try {
-          final newHeaders = await _refreshToken();
-          if (newHeaders != null && newHeaders.isNotEmpty) {
-            final retryHeaders = Map<String, String>.from(contextHeaders)
-              ..addAll(newHeaders);
-            final retryReq =
-                req.withContextEntry(HttpLinkHeaders(headers: retryHeaders));
-            yield* forward(retryReq);
-          } else {
-            _handleRevokeToken();
+    // 3. Execute, watching for unauthorized responses both as a normal
+    // GraphQL error payload (HTTP 200 + errors[].extensions.code) and as a
+    // thrown ServerException (real HTTP 401/403 — e.g. DioLinkServerException,
+    // which terminating links throw instead of yielding for non-2xx statuses).
+    try {
+      await for (final response in forward(authReq)) {
+        if (onTokenRefresh != null) {
+          switch (_classify(response: response)) {
+            case AuthFailure.refresh:
+              yield* _refreshAndRetry(req, contextHeaders, forward,
+                  originalResponse: response);
+              return;
+            case AuthFailure.revoke:
+              _handleRevokeToken();
+              yield response; // still surfaces the real GraphQL error
+              return;
+            case AuthFailure.none:
+              break;
           }
-        } on RevokeTokenException {
-          _handleRevokeToken();
         }
-        return;
+        yield response;
       }
-      yield response;
+    } on ServerException catch (e) {
+      if (onTokenRefresh != null) {
+        switch (_classify(response: e.parsedResponse, exception: e)) {
+          case AuthFailure.refresh:
+            yield* _refreshAndRetry(req, contextHeaders, forward,
+                originalException: e);
+            return;
+          case AuthFailure.revoke:
+            _handleRevokeToken();
+            rethrow; // still surfaces the real HTTP status/response
+          case AuthFailure.none:
+            break;
+        }
+      }
+      rethrow;
+    }
+  }
+
+  /// [originalResponse]/[originalException] is the unauthorized
+  /// response/exception that triggered this refresh — surfaced to the
+  /// caller if the refresh itself fails, instead of silently ending the
+  /// stream with no error at all.
+  Stream<Response> _refreshAndRetry(
+    Request req,
+    Map<String, String> contextHeaders,
+    NextLink forward, {
+    Response? originalResponse,
+    ServerException? originalException,
+  }) async* {
+    Logger.w(
+        'Unauthorized response received — attempting token refresh and retry.',
+        tag: 'AuthLink');
+    try {
+      final newHeaders = await _refreshToken();
+      if (newHeaders != null && newHeaders.isNotEmpty) {
+        final retryHeaders = Map<String, String>.from(contextHeaders)
+          ..addAll(newHeaders);
+        final retryReq =
+            req.withContextEntry(HttpLinkHeaders(headers: retryHeaders));
+        yield* forward(retryReq);
+      } else {
+        _handleRevokeToken();
+        if (originalResponse != null) {
+          yield originalResponse;
+        } else if (originalException != null) {
+          throw originalException;
+        }
+      }
+    } on RevokeTokenException catch (e) {
+      _handleRevokeToken();
+      throw e; // the refresh failure itself, more specific than the original
     }
   }
 
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  /// Reads the current access token from [TokenStorage.i] and passes it to
+  /// [accessTokenHeader] — only called when a token is actually stored.
+  Future<Map<String, String>?> _buildAccessHeaders() async {
+    final token = await TokenStorage.i.accessToken;
+    if (token == null) return null;
+    return accessTokenHeader!(token);
+  }
 
   Future<Map<String, String>?> _refreshToken() {
     if (_ongoingRefresh != null) {
@@ -200,7 +277,16 @@ class AuthLink extends Link {
     } catch (exception, stackTrace) {
       Logger.e('Failed to refresh access token — revoking.',
           error: exception, stackTrace: stackTrace, tag: 'AuthLink');
-      completer.completeError(const RevokeTokenException(), stackTrace);
+      completer.completeError(
+        exception is RevokeTokenException
+            ? exception
+            : RevokeTokenException(
+                message: 'Token refresh failed: $exception',
+                originalException: exception,
+                originalStackTrace: stackTrace,
+              ),
+        stackTrace,
+      );
     } finally {
       _ongoingRefresh = null;
     }
@@ -212,13 +298,49 @@ class AuthLink extends Link {
     notifyRevokeToken();
   }
 
-  bool _isUnauthorized(Response response) {
-    if (response.errors != null && response.errors!.isNotEmpty) {
-      final code = response.errors!.first.extensions?['code'];
-      return code == 'UNAUTHORIZED' ||
-          code == 'UNAUTHENTICATED' ||
-          code == 'FORBIDDEN';
+  /// Builds a normalized [UnauthorizedContext] and dispatches to the
+  /// app-supplied [isUnauthorized] when provided, else falls back to
+  /// [_defaultClassify].
+  AuthFailure _classify({Response? response, ServerException? exception}) {
+    final context = UnauthorizedContext(
+      errors: response?.errors,
+      statusCode: exception?.statusCode,
+      response: response,
+      exception: exception,
+    );
+    return isUnauthorized != null
+        ? isUnauthorized!(context)
+        : _defaultClassify(context);
+  }
+
+  /// Treats `FORBIDDEN`/HTTP 403 (a valid token lacking permission — a
+  /// refresh wouldn't grant more access) as [AuthFailure.revoke], and
+  /// `UNAUTHORIZED`/`UNAUTHENTICATED`/HTTP 401 (an expired/invalid token) as
+  /// [AuthFailure.refresh].
+  AuthFailure _defaultClassify(UnauthorizedContext context) {
+    final code = context.errorCode;
+    final status = context.statusCode;
+    final extStatus = context.extensionsStatus;
+    if (code == 'FORBIDDEN' || status == 403 || extStatus == 403) {
+      return AuthFailure.revoke;
     }
-    return false;
+    if (code == 'UNAUTHORIZED' ||
+        code == 'UNAUTHENTICATED' ||
+        status == 401 ||
+        extStatus == 401) {
+      return AuthFailure.refresh;
+    }
+    return AuthFailure.none;
+  }
+
+  /// Closes the [Dio] used by the internal refresh client, but only if this
+  /// [AuthLink] created it itself (see [_ownedDio]) — a caller-supplied
+  /// [Dio] stays theirs to close. Deliberately does NOT call
+  /// `_refreshClient.dispose()`: that would also clear the *global*
+  /// revoke-token listener registry (see [clearRevokeTokenListeners]), an
+  /// unrelated side effect this internal helper client shouldn't trigger.
+  @override
+  Future<void> dispose() async {
+    _ownedDio?.close();
   }
 }

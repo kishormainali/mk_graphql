@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import '../core/error_policy.dart';
 import '../core/fetch_policy.dart';
 import '../core/request.dart';
+import '../core/retry_options.dart';
 
 /// Combines multiple [GraphQLRequest] instances into a single composed request.
 ///
@@ -16,10 +17,18 @@ class CompositeGraphQLRequest
     FetchPolicy? fetchPolicy,
     ErrorPolicy? errorPolicy,
     Map<String, String>? headers,
+    Duration? staleTime,
+    Duration? cacheTime,
+    RetryOptions? retry,
+    Duration? refetchInterval,
   }) : super(
           fetchPolicy: fetchPolicy,
           errorPolicy: errorPolicy,
           headers: headers,
+          staleTime: staleTime,
+          cacheTime: cacheTime,
+          retry: retry,
+          refetchInterval: refetchInterval,
           requestId: requests.map((r) => r.requestId).join('_'),
         );
 
@@ -61,6 +70,10 @@ class CompositeGraphQLRequest
       fetchPolicy: fetchPolicy ?? this.fetchPolicy,
       errorPolicy: errorPolicy ?? this.errorPolicy,
       headers: headers ?? this.headers,
+      staleTime: staleTime,
+      cacheTime: cacheTime,
+      retry: retry,
+      refetchInterval: refetchInterval,
     );
   }
 }

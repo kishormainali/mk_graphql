@@ -1,6 +1,6 @@
 name: mk_graphql
 description: A clean, modern, simplified GraphQL client for Dart & Flutter with normalized caching, composable links, and stream-based operation execution.
-version: 1.2.0
+version: 1.2.1-dev.6
 
 homepage: https://github.com/kishormainali/mk_graphql
 repository: https://github.com/kishormainali/mk_graphql/tree/main/packages/mk_graphql
@@ -26,12 +26,17 @@ dependencies:
   gql: ^1.0.1
   gql_exec: ^1.0.0+1
   gql_link: ^1.1.0
-  http: ^1.6.0
   web_socket_channel: ^3.0.3
   async: ^2.13.1
-  meta: ^1.12.0
-  collection: ^1.18.0
+  meta: ^1.15.0
+  collection: ^1.19.0
+  flutter_secure_storage: ^11.2.0
+
+  shared_preferences: ^2.5.5
+  equatable: ^3.0.0
+  hive_ce: ^2.20.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
   lints: ^6.1.0
+  shared_preferences_platform_interface: ^2.4.1

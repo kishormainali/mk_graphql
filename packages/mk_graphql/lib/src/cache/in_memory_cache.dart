@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 import '../core/request.dart';
+import '../core/request_key.dart';
 import 'cache.dart';
 import 'record_source.dart';
 
@@ -9,6 +9,9 @@ class InMemoryCache implements Cache {
   final RecordSource _store = RecordSource();
   final Map<String, RecordSource> _optimisticLayers = {};
   final KeyGetter _keyGetter;
+
+  final Map<String, DateTime> _writtenAt = {};
+  final Map<String, Set<String>> _queryTypenames = {};
 
   final _watchers = <String, Set<StreamController<dynamic>>>{};
 
@@ -28,33 +31,9 @@ class InMemoryCache implements Cache {
     return null;
   }
 
-  String _requestKey(GraphQLRequest req) {
-    final vars = req.toJsonVars(req.variables);
-    final sortedVars = _canonicalJson(vars);
-    return '${req.operationName}:${req.document.hashCode}:$sortedVars';
-  }
-
-  static String _canonicalJson(dynamic value) {
-    if (value is Map) {
-      final sortedKeys = value.keys.map((e) => e.toString()).toList()..sort();
-      final buffer = StringBuffer('{');
-      for (var i = 0; i < sortedKeys.length; i++) {
-        if (i > 0) buffer.write(',');
-        final k = sortedKeys[i];
-        buffer.write('"${k}":${_canonicalJson(value[k])}');
-      }
-      buffer.write('}');
-      return buffer.toString();
-    } else if (value is List) {
-      return '[${value.map(_canonicalJson).join(',')}]';
-    } else {
-      return jsonEncode(value);
-    }
-  }
-
   @override
   TData? readQuery<TData, TVars>(GraphQLRequest<TData, TVars> request) {
-    final queryKey = 'ROOT_QUERY:${_requestKey(request)}';
+    final queryKey = 'ROOT_QUERY:${computeRequestKey(request)}';
     final rootRecord = _getRecord(queryKey);
     if (rootRecord == null) return null;
 
@@ -71,12 +50,21 @@ class InMemoryCache implements Cache {
     GraphQLRequest<TData, TVars> request,
     TData data,
   ) {
-    final queryKey = 'ROOT_QUERY:${_requestKey(request)}';
+    final key = computeRequestKey(request);
+    final queryKey = 'ROOT_QUERY:$key';
     final json = _dataToJson(data);
 
     if (json is Map<String, dynamic>) {
       final normalized = _normalize(json);
       _store.set(queryKey, normalized);
+      _writtenAt[key] = DateTime.now();
+      // Collected from the already-normalized (and therefore already
+      // JSON-safe — see _normalizeValue) record rather than the raw [json]:
+      // a field toJson() didn't recursively serialize itself (the common
+      // case for generated wrapper models) would otherwise hide its
+      // __typename from here even though _normalize() itself handles it
+      // fine.
+      _queryTypenames[key] = _collectTypenames(_denormalize(normalized));
       _notifyWatchers(request);
     }
   }
@@ -103,11 +91,16 @@ class InMemoryCache implements Cache {
   @override
   void evict(String key) {
     _store.delete(key);
+    if (key.startsWith('ROOT_QUERY:')) {
+      final requestKey = key.substring('ROOT_QUERY:'.length);
+      _writtenAt.remove(requestKey);
+      _queryTypenames.remove(requestKey);
+    }
   }
 
   @override
   void evictQuery<TData, TVars>(GraphQLRequest<TData, TVars> request) {
-    final queryKey = 'ROOT_QUERY:${_requestKey(request)}';
+    final queryKey = 'ROOT_QUERY:${computeRequestKey(request)}';
     evict(queryKey);
     _notifyWatchers(request);
   }
@@ -116,12 +109,14 @@ class InMemoryCache implements Cache {
   void clear() {
     _store.clear();
     _optimisticLayers.clear();
+    _writtenAt.clear();
+    _queryTypenames.clear();
   }
 
   @override
   Stream<TData?> watchQuery<TData, TVars>(
       GraphQLRequest<TData, TVars> request) {
-    final key = _requestKey(request);
+    final key = computeRequestKey(request);
     final controller = StreamController<TData?>.broadcast();
 
     _watchers
@@ -135,8 +130,16 @@ class InMemoryCache implements Cache {
       }
     };
 
-    // Emit initial value
+    // Emit initial value.
     final initialData = readQuery(request);
+    // NOTE: this add() is currently unreachable for callers going through
+    // GraphQLClient.watchQuery — its own listener isn't attached to this
+    // broadcast stream yet when this fires, so the event is silently
+    // dropped, and client.dart works around it by seeding its outer
+    // controller itself (`controller.add(cache.readQuery(req))` inside its
+    // onListen). If this drop is ever "fixed" here in isolation,
+    // GraphQLClient.watchQuery will start double-emitting its first value —
+    // fix both together, or remove the client-side seed workaround first.
     controller.add(initialData);
 
     return controller.stream;
@@ -148,7 +151,7 @@ class InMemoryCache implements Cache {
     TData data,
   ) {
     final layer = RecordSource();
-    final queryKey = 'ROOT_QUERY:${_requestKey(request)}';
+    final queryKey = 'ROOT_QUERY:${computeRequestKey(request)}';
     final json = _dataToJson(data);
 
     if (json is Map<String, dynamic>) {
@@ -164,6 +167,25 @@ class InMemoryCache implements Cache {
     if (_optimisticLayers.containsKey(requestId)) {
       _optimisticLayers.remove(requestId);
     }
+  }
+
+  @override
+  DateTime? writtenAt<TData, TVars>(GraphQLRequest<TData, TVars> request) =>
+      _writtenAt[computeRequestKey(request)];
+
+  @override
+  Iterable<String> matchingQueryKeys({
+    List<String>? operationNames,
+    List<String>? types,
+  }) {
+    if (operationNames == null && types == null) return const [];
+    return _writtenAt.keys.where((key) {
+      final opMatch = operationNames != null &&
+          operationNames.any((name) => key.startsWith('$name:'));
+      final typeMatch =
+          types != null && (_queryTypenames[key]?.any(types.contains) ?? false);
+      return opMatch || typeMatch;
+    }).toList();
   }
 
   Map<String, dynamic>? _getRecord(String key) {
@@ -201,6 +223,20 @@ class InMemoryCache implements Cache {
       return normalizedMap;
     } else if (value is List) {
       return value.map(_normalizeValue).toList();
+    } else if (value != null &&
+        value is! String &&
+        value is! num &&
+        value is! bool) {
+      // A nested typed object (e.g. a generated freezed model field) that
+      // the parent's own toJson() didn't already recursively convert —
+      // json_serializable only does this when a class opts into
+      // `explicitToJson: true`, which the generator's classes don't (it
+      // breaks fromJson for classes with required fields; see
+      // dart_codegen.dart). Coerce it into a plain JSON map ourselves so
+      // normalize/denormalize always operates on JSON-safe data, whatever
+      // the field's own toJson() behavior is.
+      final asJson = _dataToJson(value);
+      if (asJson is Map<String, dynamic>) return _normalizeValue(asJson);
     }
     return value;
   }
@@ -232,14 +268,68 @@ class InMemoryCache implements Cache {
     }
   }
 
+  Set<String> _collectTypenames(dynamic json) {
+    final result = <String>{};
+    void walk(dynamic value) {
+      if (value is Map) {
+        final t = value['__typename'];
+        if (t is String) result.add(t);
+        value.values.forEach(walk);
+      } else if (value is List) {
+        value.forEach(walk);
+      }
+    }
+
+    walk(json);
+    return result;
+  }
+
   void _notifyWatchers(GraphQLRequest request) {
-    final key = _requestKey(request);
+    final key = computeRequestKey(request);
     final controllers = _watchers[key];
     if (controllers != null && controllers.isNotEmpty) {
       final data = readQuery(request);
       for (final controller in controllers) {
         controller.add(data);
       }
+    }
+  }
+
+  /// Dumps the entire normalized record store — never includes optimistic
+  /// layers. Used only by [HiveCache] to mirror state to disk.
+  Map<String, Map<String, dynamic>> exportAll() => _store.toMap();
+
+  /// Bulk-loads [records] into the store. Used only by [HiveCache.open] to
+  /// hydrate a fresh [InMemoryCache] from a previously persisted box, before
+  /// any reads/writes happen.
+  ///
+  /// Every seeded `ROOT_QUERY:` record also gets its `writtenAt` and
+  /// typename bookkeeping populated, so a hydrated query is immediately
+  /// visible to [writtenAt] and [matchingQueryKeys] (and therefore to
+  /// `GraphQLClient.invalidateQueries`, by operation name *and* by type)
+  /// without waiting for a live network response to re-write it. Hydrated
+  /// data is timestamped as [DateTime.fromMillisecondsSinceEpoch]`(0)` —
+  /// arbitrarily old, not "just written" — so it stays correctly stale under
+  /// *any* configured `staleTime`, not just the default `Duration.zero`: a
+  /// disk-persisted `HiveCache` value must never be treated as fresher than
+  /// it can actually know it is, since the write that produced it may be
+  /// long gone (a previous app run, possibly days ago).
+  void seed(Map<String, Map<String, dynamic>> records) {
+    for (final entry in records.entries) {
+      _store.set(entry.key, entry.value);
+    }
+    // Second pass: refs inside one root query may point at entity records
+    // that appear later in [records], so typenames can only be collected
+    // once the whole store is populated.
+    const rootPrefix = 'ROOT_QUERY:';
+    final arbitrarilyOld = DateTime.fromMillisecondsSinceEpoch(0);
+    for (final entry in records.entries) {
+      if (!entry.key.startsWith(rootPrefix)) continue;
+      final requestKey = entry.key.substring(rootPrefix.length);
+      _writtenAt[requestKey] = arbitrarilyOld;
+      _queryTypenames[requestKey] = _collectTypenames(
+        _denormalize(entry.value),
+      );
     }
   }
 }

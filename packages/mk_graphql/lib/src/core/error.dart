@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:gql_link/gql_link.dart';
 import '../link/transport/dio_link.dart';
+import '../link/transport/http_link.dart';
+import 'graphql_error_mapper.dart';
 
 /// Represents a single GraphQL Error returned in a GraphQL response payload.
 class GraphQLError {
@@ -208,6 +210,16 @@ class TimeoutException extends GraphQLException {
   });
 }
 
+/// The server's TLS/SSL certificate failed validation.
+class CertificateException extends GraphQLException {
+  const CertificateException({
+    required super.message,
+    super.graphqlErrors,
+    super.originalException,
+    super.originalStackTrace,
+  });
+}
+
 /// Thrown internally when the auth token must be revoked.
 class RevokeTokenException extends GraphQLException {
   const RevokeTokenException({
@@ -258,7 +270,7 @@ extension GraphQLExceptionExtension on GraphQLException {
 
     // 2. Check for other standard error types across the error list
     for (final err in errors) {
-      final code = err.extensions?['code']?.toString().toUpperCase();
+      final code = extractErrorCode(err.extensions);
       if (code == 'UNAUTHORIZED' ||
           code == 'UNAUTHENTICATED' ||
           code == 'FORBIDDEN') {
@@ -296,7 +308,7 @@ extension GraphQLExceptionExtension on GraphQLException {
   static bool _isValidationError(GraphQLError error) {
     final ext = error.extensions;
     if (ext != null) {
-      final code = ext['code']?.toString().toUpperCase();
+      final code = extractErrorCode(ext);
       if (code == 'BAD_USER_INPUT' ||
           code == 'GRAPHQL_VALIDATION_FAILED' ||
           code == 'VALIDATION_FAILED' ||
@@ -497,19 +509,7 @@ extension GraphQLExceptionExtension on GraphQLException {
       if (exception.parsedResponse != null &&
           exception.parsedResponse!.errors != null &&
           exception.parsedResponse!.errors!.isNotEmpty) {
-        final gErrors = exception.parsedResponse!.errors!
-            .map((e) => GraphQLError(
-                  message: e.message,
-                  locations: e.locations
-                      ?.map((loc) => GraphQLErrorLocation(
-                            line: loc.line,
-                            column: loc.column,
-                          ))
-                      .toList(),
-                  path: e.path?.cast<Object>(),
-                  extensions: e.extensions,
-                ))
-            .toList();
+        final gErrors = mapGraphQLErrors(exception.parsedResponse!.errors)!;
         return GraphQLExceptionExtension.fromGraphQLErrors(gErrors);
       }
       return AppServerException(
@@ -532,17 +532,35 @@ extension GraphQLExceptionExtension on GraphQLException {
         originalStackTrace: exception.originalStackTrace,
         originalException: exception.originalException,
       );
+    } else if (exception is DioLinkConnectionException) {
+      return NetworkException(
+        message:
+            'Something went wrong with your connection. Please check your internet connection and try again.',
+        originalStackTrace: exception.originalStackTrace,
+        originalException: exception.originalException,
+      );
+    } else if (exception is DioLinkCertificateException) {
+      return CertificateException(
+        message: 'Could not establish a secure connection to the server.',
+        originalStackTrace: exception.originalStackTrace,
+        originalException: exception.originalException,
+      );
+    } else if (exception is HttpLinkCanceledException) {
+      return RequestCancelledException(
+        message: 'The request was cancelled.',
+        originalStackTrace: exception.originalStackTrace,
+        originalException: exception.originalException,
+      );
+    } else if (exception is HttpLinkConnectionException) {
+      return NetworkException(
+        message:
+            'Something went wrong with your connection. Please check your internet connection and try again.',
+        originalStackTrace: exception.originalStackTrace,
+        originalException: exception.originalException,
+      );
     } else if (exception is DioLinkUnkownException) {
       final error = exception.originalException;
       if (error is DioException) {
-        if (error.type == DioExceptionType.connectionError) {
-          return NetworkException(
-            message:
-                'Something went wrong with your connection. Please check your internet connection and try again.',
-            originalStackTrace: exception.originalStackTrace,
-            originalException: error,
-          );
-        }
         return AppServerException(
           message:
               error.message ?? 'Something went wrong, please try again later.',

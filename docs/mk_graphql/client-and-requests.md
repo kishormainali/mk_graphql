@@ -18,13 +18,17 @@ abstract class GraphQLRequest<TData, TVars> {
   final Map<String, String>? headers; // per-request extra headers
   final TData? optimisticResponse;
   final CancelToken? cancelToken;
+  final Duration? staleTime;          // overrides GraphQLClient.defaultStaleTime
+  final Duration? cacheTime;          // overrides GraphQLClient.defaultCacheTime
+  final RetryOptions? retry;          // overrides GraphQLClient.defaultRetry
+  final Duration? refetchInterval;    // periodic background refetch while watched
 
   GraphQLRequest<TData, TVars> copyWithRequest({ ... });
   GraphQLRequest<TData, TVars> copyWithFetchPolicy(FetchPolicy policy);
 }
 ```
 
-The generator emits concrete subclasses per operation (`GetUserReq`, `CreatePostReq`, ...).
+The generator emits concrete subclasses per operation (`GetUserReq`, `CreatePostReq`, ...) and already forwards `staleTime`/`cacheTime`/`retry`/`refetchInterval` correctly. If you hand-write a `GraphQLRequest` subclass yourself and set any of these four fields, forward them in your own `copyWithRequest` override too (e.g. `staleTime: staleTime, cacheTime: cacheTime, retry: retry, refetchInterval: refetchInterval,` reading from `this`) — they aren't parameters of `copyWithRequest` itself (same as `requestId`), so an override that doesn't explicitly preserve them will silently drop them on every `copyWithFetchPolicy`/`refetch`/background-refetch call.
 
 ---
 
@@ -39,7 +43,38 @@ The generator emits concrete subclasses per operation (`GetUserReq`, `CreatePost
 | `fetchMore(...)` | `Future<TData>` | Fetches next page, auto-merges lists/connections, writes to cache under `originalRequest`. |
 | `request(req, {cancelToken})` | `Stream<GraphQLResponse<TData>>` | Low-level: yields raw responses (cache/network/optimistic), never throws. |
 | `watchQuery(req)` | `Stream<TData?>` | Subscribes to cache updates for this request's cache key, independent of network activity. |
+| `isAuthenticated` | `Future<bool>` | Whether `TokenStorage.i` holds an access token (stored, not server-validated). See [Authentication](authentication.md). |
 | `dispose()` | `Future<void>` | Clears revoke-token listeners, clears cache, disposes link pipeline. |
+
+---
+
+## Default headers
+
+`GraphQLClient(defaultHeaders: {...})` sends the given headers on every HTTP request the client makes — queries, mutations, multipart uploads, SSE subscriptions, and the token-refresh request. They are **not** sent when opening a WebSocket (`wsUrl`); put credentials for that in the connection payload, which the client fills from `accessTokenHeader`.
+
+Precedence, lowest to highest:
+
+1. The transport's built-in headers (`Accept`, `Content-Type`)
+2. `defaultHeaders` — so you can override the two above (on a multipart upload the boundary `Content-Type` always wins)
+3. A request's own `headers`
+4. The stored access token's headers (`Authorization` by default) — a default `Authorization` is only a fallback while logged out
+
+Header names are case-insensitive. A `Dio` passed via `dio:` is never modified, so its own base headers keep applying to your other requests; on a GraphQL request, a default with the same name replaces the Dio's.
+
+---
+
+## `GraphQLClient.create`
+
+`GraphQLClient(...)` is a synchronous factory — it needs a `Cache` instance up front. `GraphQLClient.create({...})` is the async counterpart: it takes every same named parameter, but `cache` accepts a `FutureOr<Cache>?`, so an async cache constructor like `HiveCache.open(...)` can be passed directly without a separate `await` statement:
+
+```dart
+final client = await GraphQLClient.create(
+  url: 'https://api.example.com/graphql',
+  cache: HiveCache.open(boxName: 'gql_cache'),
+);
+```
+
+Use the sync constructor for `InMemoryCache` (the default when `cache` is omitted) or a `HiveCache`/other cache you've already opened/awaited yourself — `GraphQLClient.create` only exists to avoid an extra `await` line when the cache itself is async. See [Caching: Persistent cache `HiveCache`](caching.md#persistent-cache-hivecache).
 
 ---
 
@@ -79,6 +114,56 @@ enum FetchPolicy {
 ```
 
 Set a default on the client (`GraphQLClient(defaultFetchPolicy: ...)`) and override per request via `req.fetchPolicy` or `req.copyWithFetchPolicy(...)`.
+
+---
+
+## Request deduplication
+
+Concurrent identical **queries** — same operation, same document, same variables — automatically share a single in-flight network call instead of each starting its own. Two widgets both doing `client.stream(getUserReq)` (or `future`) on the same query in the same frame only hit the network once; both callers still get their own response.
+
+Deduplication applies to queries only. Mutations never dedup (each call is expected to run exactly once); subscriptions never dedup either (they're long-lived multi-emission streams with their own reconnect logic in the transport links, `WebSocketLink`/`SseLink`); and neither does any request carrying an explicit `CancelToken` (a caller who wants to cancel *their own* call shouldn't be silently attached to someone else's in-flight request). No configuration is needed — this is always on.
+
+---
+
+## Retry with backoff
+
+`GraphQLClient` can automatically retry a failed query with exponential backoff:
+
+```dart
+class RetryOptions {
+  final int maxAttempts;                        // default 3, total attempts including the first
+  final Duration initialDelay;                  // default 200ms, delay before the first retry
+  final double backoffMultiplier;                // default 2.0
+  final double jitter;                          // default 0.0, randomizes each delay by up to this fraction
+  final bool Function(Object error)? retryIf;    // default: transient network errors only
+
+  const RetryOptions({...});
+
+  /// A single attempt, no retry.
+  static const RetryOptions none = RetryOptions(maxAttempts: 1);
+}
+```
+
+- `GraphQLClient(defaultRetry: ...)` — applied automatically to **queries only**; `null` (the default) disables auto-retry. **Neither mutations nor subscriptions use this** — they retry only if the request sets its own `GraphQLRequest.retry` (subscriptions already reconnect on their own, via `WebSocketLink`/`SseLink`).
+- `GraphQLRequest.retry` — overrides `defaultRetry` for this request. Pass `RetryOptions.none` to disable retry for an otherwise-retrying query, or any `RetryOptions` to opt a mutation into retry.
+- The default `retryIf` retries connection errors and timeouts (`NetworkException`, `TimeoutException`) — never 4xx/validation errors, since those won't succeed on retry regardless of attempts.
+- `jitter` (`0.0`–`1.0`) randomizes each computed delay by up to that fraction in either direction. Worth setting (e.g. `0.2`) whenever many client instances might fail at the same moment — a shared backend blip, a deploy — so they don't all retry in lockstep and re-cause the spike that failed them the first time; `0.0` (the default) keeps the exact deterministic backoff curve prior versions produced.
+
+```dart
+final client = GraphQLClient(
+  url: 'https://api.example.com/graphql',
+  defaultRetry: const RetryOptions(maxAttempts: 4, initialDelay: Duration(milliseconds: 300)),
+);
+
+// Opt this one query out of the client default:
+final req = GetUserReq(variables: GetUserVars(id: userId), retry: RetryOptions.none);
+
+// Opt this mutation into retry (mutations don't retry by default):
+final createReq = CreatePostReq(
+  variables: CreatePostVars(title: title),
+  retry: const RetryOptions(maxAttempts: 2),
+);
+```
 
 ---
 
@@ -133,7 +218,7 @@ All thrown errors are `GraphQLException` subclasses (which extend `gql_link`'s `
 | `NetworkException` | Dio connection error (offline, DNS, etc). |
 | `TimeoutException` | Request exceeded Dio's configured timeout. |
 | `RequestCancelledException` | The request's `CancelToken` was cancelled. |
-| `RevokeTokenException` | Internal — thrown when `onTokenRefresh` fails during `AuthLink` refresh. |
+| `RevokeTokenException` | Thrown when a token refresh attempt itself fails (its message wraps the real cause) and there's no more specific original error to surface instead — see [Links: `AuthLink`](links.md#authlink). |
 | `AppServerException` | Fallback for anything else (with an optional HTTP `code`). |
 
 ### Handling Validation Errors
@@ -158,7 +243,7 @@ try {
 
 ## Global Token-Revocation Listeners
 
-Independent of any single client instance, you can react to a revoked token anywhere in the app:
+Independent of any single client instance, you can react to a revoked token anywhere in the app (fires when a refresh fails, no refresh token is stored, or the server's failure classifies as a revoke — not on a successful refresh). See [Authentication & Token Storage](authentication.md) for how this differs from `TokenStorage.i.setTokenListener`:
 
 ```dart
 GraphQLClient.registerRevokeTokenListener(() {

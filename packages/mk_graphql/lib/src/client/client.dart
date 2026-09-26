@@ -2,24 +2,28 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:gql/ast.dart';
-import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart' as gql;
 import 'package:gql_link/gql_link.dart';
 
-import '../link/logging/logger_link.dart';
-import '../link/logging/logger_options.dart';
-
+import '../auth/token_pair.dart';
+import '../auth/token_storage.dart';
 import '../cache/cache.dart';
 import '../cache/in_memory_cache.dart';
+import '../core/document_cache.dart' as doc_cache;
 import '../core/error.dart';
 import '../core/error_policy.dart';
+import '../core/graphql_error_mapper.dart';
 import '../core/fetch_policy.dart';
 import '../core/request.dart';
+import '../core/request_key.dart';
+import '../core/retry_options.dart';
 import '../core/response.dart';
 import '../link/auth/auth_link.dart';
+import '../link/logging/logger_link.dart';
+import '../link/logging/logger_options.dart';
+import '../link/transform/typename_link.dart';
 import '../link/transport/dio_link.dart';
 import '../link/transport/sse_link.dart';
-import '../link/transform/typename_link.dart';
 import '../link/transport/websocket_link.dart';
 
 /// Central GraphQL Client managing cache, links, and operation requests.
@@ -27,30 +31,110 @@ import '../link/transport/websocket_link.dart';
 /// Combines an in-memory normalized cache, an extensible [Link] pipeline,
 /// proactive auth token management, automatic `__typename` injection,
 /// rich logging, and typed request execution.
+///
+/// ## Authentication
+///
+/// Pass `refreshCallback` and the client owns the session: it reads the
+/// access token from [TokenStorage.i] for every request's `Authorization`
+/// header, and on an unauthorized response calls `refreshCallback` once (no
+/// matter how many requests failed at the same time), silently persists the
+/// returned [TokenPair] with [TokenStorage.updateToken] — so
+/// [TokenStorage.setTokenListener] listeners are *not* notified — and retries
+/// the failed requests. If the refresh fails (or no refresh token is stored)
+/// the session is revoked: [TokenStorage.deleteToken] runs (notifying
+/// listeners with `null`), `onRevokeToken` is called, and every listener
+/// added with [registerRevokeTokenListener] fires. Log in with
+/// [TokenStorage.saveToken]; see also [isAuthenticated].
 class GraphQLClient {
   final Link _pipeline;
+
+  /// The normalized cache backing [FetchPolicy]s and [watchQuery].
   final Cache cache;
+
+  /// [FetchPolicy] used by a request that doesn't set its own.
   final FetchPolicy defaultFetchPolicy;
+
+  /// [ErrorPolicy] used by a request that doesn't set its own.
   final ErrorPolicy defaultErrorPolicy;
+
+  /// What the [LoggerLink] prints.
   final LoggerOptions loggerOptions;
 
-  /// In-memory cache for parsed document ASTs to avoid redundant parseString overhead.
-  static final Map<String, DocumentNode> _documentCache = {};
+  /// How long a cached entry counts as fresh before a `cacheFirst` hit
+  /// background-revalidates it; a request's own `staleTime` overrides it.
+  final Duration defaultStaleTime;
 
-  /// Returns the cached [DocumentNode] AST for [document], parsing it only on first access.
+  /// How long an entry with no active [watchQuery] subscriber is kept before
+  /// being evicted; `null` (the default) never evicts. A request's own
+  /// `cacheTime` overrides it.
+  final Duration? defaultCacheTime;
+
+  /// [RetryOptions] applied to queries/subscriptions without their own
+  /// `retry`; `null` disables auto-retry. Mutations never auto-retry.
+  final RetryOptions? defaultRetry;
+
+  /// In-flight *query* network calls keyed by [computeRequestKey] —
+  /// concurrent identical calls share one entry instead of each starting a
+  /// separate pipeline request. Mutations, subscriptions, and any request
+  /// with an explicit [CancelToken] are never entered here (see
+  /// [_requestThroughPipeline]).
+  ///
+  /// The shared value is a [Future] of the *buffered* response list, not a
+  /// live broadcast stream: a broadcast stream drops events emitted before a
+  /// given listener attaches, so a second caller that reached dedup after the
+  /// pipeline already emitted (routine — `cacheFirst`/`cacheAndNetwork`
+  /// callers await a cache read first, so identical calls arrive at different
+  /// microtask depths) would receive nothing at all. A [Future] replays its
+  /// resolved value — or its error — to every listener regardless of attach
+  /// timing. Buffering the whole sequence is safe here because subscriptions,
+  /// the only genuinely multi-emission operation kind, are excluded from
+  /// dedup entirely.
+  final Map<String, Future<List<gql.Response>>> _inFlight = {};
+
+  /// Tracks queries with at least one active [watchQuery] subscriber —
+  /// shared by staleness-on-attach, `cacheTime` GC, `refetchInterval`
+  /// polling, [invalidateQueries], and [notifyReconnected]/
+  /// [notifyAppResumed].
+  final Map<String, _ActiveQuery> _activeQueries = {};
+
+  /// Set by [notifyAppPaused], cleared by [notifyAppResumed]. While `true`,
+  /// every opportunistic background refetch (staleness-on-attach,
+  /// `refetchInterval` polling, [invalidateQueries], [notifyReconnected])
+  /// is skipped — see [_backgroundRefetch]. `refetchInterval`'s `Timer`s
+  /// keep ticking (cheap; no network involved) so their schedule survives a
+  /// pause unmodified, but the network call — and the battery/radio cost of
+  /// making one — is what actually gets skipped for a screen nobody's
+  /// looking at.
+  bool _pollingPaused = false;
+
+  /// The [Dio] instance this client created for itself (no `dio:` argument
+  /// was supplied to the factory) — closed by [dispose]. Null when the
+  /// caller supplied their own [Dio] (theirs to close) or this client was
+  /// built via [GraphQLClient.fromLink] (no Dio involved at all).
+  final Dio? _ownedDio;
+
+  /// Returns the cached [DocumentNode] AST for [document], parsing it only on
+  /// first access. Shared with the default [GraphQLRequest.documentNode].
   static DocumentNode getParsedDocument(String document) =>
-      _documentCache.putIfAbsent(document, () => parseString(document));
+      doc_cache.getParsedDocument(document);
 
   // ---------------------------------------------------------------------------
   // Static revoke-token listener delegates
   // ---------------------------------------------------------------------------
 
+  /// Registers an app-wide [listener] called whenever a session is revoked —
+  /// a refresh failed, no refresh token was stored, or the server answered
+  /// with a failure classified as `AuthFailure.revoke` (e.g. HTTP 403). Use it
+  /// to navigate to login. Shared by every [GraphQLClient]; not called on a
+  /// successful (silent) refresh.
   static void registerRevokeTokenListener(void Function() listener) =>
       AuthLink.registerRevokeTokenListener(listener);
 
+  /// Removes a [listener] added with [registerRevokeTokenListener].
   static void removeRevokeTokenListener(void Function() listener) =>
       AuthLink.removeRevokeTokenListener(listener);
 
+  /// Removes every listener added with [registerRevokeTokenListener].
   static void clearRevokeTokenListeners() =>
       AuthLink.clearRevokeTokenListeners();
 
@@ -58,7 +142,7 @@ class GraphQLClient {
   // Constructor
   // ---------------------------------------------------------------------------
 
-  GraphQLClient({
+  factory GraphQLClient({
     /// The GraphQL HTTP endpoint URL.
     required String url,
 
@@ -74,43 +158,204 @@ class GraphQLClient {
     /// Optional pre-configured [Dio] instance. When omitted a default one is created.
     Dio? dio,
 
-    /// Default headers merged into every HTTP request at the transport level.
+    /// Default headers sent on every HTTP request this client makes — queries,
+    /// mutations, uploads, SSE subscriptions and the token-refresh request.
+    /// Not applied to WebSocket connections.
+    ///
+    /// They override the transport's built-in `Accept`/`Content-Type` (except
+    /// on multipart uploads, where the boundary `Content-Type` always wins),
+    /// and are themselves overridden by a request's own `headers` and by the
+    /// stored access token's `Authorization`, so a default `Authorization` is
+    /// only a fallback while logged out. A caller-supplied [dio] is never
+    /// modified.
     Map<String, String>? defaultHeaders,
 
-    /// Callback that supplies the current auth headers (e.g. `Authorization`).
-    AccessTokenCallback? tokenHeader,
+    /// Callback that builds the current auth headers (e.g. `Authorization`)
+    /// from the access token stored in [TokenStorage.i] — only invoked when
+    /// one is actually stored, so [TokenHeaderCallback]'s `token` argument is
+    /// never null in practice. Defaults to `Authorization: Bearer <token>`;
+    /// pass this only if your API expects a different header format (rare).
+    TokenHeaderCallback? accessTokenHeader,
+
+    /// Callback that builds headers from the refresh token stored in
+    /// [TokenStorage.i] — when provided, attached to every request sent
+    /// through the internal refresh client instead of [accessTokenHeader].
+    /// Only invoked when a refresh token is actually stored. No default: the
+    /// refresh token normally reaches your refresh endpoint as the
+    /// [refreshCallback] parameter (for a body/variable) — pass this only if
+    /// your refresh endpoint additionally/instead expects it as a header.
+    TokenHeaderCallback? refreshTokenHeader,
 
     /// Returns whether the current token is expired. Triggers proactive refresh.
     IsTokenExpiredCallback? isTokenExpired,
 
-    /// Performs token refresh. Receives a plain [GraphQLClient] (no auth link
-    /// attached) that can be used to run the refresh request, and returns new headers.
-    OnRefreshCallback? onTokenRefresh,
+    /// Overrides how an unauthorized response is recognized. Lets a custom
+    /// API tell the client exactly which requests actually need a token
+    /// refresh (a non-standard error code, message, or status field) instead
+    /// of relying on the built-in default (`extensions.code` of
+    /// `UNAUTHORIZED`/`UNAUTHENTICATED`/`FORBIDDEN`, or an `extensions.status`/
+    /// HTTP status of 401/403).
+    IsUnauthorizedCallback? isUnauthorized,
 
-    /// Called when the token is revoked.
+    /// Called when the token is revoked, in addition to clearing [TokenStorage.i]
+    /// (when configured via [refreshCallback]).
     OnRevokeTokenCallback? onRevokeToken,
+
+    /// The single source of truth for token refresh: performs the refresh
+    /// using the currently stored refresh token and returns the new
+    /// [TokenPair] to persist (or `null`/throws to revoke). The client
+    /// manages [TokenStorage.i] and the `Authorization` header on its own —
+    /// no app-side storage or header plumbing needed. Skipped (no refresh
+    /// attempted, straight to revoke) when there's no stored refresh token
+    /// yet.
+    RefreshCallback? refreshCallback,
 
     /// Whether to inject `__typename` into every selection set. Defaults to `true`.
     bool addTypename = true,
+
+    /// Cache for the queries
     Cache? cache,
-    this.defaultFetchPolicy = FetchPolicy.noCache,
-    this.defaultErrorPolicy = ErrorPolicy.none,
-    this.loggerOptions = const LoggerOptions(),
-  })  : cache = cache ?? InMemoryCache(),
-        _pipeline = _buildPipeline(
-          url: url,
-          wsUrl: wsUrl,
-          sseUrl: sseUrl,
-          subscriptionLink: subscriptionLink,
-          dio: dio,
-          defaultHeaders: defaultHeaders,
-          loggerOptions: loggerOptions,
-          tokenHeader: tokenHeader,
-          isTokenExpired: isTokenExpired,
-          onTokenRefresh: onTokenRefresh,
-          onRevokeToken: onRevokeToken,
-          addTypename: addTypename,
-        );
+
+    /// Fetch policy for the client
+    FetchPolicy defaultFetchPolicy = FetchPolicy.noCache,
+
+    /// Error policy for the client
+    ErrorPolicy defaultErrorPolicy = ErrorPolicy.none,
+
+    /// How long cached data is considered fresh before FetchPolicy.cacheFirst
+    /// triggers a background revalidation, and before an active watchQuery
+    /// subscription revalidates on attach. Defaults to Duration.zero (always
+    /// stale — every cacheFirst hit background-refetches, matching TanStack
+    /// Query's default). Override per-request via GraphQLRequest.staleTime.
+    Duration defaultStaleTime = Duration.zero,
+
+    /// How long a query's cache entry survives after its last active
+    /// watchQuery subscriber cancels before being garbage-collected. Null
+    /// (the default) disables GC entirely — matches today's behavior.
+    /// Override per-request via GraphQLRequest.cacheTime.
+    Duration? defaultCacheTime,
+
+    /// Automatic retry-with-backoff for queries only, on transient network
+    /// failures. Null (the default) disables auto-retry. Neither mutations
+    /// nor subscriptions use this — they retry only if the request sets its
+    /// own GraphQLRequest.retry (subscriptions already reconnect via their
+    /// own transport link).
+    RetryOptions? defaultRetry,
+
+    /// Logger Options
+    LoggerOptions loggerOptions = const LoggerOptions(),
+  }) {
+    // Resolved once, here, and threaded through as a single non-null Dio —
+    // AuthLink's own refresh requests must share this exact instance (same
+    // interceptors, adapter) rather than each independently falling back to a
+    // second, unconfigured `Dio()`.
+    //
+    // defaultHeaders are deliberately NOT written into this Dio's
+    // `options.headers`: a caller-supplied Dio would be permanently modified
+    // (overwriting its own same-named headers and leaking ours into the
+    // caller's other requests), and base options lose to the transport's
+    // built-in Accept/Content-Type so they couldn't override those. They are
+    // passed to each link that sends requests instead.
+    final dioInstance = dio ?? Dio();
+
+    final resolvedCallbacks = _resolveAuthCallbacks(
+      accessTokenHeader: accessTokenHeader,
+      refreshTokenHeader: refreshTokenHeader,
+      onRevokeToken: onRevokeToken,
+      refreshCallback: refreshCallback,
+    );
+
+    return GraphQLClient._(
+      cache: cache ?? InMemoryCache(),
+      defaultFetchPolicy: defaultFetchPolicy,
+      defaultErrorPolicy: defaultErrorPolicy,
+      defaultStaleTime: defaultStaleTime,
+      defaultCacheTime: defaultCacheTime,
+      defaultRetry: defaultRetry,
+      loggerOptions: loggerOptions,
+      ownedDio: dio == null ? dioInstance : null,
+      pipeline: _buildPipeline(
+        url: url,
+        wsUrl: wsUrl,
+        sseUrl: sseUrl,
+        subscriptionLink: subscriptionLink,
+        dio: dioInstance,
+        defaultHeaders: defaultHeaders,
+        loggerOptions: loggerOptions,
+        accessTokenHeader: resolvedCallbacks.accessTokenHeader,
+        refreshTokenHeader: resolvedCallbacks.refreshTokenHeader,
+        isTokenExpired: isTokenExpired,
+        isUnauthorized: isUnauthorized,
+        onTokenRefresh: resolvedCallbacks.onTokenRefresh,
+        onRevokeToken: resolvedCallbacks.onRevokeToken,
+        addTypename: addTypename,
+      ),
+    );
+  }
+
+  /// Async counterpart to the default [GraphQLClient] factory — awaits
+  /// [cache] (so `cache: HiveCache.open(boxName: '...')` can be passed
+  /// directly, without a separate `await` statement) before building the
+  /// client. Every other parameter is identical to the sync factory.
+  static Future<GraphQLClient> create({
+    required String url,
+    String? wsUrl,
+    String? sseUrl,
+    Link? subscriptionLink,
+    Dio? dio,
+    Map<String, String>? defaultHeaders,
+    TokenHeaderCallback? accessTokenHeader,
+    TokenHeaderCallback? refreshTokenHeader,
+    IsTokenExpiredCallback? isTokenExpired,
+    IsUnauthorizedCallback? isUnauthorized,
+    OnRevokeTokenCallback? onRevokeToken,
+    RefreshCallback? refreshCallback,
+    bool addTypename = true,
+    FutureOr<Cache>? cache,
+    FetchPolicy defaultFetchPolicy = FetchPolicy.noCache,
+    ErrorPolicy defaultErrorPolicy = ErrorPolicy.none,
+    Duration defaultStaleTime = Duration.zero,
+    Duration? defaultCacheTime,
+    RetryOptions? defaultRetry,
+    LoggerOptions loggerOptions = const LoggerOptions(),
+  }) async {
+    final resolvedCache = await (cache ?? InMemoryCache());
+    return GraphQLClient(
+      url: url,
+      wsUrl: wsUrl,
+      sseUrl: sseUrl,
+      subscriptionLink: subscriptionLink,
+      dio: dio,
+      defaultHeaders: defaultHeaders,
+      accessTokenHeader: accessTokenHeader,
+      refreshTokenHeader: refreshTokenHeader,
+      isTokenExpired: isTokenExpired,
+      isUnauthorized: isUnauthorized,
+      onRevokeToken: onRevokeToken,
+      refreshCallback: refreshCallback,
+      addTypename: addTypename,
+      cache: resolvedCache,
+      defaultFetchPolicy: defaultFetchPolicy,
+      defaultErrorPolicy: defaultErrorPolicy,
+      defaultStaleTime: defaultStaleTime,
+      defaultCacheTime: defaultCacheTime,
+      defaultRetry: defaultRetry,
+      loggerOptions: loggerOptions,
+    );
+  }
+
+  GraphQLClient._({
+    required this.cache,
+    required this.defaultFetchPolicy,
+    required this.defaultErrorPolicy,
+    required this.loggerOptions,
+    required this.defaultStaleTime,
+    required this.defaultCacheTime,
+    required this.defaultRetry,
+    required Dio? ownedDio,
+    required Link pipeline,
+  })  : _ownedDio = ownedDio,
+        _pipeline = pipeline;
 
   /// Creates a [GraphQLClient] using a custom [Link] pipeline directly.
   GraphQLClient.fromLink(
@@ -119,38 +364,101 @@ class GraphQLClient {
     this.defaultFetchPolicy = FetchPolicy.noCache,
     this.defaultErrorPolicy = ErrorPolicy.none,
     this.loggerOptions = const LoggerOptions(),
+    this.defaultStaleTime = Duration.zero,
+    this.defaultCacheTime,
+    this.defaultRetry,
   })  : cache = cache ?? InMemoryCache(),
+        _ownedDio = null,
         _pipeline = link;
+
+  /// Derives [accessTokenHeader]/`onTokenRefresh`/[onRevokeToken] from
+  /// [refreshCallback] so [GraphQLClient] can manage its own auth session via
+  /// [TokenStorage.i] — [refreshCallback] is the sole source of truth for
+  /// refresh; an explicit [accessTokenHeader] only overrides the header
+  /// supplier. [refreshTokenHeader] is passed through unchanged — it has no
+  /// default and is only attached when the app explicitly supplies one.
+  ///
+  /// The resulting `onTokenRefresh` is what [AuthLink] dedupes concurrent
+  /// 401s against (a shared in-flight [Future] — see `AuthLink._refreshToken`),
+  /// so however many requests fail at once, [refreshCallback] runs at most
+  /// once per refresh cycle and every one of them retries once it resolves.
+  static ({
+    TokenHeaderCallback? accessTokenHeader,
+    TokenHeaderCallback? refreshTokenHeader,
+    OnRefreshCallback? onTokenRefresh,
+    OnRevokeTokenCallback? onRevokeToken,
+  }) _resolveAuthCallbacks({
+    required TokenHeaderCallback? accessTokenHeader,
+    required TokenHeaderCallback? refreshTokenHeader,
+    required OnRevokeTokenCallback? onRevokeToken,
+    required RefreshCallback? refreshCallback,
+  }) {
+    if (refreshCallback == null) {
+      return (
+        accessTokenHeader: accessTokenHeader,
+        refreshTokenHeader: refreshTokenHeader,
+        onTokenRefresh: null,
+        onRevokeToken: onRevokeToken,
+      );
+    }
+
+    return (
+      accessTokenHeader: accessTokenHeader ??
+          (token) async => {'Authorization': 'Bearer $token'},
+      // No default: refreshCallback already receives the refresh token
+      // directly as a parameter (for a body/variable), so a header is only
+      // attached when the app explicitly opts in via refreshTokenHeader.
+      refreshTokenHeader: refreshTokenHeader,
+      onTokenRefresh: (refreshClient) async {
+        final currentRefreshToken = await TokenStorage.i.refreshToken;
+        // No refresh token to call the API with — revoke straight away
+        // instead of calling refreshCallback with one.
+        if (currentRefreshToken == null) return null;
+        final newToken =
+            await refreshCallback(refreshClient, currentRefreshToken);
+        if (newToken == null) return null;
+        // Silent: a refresh must not fire TokenStorage listeners (they drive
+        // app routing). The next request reads the new token from storage.
+        await TokenStorage.i.updateToken(newToken);
+        return {'Authorization': 'Bearer ${newToken.accessToken}'};
+      },
+      onRevokeToken: () {
+        onRevokeToken?.call();
+        TokenStorage.i.deleteToken();
+      },
+    );
+  }
 
   static Link _buildPipeline({
     required String url,
     String? wsUrl,
     String? sseUrl,
     Link? subscriptionLink,
-    Dio? dio,
+    required Dio dio,
     Map<String, String>? defaultHeaders,
     LoggerOptions loggerOptions = const LoggerOptions(),
-    AccessTokenCallback? tokenHeader,
+    TokenHeaderCallback? accessTokenHeader,
+    TokenHeaderCallback? refreshTokenHeader,
     IsTokenExpiredCallback? isTokenExpired,
+    IsUnauthorizedCallback? isUnauthorized,
     OnRefreshCallback? onTokenRefresh,
     OnRevokeTokenCallback? onRevokeToken,
     bool addTypename = true,
   }) {
-    final dioInstance = dio ?? Dio();
-    if (defaultHeaders != null && defaultHeaders.isNotEmpty) {
-      dioInstance.options.headers.addAll(defaultHeaders);
-    }
-
+    final dioInstance = dio;
     final links = <Link>[];
 
     // 1. AuthLink at the top of the chain (handles auth context & 401 refresh/retry)
-    final hasAuth = tokenHeader != null || onTokenRefresh != null;
+    final hasAuth = accessTokenHeader != null || onTokenRefresh != null;
     if (hasAuth) {
       links.add(AuthLink(
         url: url,
-        dio: dio,
-        tokenHeader: tokenHeader,
+        dio: dioInstance,
+        defaultHeaders: defaultHeaders ?? const {},
+        accessTokenHeader: accessTokenHeader,
+        refreshTokenHeader: refreshTokenHeader,
         isTokenExpired: isTokenExpired,
+        isUnauthorized: isUnauthorized,
         onTokenRefresh: onTokenRefresh,
         onRevokeToken: onRevokeToken,
       ));
@@ -168,14 +476,23 @@ class GraphQLClient {
     links.add(LoggerLink(options: loggerOptions));
 
     // 4. Terminating links
-    final dioLink = DioLink(url, client: dioInstance);
+    final dioLink = DioLink(
+      url,
+      client: dioInstance,
+      defaultHeaders: defaultHeaders ?? const {},
+    );
 
     final subLink = subscriptionLink ??
         (wsUrl != null
             ? WebSocketLink(
                 wsUrl,
-                initialPayload: tokenHeader != null
-                    ? () async => await tokenHeader() ?? const {}
+                initialPayload: accessTokenHeader != null
+                    ? () async {
+                        final token = await TokenStorage.i.accessToken;
+                        return token != null
+                            ? await accessTokenHeader(token)
+                            : const {};
+                      }
                     : null,
               )
             : sseUrl != null
@@ -183,8 +500,7 @@ class GraphQLClient {
                     sseUrl,
                     client: dioInstance,
                     defaultHeaders: defaultHeaders ?? const {},
-                    tokenHeader: tokenHeader,
-                    onTokenRefresh: onTokenRefresh,
+                    tokenHeader: accessTokenHeader,
                   )
                 : null);
 
@@ -208,6 +524,67 @@ class GraphQLClient {
       }
     }
     return defs.any((d) => d.type == OperationType.subscription);
+  }
+
+  static bool _isMutation(gql.Request req) {
+    final defs =
+        req.operation.document.definitions.whereType<OperationDefinitionNode>();
+    if (req.operation.operationName != null) {
+      final match =
+          defs.where((d) => d.name?.value == req.operation.operationName);
+      if (match.isNotEmpty) {
+        return match.first.type == OperationType.mutation;
+      }
+    }
+    return defs.any((d) => d.type == OperationType.mutation);
+  }
+
+  /// Routes [gqlReq] through [_pipeline], deduplicating concurrent identical
+  /// **queries only** — never mutations, never subscriptions (which have
+  /// their own reconnect semantics in [WebSocketLink]/[SseLink] and are
+  /// long-lived multi-emission streams), and never a request carrying an
+  /// explicit [CancelToken] (see [_inFlight]'s doc comment).
+  Stream<gql.Response> _requestThroughPipeline(
+    GraphQLRequest req,
+    gql.Request gqlReq, {
+    required bool skipDedup,
+  }) async* {
+    if (skipDedup || _isMutation(gqlReq) || _isSubscription(gqlReq)) {
+      yield* _pipeline.request(gqlReq);
+      return;
+    }
+
+    final key = computeRequestKey(req);
+    var future = _inFlight[key];
+    final isOwner = future == null;
+    if (isOwner) {
+      // `.toList()` buffers the full response sequence and completes with
+      // the stream's error if it fails. Awaiting the same [Future] from
+      // every caller (below) — rather than sharing a live broadcast stream —
+      // means a late caller reliably receives the buffered result or error
+      // regardless of when it attaches: a broadcast stream drops events
+      // emitted before a given listener attaches, which a live
+      // (non-buffered) design here would have hit routinely, since
+      // `cacheFirst`/`cacheAndNetwork` callers reach this after a real await
+      // gap (a cache read), so identical calls land at different microtask
+      // depths, not synchronously together.
+      future = _pipeline.request(gqlReq).toList();
+      _inFlight[key] = future;
+    }
+
+    try {
+      // Awaiting here (rather than deriving a new Stream from the Future)
+      // lets any error surface as a normal exception on *this* generator, so
+      // the caller's own try/catch around its `await for` sees it directly —
+      // and cleanup below runs via a plain `finally`, with no separate
+      // derived-future side-channel that could itself go unhandled.
+      final responses = await future;
+      for (final response in responses) {
+        yield response;
+      }
+    } finally {
+      if (isOwner) _inFlight.remove(key);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -339,12 +716,21 @@ class GraphQLClient {
 
       case FetchPolicy.cacheFirst:
         final cached = cache.readQuery(req);
-        if (cached != null) {
-          yield GraphQLResponse<TData>(
-              data: cached, source: ResponseSource.cache);
-        } else {
+        if (cached == null) {
           yield* _fetchFromNetwork(req, cancelToken: cancelToken);
+          break;
         }
+        final staleTime = req.staleTime ?? defaultStaleTime;
+        final writtenAt = cache.writtenAt(req);
+        final isFresh = writtenAt != null &&
+            DateTime.now().difference(writtenAt) < staleTime;
+        yield GraphQLResponse<TData>(
+          data: cached,
+          source: ResponseSource.cache,
+          loading: !isFresh,
+        );
+        if (isFresh) break;
+        yield* _fetchFromNetwork(req, cancelToken: cancelToken);
         break;
 
       case FetchPolicy.cacheAndNetwork:
@@ -370,15 +756,209 @@ class GraphQLClient {
     }
   }
 
-  /// Watches query cache reactively.
-  Stream<TData?> watchQuery<TData, TVars>(GraphQLRequest<TData, TVars> req) =>
-      cache.watchQuery(req);
+  /// Watches query cache reactively. Also orchestrates the client-driven
+  /// behaviors that only make sense for an *active* subscriber: a
+  /// background revalidation on attach when the cached value is already
+  /// stale, `refetchInterval` polling while subscribed, and `cacheTime`
+  /// garbage collection once the last subscriber cancels.
+  Stream<TData?> watchQuery<TData, TVars>(GraphQLRequest<TData, TVars> req) {
+    final key = computeRequestKey(req);
+
+    StreamSubscription<TData?>? cacheSub;
+    Timer? myIntervalTimer;
+    late StreamController<TData?> controller;
+
+    controller = StreamController<TData?>.broadcast(
+      onListen: () {
+        // All registry mutation happens here, inside onListen, and nowhere
+        // at watchQuery() call time — a caller may call watchQuery() long
+        // before listening (e.g. in a widget's build()), and touching the
+        // registry earlier would race a pending gcTimer from a just-
+        // cancelled prior watcher on the same key.
+        final active = _activeQueries.putIfAbsent(key, () => _ActiveQuery(req));
+        active.latestRequest = req;
+        active.refCount++;
+        active.gcTimer?.cancel();
+        active.gcTimer = null;
+
+        // Cache.watchQuery's own "emit initial value" add() happens before
+        // its returned stream has a listener (broadcast streams drop events
+        // with no subscribers), so it never reaches us. Seed the outer
+        // controller with the current cached value ourselves — add() here,
+        // inside onListen, *is* delivered to the caller synchronously.
+        controller.add(cache.readQuery(req));
+        cacheSub = cache.watchQuery(req).listen(controller.add);
+
+        final staleTime = req.staleTime ?? defaultStaleTime;
+        final writtenAt = cache.writtenAt(req);
+        final isStale = writtenAt == null ||
+            DateTime.now().difference(writtenAt) >= staleTime;
+        if (isStale) {
+          unawaited(_backgroundRefetch(req));
+        }
+
+        final interval = req.refetchInterval;
+        if (interval != null) {
+          myIntervalTimer = Timer.periodic(
+              interval, (_) => unawaited(_backgroundRefetch(req)));
+          active.refetchIntervalTimers.add(myIntervalTimer!);
+        }
+      },
+      onCancel: () async {
+        await cacheSub?.cancel();
+
+        // Cancel only this call's own interval timer — a shared single
+        // Timer? field would let concurrent watchers on the same key
+        // stomp on each other's timers (leaking one, killing the other's
+        // polling early).
+        final timer = myIntervalTimer;
+        if (timer != null) {
+          timer.cancel();
+          _activeQueries[key]?.refetchIntervalTimers.remove(timer);
+          myIntervalTimer = null;
+        }
+
+        final active = _activeQueries[key];
+        if (active == null) return;
+        active.refCount--;
+
+        if (active.refCount <= 0) {
+          final cacheTime = req.cacheTime ?? defaultCacheTime;
+          if (cacheTime != null) {
+            active.gcTimer = Timer(cacheTime, () {
+              _activeQueries.remove(key);
+              cache.evictQuery(active.latestRequest);
+            });
+          } else {
+            _activeQueries.remove(key);
+          }
+        }
+      },
+    );
+
+    return controller.stream;
+  }
+
+  /// Triggers a background `networkOnly` refetch for every currently
+  /// active [watchQuery] subscription — call this from your app's
+  /// connectivity listener (e.g. `connectivity_plus`) when the device
+  /// regains network connectivity.
+  Future<void> notifyReconnected() => _refetchActiveQueries();
+
+  /// Call from your app's lifecycle observer when the app moves to the
+  /// background (e.g.
+  /// `WidgetsBindingObserver.didChangeAppLifecycleState(paused)`) to pause
+  /// every opportunistic background refetch — staleness-on-attach,
+  /// `refetchInterval` polling, [invalidateQueries], [notifyReconnected] —
+  /// until [notifyAppResumed] is called. Nothing refetches data for a
+  /// screen the user can't see; on most platforms a backgrounded app's
+  /// network requests are cheap to make but pointless, so skipping them
+  /// outright is a straightforward battery and data-usage win. A request
+  /// made directly (`future`/`stream`/`refetch`, e.g. from a foreground
+  /// service) is unaffected — only the client's own opportunistic
+  /// background refetches are paused.
+  void notifyAppPaused() => _pollingPaused = true;
+
+  /// Call from your app's lifecycle observer when the app returns to the
+  /// foreground (e.g.
+  /// `WidgetsBindingObserver.didChangeAppLifecycleState(resumed)`). Clears
+  /// any pause set by [notifyAppPaused], then triggers a background
+  /// `networkOnly` refetch for every currently active [watchQuery]
+  /// subscription, so data that went stale — or that a paused
+  /// `refetchInterval`/[invalidateQueries]/[notifyReconnected] skipped
+  /// refetching — catches up immediately instead of waiting for its next
+  /// scheduled tick.
+  Future<void> notifyAppResumed() {
+    _pollingPaused = false;
+    return _refetchActiveQueries();
+  }
+
+  /// Evicts every cached query matching [operationNames] and/or [types]
+  /// (a query matches if its operation name is in [operationNames], or if
+  /// its cached result touched a `__typename` in [types]). When
+  /// [refetchActive] (default `true`), a matching query with at least one
+  /// active [watchQuery] subscriber is immediately background-refetched so
+  /// that subscriber's stream updates in place; a match with no active
+  /// subscriber is simply evicted and refetched lazily on next read. The
+  /// background refetch (not the eviction) is skipped while
+  /// [notifyAppPaused] is in effect — the subscriber still gets fresh data,
+  /// just on [notifyAppResumed] instead of immediately.
+  Future<void> invalidateQueries({
+    List<String>? operationNames,
+    List<String>? types,
+    bool refetchActive = true,
+  }) async {
+    final keys = cache.matchingQueryKeys(
+      operationNames: operationNames,
+      types: types,
+    );
+
+    final refetches = <Future<void>>[];
+    for (final key in keys) {
+      cache.evict('ROOT_QUERY:$key');
+      final active = _activeQueries[key];
+      if (refetchActive && active != null && active.refCount > 0) {
+        refetches.add(_backgroundRefetch(active.latestRequest));
+      }
+    }
+    await Future.wait(refetches);
+  }
+
+  Future<void> _refetchActiveQueries() => Future.wait([
+        for (final active in _activeQueries.values)
+          if (active.refCount > 0) _backgroundRefetch(active.latestRequest),
+      ]);
+
+  /// Runs [req] as a `networkOnly` fetch purely to refresh the cache — used
+  /// by staleness-on-attach, `refetchInterval`, [invalidateQueries], and
+  /// [notifyReconnected]/[notifyAppResumed]. Failures are swallowed: none
+  /// of those callers initiated this fetch directly, so there is no
+  /// `Future` of theirs to fail — the cache simply keeps its last-good
+  /// value and any active `watchQuery` stream doesn't update.
+  ///
+  /// A no-op while [_pollingPaused] (see [notifyAppPaused]) — every caller
+  /// above is an *opportunistic* refetch nothing is waiting on, so skipping
+  /// it for a backgrounded app is free. [notifyAppResumed] clears the pause
+  /// and re-runs this for everything currently active, so nothing is lost,
+  /// only deferred.
+  Future<void> _backgroundRefetch<TData, TVars>(
+    GraphQLRequest<TData, TVars> req,
+  ) async {
+    if (_pollingPaused) return;
+    try {
+      await for (final _ in _fetchFromNetwork(
+        req.copyWithFetchPolicy(FetchPolicy.networkOnly),
+      )) {}
+    } catch (_) {
+      // Swallowed by design — see doc comment above.
+    }
+  }
+
+  /// Whether a persisted access token exists in [TokenStorage.i] — i.e.
+  /// whether a session is stored, not whether the server still accepts it.
+  Future<bool> get isAuthenticated async =>
+      await TokenStorage.i.accessToken != null;
 
   /// Disposes client resources and all child links.
+  ///
+  /// Closes the [Dio] client only when this [GraphQLClient] created it
+  /// itself (no `dio:` argument was passed to the factory) — a caller-
+  /// supplied [Dio] is theirs to close, since they may still hold a
+  /// reference to it elsewhere.
   Future<void> dispose() async {
+    for (final active in _activeQueries.values) {
+      active.gcTimer?.cancel();
+      for (final t in active.refetchIntervalTimers) {
+        t.cancel();
+      }
+    }
+    _activeQueries.clear();
+    _inFlight.clear();
+
     AuthLink.clearRevokeTokenListeners();
     cache.clear();
     await _pipeline.dispose();
+    _ownedDio?.close();
   }
 
   // ---------------------------------------------------------------------------
@@ -413,51 +993,62 @@ class GraphQLClient {
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
   }) async* {
-    try {
-      final effectiveCancelToken = cancelToken ?? req.cancelToken;
-      var context = gql.Context().withEntry(
-        gql.HttpLinkHeaders(headers: req.headers ?? {}),
+    final effectiveCancelToken = cancelToken ?? req.cancelToken;
+    var context = gql.Context().withEntry(
+      gql.HttpLinkHeaders(headers: req.headers ?? {}),
+    );
+    if (effectiveCancelToken != null) {
+      context = context.withEntry(
+        DioLinkCancelTokenContextEntry(effectiveCancelToken),
       );
-      if (effectiveCancelToken != null) {
-        context = context.withEntry(
-          DioLinkCancelTokenContextEntry(effectiveCancelToken),
-        );
-      }
+    }
 
-      final gqlReq = gql.Request(
-        operation: gql.Operation(
-          document: getParsedDocument(req.document),
-          operationName: req.operationName,
-        ),
-        variables:
-            req.variables != null ? req.toJsonVars(req.variables) : const {},
-        context: context,
-      );
+    final gqlReq = gql.Request(
+      operation: gql.Operation(
+        document: req.documentNode,
+        operationName: req.operationName,
+      ),
+      variables:
+          req.variables != null ? req.toJsonVars(req.variables) : const {},
+      context: context,
+    );
 
-      await for (final res in _pipeline.request(gqlReq)) {
-        yield GraphQLResponse<TData>(
-          data: res.data != null ? req.parseData(res.data!) : null,
-          errors: res.errors
-              ?.map((e) => GraphQLError(
-                    message: e.message,
-                    locations: e.locations
-                        ?.map((l) => GraphQLErrorLocation(
-                              line: l.line,
-                              column: l.column,
-                            ))
-                        .toList(),
-                    path: e.path?.cast<Object>(),
-                    extensions: e.extensions,
-                  ))
-              .toList(),
-          source: ResponseSource.network,
-        );
+    // defaultRetry applies to queries only. Mutations (not idempotent) and
+    // subscriptions (long-lived; they reconnect via their own transport link)
+    // opt out of the default and retry only when the request sets its own.
+    final retryOptions = req.retry ??
+        (_isMutation(gqlReq) || _isSubscription(gqlReq) ? null : defaultRetry);
+
+    var attempt = 1;
+    while (true) {
+      try {
+        await for (final res in _requestThroughPipeline(
+          req,
+          gqlReq,
+          skipDedup: effectiveCancelToken != null,
+        )) {
+          yield GraphQLResponse<TData>(
+            data: res.data != null ? req.parseData(res.data!) : null,
+            errors: mapGraphQLErrors(res.errors),
+            source: ResponseSource.network,
+          );
+        }
+        return;
+      } catch (e) {
+        final mapped = GraphQLExceptionExtension.fromLinkException(e);
+        final canRetry = retryOptions != null &&
+            attempt < retryOptions.maxAttempts &&
+            retryOptions.shouldRetry(mapped);
+        if (!canRetry) {
+          yield GraphQLResponse<TData>(
+            linkException: mapped,
+            source: ResponseSource.network,
+          );
+          return;
+        }
+        await Future<void>.delayed(retryOptions.delayForAttempt(attempt));
+        attempt++;
       }
-    } catch (e) {
-      yield GraphQLResponse<TData>(
-        linkException: GraphQLExceptionExtension.fromLinkException(e),
-        source: ResponseSource.network,
-      );
     }
   }
 }
@@ -523,4 +1114,22 @@ TData autoMergeGraphQLData<TData>(
   } catch (_) {
     return incoming;
   }
+}
+
+/// Per-query-key bookkeeping for [GraphQLClient._activeQueries]: how many
+/// [GraphQLClient.watchQuery] subscribers are currently attached, plus the
+/// pending `cacheTime` GC / `refetchInterval` polling timers driven by that
+/// refcount.
+class _ActiveQuery {
+  _ActiveQuery(this.latestRequest);
+  GraphQLRequest latestRequest;
+  int refCount = 0;
+  Timer? gcTimer;
+
+  /// One entry per concurrent [GraphQLClient.watchQuery] call on this key
+  /// that has `refetchInterval` set — each call owns and cancels only its
+  /// own timer (tracked locally in its `watchQuery` closure), so N
+  /// concurrent watchers poll independently of one another. This set lets
+  /// [GraphQLClient.dispose] still reach and cancel every live one.
+  final Set<Timer> refetchIntervalTimers = {};
 }

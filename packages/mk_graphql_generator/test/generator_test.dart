@@ -1,6 +1,7 @@
 import 'package:test/test.dart';
 import 'package:mk_graphql_generator/src/cache/generator_cache.dart';
 import 'package:mk_graphql_generator/src/generator/orchestrator/generator_orchestrator.dart';
+import 'package:mk_graphql_generator/src/generator/schema/schema_generator.dart';
 
 void main() {
   group('GeneratorOrchestrator Tests with Structured Folders & Extensions', () {
@@ -37,15 +38,12 @@ void main() {
         inputPath: 'schema.graphql',
       );
 
-      // Verify files map contains expected structured paths
-      expect(
-          bundle.files.keys, contains('generated/enums/user_role_enum.dart'));
+      // Verify files map contains expected structured paths — one merged
+      // barrel per category (not one file per type) is the point of this
+      // generator: see
+      // docs/superpowers/specs/2026-09-25-generator-barrel-file-merge-design.md.
       expect(bundle.files.keys, contains('generated/enums/enums.dart'));
-      expect(bundle.files.keys,
-          contains('generated/inputs/user_filter_input.dart'));
       expect(bundle.files.keys, contains('generated/inputs/inputs.dart'));
-      expect(bundle.files.keys,
-          contains('generated/models/user_response_model.dart'));
       expect(bundle.files.keys, contains('generated/models/models.dart'));
       expect(
           bundle.files.keys, contains('generated/get_user/get_user_var.dart'));
@@ -57,19 +55,17 @@ void main() {
       expect(bundle.files.keys, contains('generated/schema.gql.dart'));
 
       // Verify Enum File
-      final enumContent = bundle.files['generated/enums/user_role_enum.dart']!;
+      final enumContent = bundle.files['generated/enums/enums.dart']!;
       expect(enumContent, contains('@JsonEnum()'));
       expect(enumContent, contains('enum UserRole'));
 
       // Verify Input File
-      final inputContent =
-          bundle.files['generated/inputs/user_filter_input.dart']!;
+      final inputContent = bundle.files['generated/inputs/inputs.dart']!;
       expect(inputContent, contains('@freezed'));
       expect(inputContent, contains(r'UserFilterInput with _$UserFilterInput'));
 
       // Verify Model File
-      final modelContent =
-          bundle.files['generated/models/user_response_model.dart']!;
+      final modelContent = bundle.files['generated/models/models.dart']!;
       expect(modelContent, contains('@freezed'));
       expect(modelContent,
           contains(r'UserResponseModel with _$UserResponseModel'));
@@ -186,7 +182,7 @@ void main() {
         inputPath: 'schema.graphql',
       );
 
-      final enumContent = bundle.files['generated/enums/user_role_enum.dart']!;
+      final enumContent = bundle.files['generated/enums/enums.dart']!;
       expect(enumContent, contains('@JsonValue("ADMIN_USER")'));
       expect(enumContent, contains('adminUser,'));
       expect(enumContent, contains('@JsonValue("STANDARD_USER")'));
@@ -215,8 +211,6 @@ void main() {
         inputPath: 'schema.gql',
       );
 
-      expect(bundle.files.keys,
-          contains('generated/models/user_response_model.dart'));
       expect(bundle.files.keys, contains('generated/models/models.dart'));
       expect(bundle.files.keys, contains('generated/schema.gql.dart'));
     });
@@ -333,21 +327,22 @@ void main() {
         inputPath: 'schema.graphql',
       );
 
-      // A model whose fields are all plain scalars needs none of the
-      // shared barrels.
-      final plainModel =
-          bundle.files['generated/models/plain_thing_model.dart']!;
-      expect(plainModel, isNot(contains("enums.dart")));
-      expect(plainModel, isNot(contains("inputs.dart")));
-      expect(plainModel, isNot(contains("import 'models.dart';")));
-
-      // A model referencing an enum and another model type needs exactly
-      // those two barrels, not inputs.
-      final userModel =
-          bundle.files['generated/models/user_response_model.dart']!;
-      expect(userModel, contains("import '../enums/enums.dart';"));
-      expect(userModel, contains("import 'models.dart';"));
-      expect(userModel, isNot(contains("inputs.dart")));
+      // Every model now lives in one merged models.dart, so "does this
+      // reference an enum/input/model" is a property of the FILE as a
+      // whole (does ANY model in it reference something outside its own
+      // category), not of each individual class.
+      final modelsFile = bundle.files['generated/models/models.dart']!;
+      // UserResponse references the UserRole enum, so the file needs the
+      // enums barrel...
+      expect(modelsFile, contains("import '../enums/enums.dart';"));
+      // ...but nothing here references an input type.
+      expect(modelsFile, isNot(contains("inputs.dart")));
+      // UserResponse's other reference (Address) is now just another class
+      // in this SAME file — no self-import of models.dart is ever needed.
+      expect(modelsFile, isNot(contains("import 'models.dart';")));
+      expect(modelsFile, contains('class PlainThingModel'));
+      expect(modelsFile, contains('class AddressModel'));
+      expect(modelsFile, contains('class UserResponseModel'));
     });
 
     test(
@@ -484,13 +479,12 @@ void main() {
         packageName: 'my_app',
       );
 
-      final userModel =
-          bundle.files['generated/models/user_response_model.dart']!;
+      final modelsFile = bundle.files['generated/models/models.dart']!;
       expect(
-          userModel,
+          modelsFile,
           contains(
               "import 'package:my_app/graphql/generated/enums/enums.dart';"));
-      expect(userModel, isNot(contains("import '../")));
+      expect(modelsFile, isNot(contains("import '../")));
     });
 
     test('supports Upload scalar in operations and maps to MultipartFile', () {
@@ -586,11 +580,7 @@ void main() {
       // inputPath: lib/api/custom_schema.graphql -> inputDir: lib/api
       // sharedDir: lib/shared/generated -> relative: ../shared/generated
       expect(schemaBundle.files.keys,
-          contains('../shared/generated/enums/status_enum.dart'));
-      expect(schemaBundle.files.keys,
           contains('../shared/generated/enums/enums.dart'));
-      expect(schemaBundle.files.keys,
-          contains('../shared/generated/models/user_model.dart'));
       expect(schemaBundle.files.keys,
           contains('../shared/generated/models/models.dart'));
       expect(schemaBundle.files.keys,
@@ -708,10 +698,14 @@ void main() {
       );
 
       expect(identical(bundle1, bundle2), isFalse);
-      expect(bundle1.files['generated/models/user_model.dart'],
-          isNot(contains('name')));
-      expect(
-          bundle2.files['generated/models/user_model.dart'], contains('name'));
+      // Every response model now also declares a `typename` field (see
+      // freezedDataClass), so a bare contains('name') would spuriously
+      // match that instead of the schema's own `name` field — assert on
+      // the declaration text precisely enough to tell them apart.
+      expect(bundle1.files['generated/models/models.dart'],
+          isNot(contains('required String name')));
+      expect(bundle2.files['generated/models/models.dart'],
+          contains('required String name'));
     });
 
     test('useCache: false bypasses cache', () {
@@ -900,13 +894,15 @@ void main() {
         schemaPath: 'lib/schema.graphql',
       );
 
-      expect(paths, contains('generated/enums/status_enum.dart'));
       expect(paths, contains('generated/enums/enums.dart'));
-      expect(paths, contains('generated/inputs/create_user_input.dart'));
       expect(paths, contains('generated/inputs/inputs.dart'));
-      expect(paths, contains('generated/models/user_model.dart'));
       expect(paths, contains('generated/models/models.dart'));
       expect(paths, contains('generated/schema.gql.dart'));
+      // No per-type paths (generated/enums/status_enum.dart, etc.) — the
+      // schema file's declared output set stops growing with its type
+      // count, which is the actual fix. See the "computeOutputPaths Tests"
+      // group's other two tests for the end-to-end proof.
+      expect(paths, hasLength(4));
     });
 
     test('computes fast expected output paths for operation file', () {
@@ -946,6 +942,133 @@ void main() {
 
       expect(paths, isEmpty);
     });
+
+    test(
+        'growing an already-populated category during a live watch session '
+        'never produces an output outside what was declared when the '
+        'builder started — this is the actual bug this generator once had: '
+        'a schema gaining a type while `build_runner watch` kept running '
+        'used to write an undeclared per-type file, which build_runner '
+        'rejects, aborting that build before models.dart/inputs.dart got '
+        'rewritten and leaving them on disk with a stale export list', () {
+      const schemaV1 = '''
+        enum Status {
+          DRAFT
+          PUBLISHED
+        }
+
+        input SearchInput {
+          query: String!
+        }
+
+        type Post {
+          id: ID!
+          title: String!
+        }
+      ''';
+      // What MkGraphQLBuilder's factory computes once, at watch-session
+      // start, from the schema's content at that moment — this is what
+      // build_runner's Builder.buildExtensions declares as the schema
+      // file's allowed outputs for the rest of that watch session.
+      final declaredAtWatchStart = GeneratorOrchestrator.computeOutputPaths(
+        content: schemaV1,
+        inputPath: 'lib/schema.graphql',
+        schemaPath: 'lib/schema.graphql',
+      ).toSet();
+
+      // The developer edits schema.graphql while watch is still running —
+      // adding a second object type to the already-populated `models`
+      // category — and saves.
+      const schemaV2 = '''
+        enum Status {
+          DRAFT
+          PUBLISHED
+        }
+
+        input SearchInput {
+          query: String!
+        }
+
+        type Post {
+          id: ID!
+          title: String!
+        }
+
+        type Author {
+          id: ID!
+          name: String!
+        }
+      ''';
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schemaV2,
+        inputPath: 'lib/schema.graphql',
+        schemaPath: 'lib/schema.graphql',
+      );
+
+      // Every real output must already have been declared at watch start —
+      // nothing new for build_runner to reject.
+      expect(declaredAtWatchStart.containsAll(bundle.files.keys), isTrue,
+          reason: 'undeclared outputs: '
+              '${bundle.files.keys.toSet().difference(declaredAtWatchStart)}');
+
+      // And the merged barrel genuinely contains both types — the bug's
+      // actual symptom was a barrel missing the new type's export.
+      expect(bundle.files['generated/models/models.dart'],
+          contains('class PostModel'));
+      expect(bundle.files['generated/models/models.dart'],
+          contains('class AuthorModel'));
+      expect(
+          bundle.files['generated/enums/enums.dart'], contains('enum Status'));
+      expect(bundle.files['generated/inputs/inputs.dart'],
+          contains('class SearchInput'));
+    });
+
+    test(
+        'a category\'s first-ever type appearing during a live watch '
+        'session is a known, accepted limitation this fix does not close — '
+        'unlike growing an already-populated category, this still needs a '
+        'watch restart, and this test exists so that remains true and '
+        'documented rather than silently assumed', () {
+      const schemaV1 = '''
+        type Post {
+          id: ID!
+          title: String!
+        }
+      ''';
+      final declaredAtWatchStart = GeneratorOrchestrator.computeOutputPaths(
+        content: schemaV1,
+        inputPath: 'lib/schema.graphql',
+        schemaPath: 'lib/schema.graphql',
+      ).toSet();
+
+      // The schema's first-ever enum appears — a brand new category, not
+      // an addition to one that already existed at watch start.
+      const schemaV2 = '''
+        type Post {
+          id: ID!
+          title: String!
+        }
+
+        enum Status {
+          DRAFT
+          PUBLISHED
+        }
+      ''';
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schemaV2,
+        inputPath: 'lib/schema.graphql',
+        schemaPath: 'lib/schema.graphql',
+      );
+
+      expect(bundle.files.keys.toSet().difference(declaredAtWatchStart),
+          equals({'generated/enums/enums.dart'}),
+          reason: 'this is the documented 0→1 limitation — enums/enums.dart '
+              'appearing for the first time is expected to be the ONLY '
+              'undeclared output here; if this assertion starts failing, '
+              'either the limitation has been closed (update docs/CHANGELOG) '
+              'or something else became undeclared unexpectedly (a real bug)');
+      expect(bundle.files.keys, contains('generated/enums/enums.dart'));
+    });
   });
 
   group('Shared vs Partial Models Tests', () {
@@ -970,7 +1093,7 @@ void main() {
         inputPath: 'lib/graphql/schema.graphql',
       );
 
-      final countryModel = bundle.files['generated/models/country_model.dart']!;
+      final countryModel = bundle.files['generated/models/models.dart']!;
       expect(countryModel, contains('required String code'));
       expect(countryModel, contains('required String name'));
       expect(countryModel,
@@ -1012,8 +1135,7 @@ void main() {
       expect(opModel, isNot(contains('emoji')));
       expect(opModel, isNot(contains('native')));
 
-      expect(bundle.files.containsKey('generated/models/country_model.dart'),
-          isFalse);
+      expect(bundle.files.containsKey('generated/models/models.dart'), isFalse);
     });
 
     test(
@@ -1159,6 +1281,41 @@ void main() {
       }
     ''';
 
+    test(
+        'response Model/Input classes declare a __typename field; '
+        'Vars/Input classes sent to the server do not', () {
+      const query = '''
+        query GetItemById(\$id: UUID!, \$filter: FilterInput) {
+          getItem(id: \$id, filter: \$filter) {
+            id
+          }
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: query,
+        inputPath: 'lib/graphql/operations.graphql',
+        schemaContent: conventionSchema,
+        schemaPath: 'lib/graphql/schema.graphql',
+      );
+
+      const typenameField =
+          "@JsonKey(name: '__typename', includeIfNull: false) String? typename";
+
+      // The operation's own response wrapper model.
+      final opModel =
+          bundle.files['generated/get_item_by_id/get_item_by_id_model.dart']!;
+      expect(opModel, contains(typenameField));
+
+      // The operation's Vars class — sent to the server, never a response.
+      // (FilterInput itself is a schema-level shared Input — the
+      // "Dart reserved keywords" test below, which generates for the
+      // schema file directly, covers that it stays typename-free too.)
+      final varsClass =
+          bundle.files['generated/get_item_by_id/get_item_by_id_var.dart']!;
+      expect(varsClass, isNot(contains('typename')));
+    });
+
     test('Dart reserved keywords map to g{Keyword} with @JsonKey(name: raw)',
         () {
       final bundle = GeneratorOrchestrator.generateForGraphQLFile(
@@ -1166,7 +1323,7 @@ void main() {
         inputPath: 'lib/graphql/schema.graphql',
       );
 
-      final itemModel = bundle.files['generated/models/item_model.dart']!;
+      final itemModel = bundle.files['generated/models/models.dart']!;
       expect(itemModel,
           contains("@JsonKey(name: 'class') required String gClass"));
       expect(itemModel,
@@ -1174,8 +1331,13 @@ void main() {
       expect(
           itemModel, contains('required String id')); // UUID mapped to String
       expect(itemModel, contains('required DateTime createdAt'));
+      // A schema-level shared Model (a response type) also gets typename.
+      expect(
+          itemModel,
+          contains(
+              "@JsonKey(name: '__typename', includeIfNull: false) String? typename"));
 
-      final filterInput = bundle.files['generated/inputs/filter_input.dart']!;
+      final filterInput = bundle.files['generated/inputs/inputs.dart']!;
       expect(
           filterInput,
           contains(
@@ -1183,9 +1345,260 @@ void main() {
       expect(filterInput, contains("@Default(20) int limit"));
       expect(filterInput,
           contains("@JsonKey(name: 'is', includeIfNull: false) bool? gIs"));
+      // Input classes are sent to the server, never a response — no typename.
+      expect(filterInput, isNot(contains('typename')));
 
-      final statusEnum = bundle.files['generated/enums/status_enum.dart']!;
+      final statusEnum = bundle.files['generated/enums/enums.dart']!;
       expect(statusEnum, contains('@JsonValue("DEFAULT")\n  gDefault'));
+    });
+
+    test(
+        'an input type referencing another input type needs no import — '
+        'both live in the same merged inputs.dart', () {
+      const schema = '''
+        input AddressInput {
+          street: String!
+        }
+
+        input CreateUserInput {
+          name: String!
+          address: AddressInput
+        }
+
+        type Query {
+          placeholder: String
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      final inputsFile = bundle.files['generated/inputs/inputs.dart']!;
+      // Class names are the GraphQL input type name as-is (pascalCase, no
+      // suffix appended) — unlike models, which get "Model" appended.
+      expect(inputsFile, contains('class AddressInput'));
+      expect(inputsFile, contains('class CreateUserInput'));
+      expect(inputsFile, isNot(contains("import 'inputs.dart';")));
+    });
+
+    test(
+        'a models.dart import flag is unioned across every model in the '
+        'file, not just the last one generated — only the third of three '
+        'models here references an enum, and the file must still import '
+        'enums.dart', () {
+      const schema = '''
+        enum Status {
+          ACTIVE
+          INACTIVE
+        }
+
+        type Alpha {
+          id: ID!
+        }
+
+        type Beta {
+          id: ID!
+        }
+
+        type Gamma {
+          id: ID!
+          status: Status!
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      final modelsFile = bundle.files['generated/models/models.dart']!;
+      expect(modelsFile, contains("import '../enums/enums.dart';"));
+      expect(modelsFile, contains('class AlphaModel'));
+      expect(modelsFile, contains('class BetaModel'));
+      expect(modelsFile, contains('class GammaModel'));
+    });
+
+    test(
+        'a self-referencing model type compiles with no self-import — the '
+        'field and its declaring class are in the same merged models.dart', () {
+      const schema = '''
+        type User {
+          id: ID!
+          name: String!
+          friend: User
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      final modelsFile = bundle.files['generated/models/models.dart']!;
+      expect(modelsFile, contains('class UserModel'));
+      expect(modelsFile, contains('UserModel? friend'));
+      expect(modelsFile, isNot(contains("import 'models.dart';")));
+    });
+
+    test(
+        'an enum-only schema (no inputs, no non-root object types) merges '
+        'correctly and produces no inputs.dart or models.dart at all', () {
+      const schema = '''
+        enum Status {
+          ACTIVE
+          INACTIVE
+        }
+
+        type Query {
+          status: Status
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      expect(bundle.files.keys, contains('generated/enums/enums.dart'));
+      expect(
+          bundle.files.keys, isNot(contains('generated/inputs/inputs.dart')));
+      expect(
+          bundle.files.keys, isNot(contains('generated/models/models.dart')));
+    });
+
+    test(
+        'a field named after a Dart core type (int/double/bool/num) maps to '
+        'g{Name} — using the raw name would shadow that type for the whole '
+        'class (e.g. `final double double;` fails to compile since `double` '
+        'no longer resolves to dart:core\'s type inside the class body)', () {
+      const schema = '''
+        type Reading {
+          id: ID!
+          int: Int!
+          double: Float!
+          bool: Boolean!
+          num: Int!
+        }
+
+        type Query {
+          getReading(id: ID!): Reading
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: schema,
+        inputPath: 'lib/graphql/schema.graphql',
+      );
+
+      final readingModel = bundle.files['generated/models/models.dart']!;
+      expect(readingModel, contains("@JsonKey(name: 'int') required int gInt"));
+      expect(readingModel,
+          contains("@JsonKey(name: 'double') required double gDouble"));
+      expect(
+          readingModel, contains("@JsonKey(name: 'bool') required bool gBool"));
+      expect(readingModel, contains("@JsonKey(name: 'num') required int gNum"));
+    });
+
+    test(
+        'safeIdentifier escapes every keyword Dart\'s own scanner recognizes '
+        '(package:_fe_analyzer_shared\'s Keyword table: reserved words, '
+        'built-in identifiers, and pseudo keywords) — a future Dart release '
+        'adding one should fail this test rather than silently generate '
+        'broken code', () {
+      // Source of truth: every lower-cased lexeme in
+      // _fe_analyzer_shared's `Keyword` table (`Function` is the sole
+      // entry that's capitalized — generated field names are always
+      // camelCased with a lowercase first letter, so it can never
+      // collide and is excluded here).
+      const dartScannerKeywords = {
+        'abstract',
+        'as',
+        'assert',
+        'async',
+        'augment',
+        'await',
+        'base',
+        'break',
+        'case',
+        'catch',
+        'class',
+        'const',
+        'continue',
+        'covariant',
+        'default',
+        'deferred',
+        'do',
+        'dynamic',
+        'else',
+        'enum',
+        'export',
+        'extends',
+        'extension',
+        'external',
+        'factory',
+        'false',
+        'final',
+        'finally',
+        'for',
+        'get',
+        'hide',
+        'if',
+        'implements',
+        'import',
+        'in',
+        'inout',
+        'interface',
+        'is',
+        'late',
+        'library',
+        'mixin',
+        'native',
+        'new',
+        'null',
+        'of',
+        'on',
+        'operator',
+        'out',
+        'part',
+        'patch',
+        'required',
+        'rethrow',
+        'return',
+        'sealed',
+        'set',
+        'show',
+        'source',
+        'static',
+        'super',
+        'switch',
+        'sync',
+        'this',
+        'throw',
+        'true',
+        'try',
+        'typedef',
+        'var',
+        'void',
+        'when',
+        'while',
+        'with',
+        'yield',
+      };
+
+      for (final keyword in dartScannerKeywords) {
+        expect(SchemaGenerator.safeIdentifier(keyword), startsWith('g'),
+            reason: '"$keyword" must be escaped');
+      }
+
+      // Not scanner keywords, but a field named after one would shadow
+      // that dart:core type for its whole enclosing class — see the
+      // "Dart core type" test above.
+      for (final coreType in ['int', 'double', 'bool', 'num']) {
+        expect(SchemaGenerator.safeIdentifier(coreType), startsWith('g'),
+            reason: '"$coreType" must be escaped');
+      }
     });
 
     test(
@@ -1275,6 +1688,39 @@ void main() {
       final barrel = bundle.files['generated/operations.gql.dart']!;
       expect(barrel, contains('ErrorPolicy? errorPolicy,'));
       expect(barrel, contains('errorPolicy: errorPolicy,'));
+    });
+
+    test(
+        'staleTime/cacheTime/retry/refetchInterval are included in request '
+        'constructor and copyWithRequest', () {
+      const query = '''
+        query GetSimpleItem {
+          getItem(id: "123") {
+            id
+          }
+        }
+      ''';
+
+      final bundle = GeneratorOrchestrator.generateForGraphQLFile(
+        content: query,
+        inputPath: 'lib/graphql/operations.graphql',
+        schemaContent: conventionSchema,
+        schemaPath: 'lib/graphql/schema.graphql',
+      );
+
+      final req =
+          bundle.files['generated/get_simple_item/get_simple_item_req.dart']!;
+      expect(req, contains('Duration? staleTime,'));
+      expect(req, contains('Duration? cacheTime,'));
+      expect(req, contains('RetryOptions? retry,'));
+      expect(req, contains('Duration? refetchInterval,'));
+      expect(req, contains('staleTime: staleTime ?? this.staleTime,'));
+      expect(req, contains('cacheTime: cacheTime ?? this.cacheTime,'));
+      expect(req, contains('retry: retry ?? this.retry,'));
+      expect(
+          req,
+          contains(
+              'refetchInterval: refetchInterval ?? this.refetchInterval,'));
     });
 
     test('Custom scalars are mapped according to customScalars configuration',

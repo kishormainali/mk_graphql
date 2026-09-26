@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
-import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+
+import '../../core/backoff.dart';
+import '../../core/document_print_cache.dart';
 
 typedef WebSocketPayloadCallback = FutureOr<dynamic> Function();
 
@@ -16,7 +19,27 @@ class WebSocketLink extends Link {
   final String url;
   final dynamic initialPayload;
   final Iterable<String> subprotocols;
+
+  /// Delay before the first reconnect attempt after a drop. Each further
+  /// consecutive failed attempt multiplies this by
+  /// [reconnectBackoffMultiplier], capped at [maxReconnectInterval] — a
+  /// fixed interval here would otherwise retry a dead server or absent
+  /// network forever at full speed, needlessly draining battery and
+  /// spamming the network every [reconnectInterval] indefinitely.
   final Duration reconnectInterval;
+
+  /// Upper bound the backed-off reconnect delay is clamped to, however many
+  /// consecutive attempts have failed.
+  final Duration maxReconnectInterval;
+
+  final double reconnectBackoffMultiplier;
+
+  /// Randomizes each computed reconnect delay by up to this fraction
+  /// (`0.0`–`1.0`) in either direction, so many clients disconnected by the
+  /// same event (a server restart, a network blip) don't all reconnect in
+  /// the same instant and re-cause the spike that dropped them.
+  final double reconnectJitter;
+
   final bool autoReconnect;
   final ResponseParser parser;
 
@@ -26,6 +49,13 @@ class WebSocketLink extends Link {
   bool _isDisposed = false;
   int _nextId = 0;
 
+  /// Consecutive failed reconnect attempts since the last successful
+  /// `connection_ack` — drives the exponential backoff in
+  /// [_reconnectDelay]. Reset to `0` on every `connection_ack`.
+  int _reconnectAttempt = 0;
+
+  static final Random _random = Random();
+
   final _activeSubscriptions = <String, StreamController<Response>>{};
 
   WebSocketLink(
@@ -33,13 +63,44 @@ class WebSocketLink extends Link {
     this.initialPayload,
     this.subprotocols = const ['graphql-transport-ws', 'graphql-ws'],
     this.reconnectInterval = const Duration(seconds: 3),
+    this.maxReconnectInterval = const Duration(seconds: 30),
+    this.reconnectBackoffMultiplier = 1.5,
+    this.reconnectJitter = 0.2,
     this.autoReconnect = true,
     this.parser = const ResponseParser(),
-  });
+  }) : assert(reconnectJitter >= 0.0 && reconnectJitter <= 1.0,
+            'reconnectJitter must be within 0.0–1.0');
 
-  Future<void> _connect() async {
-    if (_connected || _isDisposed) return;
+  Duration _reconnectDelay() {
+    final capped = cappedBackoffDelay(
+      attempt: _reconnectAttempt,
+      initialDelay: reconnectInterval,
+      maxDelay: maxReconnectInterval,
+      multiplier: reconnectBackoffMultiplier,
+    );
+    if (reconnectJitter <= 0.0) return capped;
 
+    final cappedMs = capped.inMilliseconds;
+    final spread = cappedMs * reconnectJitter;
+    final jitteredMs = cappedMs + spread * (_random.nextDouble() * 2 - 1);
+    return Duration(milliseconds: jitteredMs.clamp(0, double.infinity).round());
+  }
+
+  /// In-flight connection attempt, if any. [_connect] awaits `payload()`
+  /// before flipping [_connected], so without this guard two subscriptions
+  /// started back-to-back (both seeing `_connected == false` before either
+  /// finishes connecting) would each open their own [WebSocketChannel] — the
+  /// second silently replacing (and leaking) the first. Single-flight, same
+  /// pattern as `AuthLink._ongoingRefresh`.
+  Future<void>? _connectFuture;
+
+  Future<void> _connect() {
+    if (_connected || _isDisposed) return Future.value();
+    return _connectFuture ??=
+        _doConnect().whenComplete(() => _connectFuture = null);
+  }
+
+  Future<void> _doConnect() async {
     try {
       _channel = WebSocketChannel.connect(
         Uri.parse(url),
@@ -80,6 +141,7 @@ class WebSocketLink extends Link {
       }
 
       if (type == 'connection_ack') {
+        _reconnectAttempt = 0;
         return;
       }
 
@@ -121,7 +183,8 @@ class WebSocketLink extends Link {
       }
     }
     if (autoReconnect && !_isDisposed) {
-      Timer(reconnectInterval, _reconnect);
+      Timer(_reconnectDelay(), _reconnect);
+      _reconnectAttempt++;
     }
   }
 
@@ -129,7 +192,8 @@ class WebSocketLink extends Link {
     _connected = false;
     _channel = null;
     if (autoReconnect && !_isDisposed && _activeSubscriptions.isNotEmpty) {
-      Timer(reconnectInterval, _reconnect);
+      Timer(_reconnectDelay(), _reconnect);
+      _reconnectAttempt++;
     }
   }
 
@@ -157,7 +221,7 @@ class WebSocketLink extends Link {
 
   Future<void> _sendSubscribe(String id, Request req) async {
     await _connect();
-    final docString = printNode(req.operation.document);
+    final docString = printDocumentCached(req.operation.document);
     _channel?.sink.add(jsonEncode({
       'id': id,
       'type': 'subscribe',

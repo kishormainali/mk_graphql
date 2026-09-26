@@ -1,0 +1,702 @@
+# mk_graphql — Full Reference for AI Coding Agents
+
+> A clean, modern, simplified GraphQL client for Dart & Flutter. This file is self-contained: everything an agent needs to correctly wire `mk_graphql` into an app is inlined below, so it works even when only this package (from pub cache) is on disk, without the rest of the source monorepo.
+
+Package: `mk_graphql` (pub.dev: https://pub.dev/packages/mk_graphql)
+Repo: https://github.com/kishormainali/mk_graphql
+
+Companion package (optional, recommended): `mk_graphql_generator` — a `build_runner` builder that generates the typed `GraphQLRequest` subclasses and response models referenced throughout this doc (`GetUserReq`, `GetUserVars`, response model classes, etc.) from `.graphql` operation files and a `.graphql` schema. Nothing below requires it — you can hand-write `GraphQLRequest` subclasses — but for any real schema, add it as a `dev_dependency` and run `dart run build_runner build --delete-conflicting-outputs` instead of hand-writing operation classes.
+
+---
+
+## 1. Install
+
+```yaml
+dependencies:
+  flutter:
+    sdk: flutter
+  mk_graphql: ^1.2.1
+
+# Optional but recommended: generates GraphQLRequest classes from .graphql files
+dev_dependencies:
+  build_runner: ^2.4.0
+  mk_graphql_generator: ^1.2.1
+```
+
+```bash
+flutter pub get
+```
+
+---
+
+## 2. Construct a `GraphQLClient`
+
+```dart
+import 'package:mk_graphql/mk_graphql.dart';
+
+final client = GraphQLClient(
+  url: 'https://api.example.com/graphql',
+
+  // Optional: WebSocket or SSE endpoint for subscriptions (pick at most one)
+  sseUrl: 'https://api.example.com/graphql/sse',
+  // wsUrl: 'wss://api.example.com/graphql',
+
+  // Optional: the sole source of truth for token refresh. The client manages
+  // TokenStorage.i and the `Authorization` header on its own — no app-side
+  // storage or header plumbing needed. See section 4 (Authentication).
+  refreshCallback: (refreshClient, refreshToken) async {
+    final result = await refreshClient.future(RefreshMutation(
+      variables: RefreshVars(refreshToken: refreshToken),
+    ));
+    return TokenPair(
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+    ); // return null, or throw, to revoke the session
+  },
+
+  // Optional: default fetch policy (defaults to FetchPolicy.noCache)
+  defaultFetchPolicy: FetchPolicy.cacheFirst,
+
+  // Optional: default error policy (defaults to ErrorPolicy.none)
+  defaultErrorPolicy: ErrorPolicy.none,
+
+  // Optional: headers sent on every HTTP request (see section 3)
+  defaultHeaders: {'X-App-Version': '1.0.0'},
+
+  // Optional: pluggable cache — omit for the default InMemoryCache
+  // cache: HiveCache... (see section 6, use GraphQLClient.create for this)
+);
+```
+
+Internally, `GraphQLClient` composes this link pipeline for you:
+
+```
+AuthLink?  →  TypenameLink?  →  LoggerLink  →  split(is-subscription?, WebSocketLink|SseLink, DioLink)
+```
+
+- `AuthLink` is included only if you pass `accessTokenHeader` and/or `refreshCallback`/`onTokenRefresh`.
+- `TypenameLink` is included unless you pass `addTypename: false`. Keep it on — the normalized cache needs `__typename` to key entities (section 6).
+- The subscription transport (`WebSocketLink`/`SseLink`) only exists if you pass `wsUrl`, `sseUrl`, or `subscriptionLink`.
+- Queries/mutations always terminate in `DioLink` (or `HttpLink`/`BatchLink` if you assemble a custom pipeline — see section 9).
+
+`GraphQLClient.create({...})` is an async factory with the same parameters, for when `cache` is a `Future` (e.g. `HiveCache.open(...)` — see section 6). Use the sync constructor otherwise.
+
+---
+
+## 3. Running Queries & Mutations
+
+```dart
+// Client API
+final user = await client.future(GetUserReq(variables: const GetUserVars(id: '123')));
+print(user.name);
+
+// Direct request extension (equivalent)
+final user2 = await GetUserReq(variables: const GetUserVars(id: '123')).execute(client);
+
+// Streaming (e.g. to drive a watchQuery-backed widget manually)
+client.stream(myReq).listen((data) => print(data));
+
+// Force a fresh network fetch, updating the cache in place
+final fresh = await client.refetch(myReq);
+```
+
+### `GraphQLClient` API surface
+
+| Method | Returns | Behavior |
+|---|---|---|
+| `future(req, {cancelToken})` | `Future<TData>` | Runs request once, throws a `GraphQLException` on error. |
+| `stream(req, {cancelToken})` | `Stream<TData>` | Runs request, maps emissions to `TData`, throws on error. |
+| `refetch(req, {cancelToken})` | `Future<TData>` | Like `future`, but forces `FetchPolicy.networkOnly` and writes result to cache. |
+| `refetchStream(req, {cancelToken})` | `Stream<TData>` | Streaming variant of `refetch`. |
+| `fetchMore(...)` | `Future<TData>` | Fetches next page, auto-merges lists/connections, writes to cache under `originalRequest`. See section 7. |
+| `request(req, {cancelToken})` | `Stream<GraphQLResponse<TData>>` | Low-level: yields raw responses (cache/network/optimistic), never throws. |
+| `watchQuery(req)` | `Stream<TData?>` | Subscribes to cache updates for this request's cache key, independent of network activity. |
+| `isAuthenticated` | `Future<bool>` | Whether `TokenStorage.i` holds an access token (stored, not server-validated). |
+| `invalidateQueries({operationNames, types, refetchActive})` | `Future<void>` | Evicts and optionally background-refetches matching cached queries. See section 6. |
+| `notifyReconnected()` / `notifyAppResumed()` / `notifyAppPaused()` | `void` | Refetch/pause triggers — see section 6. |
+| `dispose()` | `Future<void>` | Clears revoke-token listeners, clears cache, disposes link pipeline. |
+
+Every `GraphQLRequest` also has extension methods mirroring the client API: `req.execute(client)`, `req.refetch(client)`, `req.fetchMore(client, nextRequest: ...)`, `req.stream(client)`, `req.watch(client)`.
+
+### `GraphQLRequest<TData, TVars>` shape
+
+Every operation (hand-written or generated) is:
+
+```dart
+abstract class GraphQLRequest<TData, TVars> {
+  String get document;               // raw query/mutation/subscription text
+  String get operationName;
+  TVars get variables;
+
+  Map<String, dynamic> toJsonVars(TVars vars);
+  TData parseData(Map<String, dynamic> json);
+
+  final FetchPolicy? fetchPolicy;     // per-request override
+  final ErrorPolicy? errorPolicy;     // per-request override
+  final Map<String, String>? headers; // per-request extra headers
+  final TData? optimisticResponse;
+  final CancelToken? cancelToken;
+  final Duration? staleTime;          // overrides GraphQLClient.defaultStaleTime
+  final Duration? cacheTime;          // overrides GraphQLClient.defaultCacheTime
+  final RetryOptions? retry;          // overrides GraphQLClient.defaultRetry
+  final Duration? refetchInterval;    // periodic background refetch while watched
+
+  GraphQLRequest<TData, TVars> copyWithRequest({ ... });
+  GraphQLRequest<TData, TVars> copyWithFetchPolicy(FetchPolicy policy);
+}
+```
+
+If you hand-write a `GraphQLRequest` subclass (rather than generating it) and override `copyWithRequest`, forward `staleTime`/`cacheTime`/`retry`/`refetchInterval` explicitly from `this` — they're not parameters of `copyWithRequest` itself, so a naive override silently drops them on every `copyWithFetchPolicy`/`refetch`/background-refetch call. The generator already does this correctly.
+
+### `FetchPolicy`
+
+```dart
+enum FetchPolicy {
+  cacheFirst,      // Cache if present, else network
+  networkOnly,     // Always network, writes result to cache
+  cacheOnly,       // Cache only; null if absent, never hits network
+  cacheAndNetwork, // Emit cache immediately (if present), then always network
+  noCache,         // Network only; cache is neither read nor written
+}
+```
+
+Set client-wide via `GraphQLClient(defaultFetchPolicy: ...)` (default `FetchPolicy.noCache`), override per request via `req.fetchPolicy` or `req.copyWithFetchPolicy(...)`.
+
+### `ErrorPolicy`
+
+```dart
+enum ErrorPolicy {
+  none,   // (Default) Throws GraphQLException if any errors exist, even if partial data exists
+  ignore, // Ignores GraphQL errors and returns partial data when present
+  all,    // Returns partial data without throwing, while preserving errors on GraphQLResponse
+}
+```
+
+Set client-wide via `GraphQLClient(defaultErrorPolicy: ...)`, override per request via `req.copyWithRequest(errorPolicy: ErrorPolicy.ignore)`.
+
+### `GraphQLResponse<TData>` — what `request()` yields
+
+```dart
+class GraphQLResponse<TData> {
+  final TData? data;
+  final List<GraphQLError>? errors;
+  final GraphQLException? linkException;
+  final ResponseSource source; // cache | network | optimistic
+  final bool loading;          // true for optimistic/stale emissions awaiting network
+
+  bool get hasErrors;
+  bool get hasValidationErrors;
+  Map<String, List<String>> get validationErrors;
+  ValidationException? get validationException;
+}
+```
+
+### Errors & validation
+
+All thrown errors are `GraphQLException` subclasses (extending `gql_link`'s `LinkException`):
+
+| Exception | When |
+|---|---|
+| `ValidationException` | Backend field validation failure (`BAD_USER_INPUT`, `GRAPHQL_VALIDATION_FAILED`, Laravel/Lighthouse, NestJS, Spring DGS). Extends `BadRequestException`. |
+| `UnAuthorizedException` | GraphQL error with extension code `UNAUTHORIZED`/`UNAUTHENTICATED`/`FORBIDDEN`. |
+| `BadRequestException` | Generic bad request or user input error. |
+| `NotFoundException` | `QUERY_NOT_FOUND` / `NOT_FOUND`. |
+| `ParseException` | `GRAPHQL_PARSE_FAILED`, or a local JSON/deserialization failure. |
+| `NetworkException` | Dio connection error (offline, DNS, etc). |
+| `TimeoutException` | Request exceeded Dio's configured timeout. |
+| `RequestCancelledException` | The request's `CancelToken` was cancelled. |
+| `RevokeTokenException` | A token refresh attempt itself failed and there's no more specific original error to surface — see section 4. |
+| `AppServerException` | Fallback for anything else (with an optional HTTP `code`). |
+
+```dart
+try {
+  final user = await client.future(myReq);
+} on ValidationException catch (e) {
+  final errors = e.validationErrors; // {'email': ['Email already taken']}
+  if (e.hasError('email')) {
+    showFieldError('email', e.getFirstError('email')!);
+  }
+} on UnAuthorizedException {
+  redirectToLogin();
+} on NetworkException {
+  showOfflineBanner();
+} on GraphQLException catch (e) {
+  showToast(e.message);
+}
+```
+
+### Request deduplication
+
+Concurrent identical **queries** (same operation, document, variables) automatically share a single in-flight network call. Applies to queries only — mutations and subscriptions never dedup, and neither does any request carrying an explicit `CancelToken`. Always on, no configuration.
+
+### Retry with backoff
+
+```dart
+class RetryOptions {
+  final int maxAttempts;                        // default 3, total attempts including the first
+  final Duration initialDelay;                  // default 200ms
+  final double backoffMultiplier;                // default 2.0
+  final double jitter;                          // default 0.0, randomizes each delay by up to this fraction
+  final bool Function(Object error)? retryIf;    // default: transient network errors only
+
+  static const RetryOptions none = RetryOptions(maxAttempts: 1);
+}
+```
+
+- `GraphQLClient(defaultRetry: ...)` applies to **queries only**; `null` (default) disables auto-retry. Mutations/subscriptions never use `defaultRetry` — set `GraphQLRequest.retry` per-request to opt a mutation in, or pass `RetryOptions.none` to opt a query out.
+- Default `retryIf` retries `NetworkException`/`TimeoutException` only — never 4xx/validation errors.
+- Set `jitter` (e.g. `0.2`) when many client instances might fail together (a shared backend blip) so they don't retry in lockstep.
+
+### Default headers
+
+`GraphQLClient(defaultHeaders: {...})` sends the given headers on every HTTP request — queries, mutations, multipart uploads, SSE subscriptions, and the token-refresh request. Not sent on WebSocket connections (`wsUrl`) — put credentials for that in the connection payload via `accessTokenHeader`.
+
+Precedence, lowest to highest:
+1. Transport's built-in headers (`Accept`, `Content-Type`)
+2. `defaultHeaders` (on a multipart upload the boundary `Content-Type` always wins)
+3. A request's own `headers`
+4. The stored access token's headers (`Authorization` by default)
+
+Header names are case-insensitive. A `Dio` instance passed via `dio:` is never mutated by `mk_graphql` — its own base headers keep applying to your other requests made through it directly.
+
+---
+
+## 4. Authentication & Token Storage
+
+`GraphQLClient` can manage a login session end-to-end: attach the access token to every request, refresh it on a 401, retry the failed requests, and revoke the session when refresh isn't possible. The session lives in `TokenStorage.i`, a secure, app-wide singleton (`flutter_secure_storage`-backed).
+
+### `TokenPair`
+
+```dart
+const TokenPair({
+  required String accessToken,
+  String? refreshToken,
+  DateTime? createdAt,   // when the session's tokens were first issued (preserved across refreshes)
+  DateTime? updatedAt,   // when the tokens were last written — login, then every refresh
+});
+```
+
+Leave `createdAt`/`updatedAt` `null` when constructing one yourself — `TokenStorage` stamps them (login: both = now; refresh: `updatedAt` = now, `createdAt` kept).
+
+### `TokenStorage.i`
+
+| Member | Description |
+|---|---|
+| `saveToken(TokenPair)` | Persists a new session (**login**). Notifies listeners with the access token. |
+| `updateToken(TokenPair)` | Persists a **refreshed** pair. Keeps `createdAt`, sets `updatedAt` to now. **Does not notify listeners.** |
+| `deleteToken()` | Clears tokens and both timestamps (**logout/revoke**). Notifies listeners with `null`. |
+| `getToken()` | The stored `TokenPair?` — `null` when logged out. |
+| `accessToken` / `refreshToken` | Convenience getters for the two token strings (`null` when absent). |
+| `setTokenListener(listener)` | Adds a `void Function(String?)` — the new access token on `saveToken`, `null` on `deleteToken`. **Not called on refresh.** |
+| `removeTokenListener()` | Removes every listener added with `setTokenListener`. |
+| `clearOnInstall()` | Call once at startup: wipes credentials on the first launch after a reinstall. |
+
+**Critical for UI-driving code:** a token refresh is deliberately silent. If you rebuild your router (or any auth-dependent UI) from `setTokenListener`, do not expect it to fire on refresh — it only fires on login (`saveToken`) and logout/revoke (`deleteToken`). The client always uses `updateToken` for its own refreshes, so a refresh never triggers a route rebuild; the very next request already reads the new token from storage. If you need to react to a refresh specifically (e.g. reconnect a websocket with the new token), read `TokenStorage.i.getToken()` at the point you need it and compare `updatedAt` — there's no dedicated refresh notification.
+
+### Session lifecycle
+
+```dart
+// 1. Configure once. The client reads/writes TokenStorage.i itself.
+final client = GraphQLClient(
+  url: 'https://api.example.com/graphql',
+  refreshCallback: (refreshClient, refreshToken) async {
+    final res = await refreshClient.future(RefreshMutation(...));
+    return TokenPair(accessToken: res.accessToken, refreshToken: res.refreshToken);
+  },
+);
+
+// 2. React to login/logout (e.g. drive the router).
+TokenStorage.i.setTokenListener((accessToken) {
+  router.replaceAll([accessToken == null ? const LoginRoute() : const HomeRoute()]);
+});
+
+// 3. Login: store the session from your login mutation.
+await TokenStorage.i.saveToken(
+  TokenPair(accessToken: data.accessToken, refreshToken: data.refreshToken),
+);
+
+// 4. Logout.
+await TokenStorage.i.deleteToken();
+```
+
+### What happens on an unauthorized response
+
+1. `AuthLink` classifies the failure (default: `UNAUTHORIZED`/`UNAUTHENTICATED`/401 → refresh; `FORBIDDEN`/403 → revoke immediately, no refresh attempted; override with `isUnauthorized`).
+2. On **refresh**, the client reads the stored refresh token and calls `refreshCallback(refreshClient, refreshToken)` once — concurrent failures share the same in-flight refresh.
+3. On success, `TokenStorage.i.updateToken(...)` runs (silent) and the failed requests are retried once with the new access token.
+4. If it returns `null`/throws, or no refresh token is stored, or the failure classified as revoke: `TokenStorage.i.deleteToken()` runs (→ `setTokenListener` fires with `null`), `onRevokeToken` (if passed) is called, and every `GraphQLClient.registerRevokeTokenListener` listener fires. The real cause still reaches the caller as a thrown exception.
+
+### Two listener families
+
+| Listener | Fires on | Not on |
+|---|---|---|
+| `TokenStorage.i.setTokenListener` | login (`saveToken`), logout/revoke (`deleteToken`) | refresh |
+| `GraphQLClient.registerRevokeTokenListener` | revoke only (refresh failed, no refresh token, `AuthFailure.revoke`) | login, refresh, a manual `deleteToken()` |
+
+Use `setTokenListener` for "the auth state changed" and `registerRevokeTokenListener` for "the server ended my session". On an explicit logout, call `deleteToken()` directly.
+
+```dart
+GraphQLClient.registerRevokeTokenListener(() {
+  // Clear any app-side state and navigate to login screen
+});
+```
+
+### Customizing auth headers
+
+```dart
+GraphQLClient(
+  url: endpoint,
+  accessTokenHeader: (token) => {'X-Auth': token}, // default: {'Authorization': 'Bearer $token'}
+  refreshCallback: ...,
+);
+```
+
+`refreshTokenHeader` has no default — the refresh token already reaches your refresh endpoint as `refreshCallback`'s second argument. Pass it only if your refresh endpoint additionally expects the token as a header.
+
+### Checking for a session
+
+`client.isAuthenticated` is `true` when `TokenStorage.i` holds an access token. It reflects what is *stored*, not whether the server still accepts it.
+
+---
+
+## 5. Subscriptions
+
+Pick exactly one subscription transport when constructing the client: `wsUrl` (WebSocket, `graphql-ws`/`graphql-transport-ws` protocol) or `sseUrl` (Server-Sent Events).
+
+```dart
+client.stream(mySubscriptionRequest).listen((data) {
+  print('Real-time event: $data');
+});
+```
+
+`WebSocketLink` auto-reconnects with exponential backoff (`reconnectInterval` default 3s, `reconnectBackoffMultiplier` default 1.5, capped at `maxReconnectInterval` default 30s, jittered by `reconnectJitter` default `0.2`).
+
+---
+
+## 6. Caching
+
+`GraphQLClient` delegates all reads/writes to a `Cache` implementation:
+
+```dart
+abstract class Cache {
+  TData? readQuery<TData, TVars>(GraphQLRequest<TData, TVars> request);
+  void writeQuery<TData, TVars>(GraphQLRequest<TData, TVars> request, TData data);
+  Map<String, dynamic>? readFragment({required String id, required String fragmentName});
+  void writeFragment({required String id, required Map<String, dynamic> data});
+  void evict(String key);
+  void clear();
+  Stream<TData?> watchQuery<TData, TVars>(GraphQLRequest<TData, TVars> request);
+  void recordOptimistic<TData, TVars>(GraphQLRequest<TData, TVars> request, TData data);
+  void removeOptimistic(String requestId);
+  DateTime? writtenAt<TData, TVars>(GraphQLRequest<TData, TVars> request);
+  Iterable<String> matchingQueryKeys({List<String>? operationNames, List<String>? types});
+}
+```
+
+Omit `GraphQLClient(cache: ...)` and an `InMemoryCache` is created for you.
+
+### How `FetchPolicy` drives the cache
+
+- `cacheOnly` → `cache.readQuery(req)`, nothing else.
+- `cacheFirst` → `readQuery`; on a miss, fetch from network and `writeQuery` the result.
+- `cacheAndNetwork` → emit `readQuery` immediately (if present, `loading: true`), then always fetch from network and `writeQuery`.
+- `networkOnly` → fetch from network, `writeQuery` the result.
+- `noCache` → fetch from network; cache is never read or written.
+
+A successful network response is written to cache under all policies except `noCache`.
+
+### `InMemoryCache` normalization
+
+Genuinely normalized, similar in spirit to Apollo Client's `InMemoryCache`:
+- Each operation's result is written under a `ROOT_QUERY:<operationName>:<documentHash>:<variables>` record.
+- Any nested object with `__typename` plus `id`/`_id` is extracted into its own record keyed `Type:id` and replaced with a `{"__ref": "Type:id"}` reference (recurses through nested objects/lists).
+- Reading denormalizes: a write to one operation's result that touches a shared entity is immediately visible when reading/watching any other operation referencing that same entity — no manual invalidation needed.
+- Requires `__typename` in responses, which is why `TypenameLink` (`addTypename: true`) is on by default. **Do not disable it unless your server rejects the extra field.**
+- Custom `keyGetter` via `InMemoryCache(keyGetter: ...)` if your schema's identity field isn't `id`/`_id`.
+- Does *not* deep-merge partial selections of the same entity (shallow record replace/merge), and does not garbage-collect orphaned records — `evict`/`clear` are manual.
+
+### Watching the cache
+
+```dart
+client.watchQuery(req).listen((data) {
+  // fires whenever the entry backing `req` changes, from any source
+});
+```
+
+### Optimistic responses
+
+```dart
+final req = UpdatePostReq(
+  variables: UpdatePostVars(id: postId, title: newTitle),
+  optimisticResponse: UpdatePostModel(post: PostModel(id: postId, title: newTitle)),
+);
+await client.future(req);
+```
+
+Sequence: `recordOptimistic` runs synchronously (any `watchQuery` observer sees it immediately, `source: ResponseSource.optimistic, loading: true`) → the real network request proceeds per `FetchPolicy` → on settlement (success or failure) `removeOptimistic` clears the temporary entry.
+
+### Stale-while-revalidate
+
+- `GraphQLClient(defaultStaleTime: ...)` — how long a cache entry is fresh. **Defaults to `Duration.zero`** — every `cacheFirst` hit is instantly returned but also immediately triggers a background network refetch (same shape as `cacheAndNetwork`). Set an explicit `staleTime` (client-wide or per-request) if you want `cacheFirst` to serve the cache without ever re-hitting the network:
+
+```dart
+final req = GetUserReq(
+  variables: GetUserVars(id: userId),
+  staleTime: const Duration(days: 36500), // effectively "forever"
+);
+```
+
+- `GraphQLClient(defaultCacheTime: ...)` / `GraphQLRequest.cacheTime` — how long a query's cache entry survives after its last active `watchQuery` subscriber cancels before GC. Defaults to `null` (never GC).
+
+### Query invalidation
+
+```dart
+Future<void> invalidateQueries({
+  List<String>? operationNames,
+  List<String>? types,
+  bool refetchActive = true,
+});
+```
+
+```dart
+await client.future(CreatePostReq(variables: CreatePostVars(title: title)));
+// Any cached query whose result touched a `Post` gets evicted; a currently
+// watched list query (e.g. GetPostsReq) is background-refetched in place.
+await client.invalidateQueries(types: ['Post']);
+```
+
+`types:` matching relies on your generated response models declaring `__typename` (mk_graphql_generator 1.2.1-dev.1+). `operationNames:` has no such dependency.
+
+### Refetch triggers
+
+```dart
+client.notifyReconnected();   // call from a connectivity listener on regained network
+client.notifyAppResumed();    // call from an app-lifecycle observer on foreground
+client.notifyAppPaused();     // call on background — skips opportunistic background refetches
+```
+
+Only queries with an active `watchQuery` subscriber are affected. `GraphQLRequest.refetchInterval` (a `Duration?`) polls a specific watched query on a timer.
+
+### Persistent cache: `HiveCache`
+
+Backed by `hive_ce`. Drop-in normalized cache that mirrors to disk (writes go to an in-memory delegate synchronously, then debounce-export to a Hive `Box`). Optimistic writes are never persisted.
+
+```dart
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
+
+await Hive.initFlutter(); // your app must initialize Hive; mk_graphql never calls this itself
+
+final cache = await HiveCache.open(boxName: 'gql_cache');
+final client = await GraphQLClient.create(
+  url: 'https://api.example.com/graphql',
+  cache: cache,
+);
+
+// later:
+await client.dispose();
+await cache.close(); // instance method — hold the HiveCache, don't await inline
+```
+
+---
+
+## 7. Pagination
+
+Two mechanisms: `client.fetchMore` (Apollo-style fetch-more) and `GraphQLPaginator` (reactive state manager for infinite scroll).
+
+### `fetchMore`
+
+```dart
+final page1Req = GetCountriesReq(variables: const GetCountriesVars(offset: 0, limit: 10));
+final page1Data = await client.future(page1Req);
+
+final page2Req = GetCountriesReq(variables: const GetCountriesVars(offset: 10, limit: 10));
+final mergedData = await client.fetchMore(originalRequest: page1Req, nextRequest: page2Req);
+```
+
+When `updateQuery` is omitted, `autoMergeGraphQLData` concatenates matching `List` fields and recursively merges nested Maps (Relay `{edges, pageInfo}` patterns). Writes the merged result to cache under `originalRequest` — any active `watchQuery(originalRequest)` watcher emits the combined dataset. Pass a custom `updateQuery: (previousData, incomingData) => ...` for custom merge/dedup rules.
+
+### `GraphQLPaginator<TData, TVars, TItem>`
+
+Three factories:
+
+```dart
+// Offset/limit — stops when a page returns fewer than `limit` items
+final p1 = client.paginateOffset(
+  initialRequest: GetCountriesReq(variables: const GetCountriesVars(offset: 0, limit: 20)),
+  getItems: (data) => data.countries,
+  updateOffset: (vars, offset, limit) => vars.copyWith(offset: offset, limit: limit),
+  limit: 20,
+);
+
+// Page number — stops when hasNextPage is false or a page is short
+final p2 = client.paginatePage(
+  initialRequest: GetAnimePageReq(variables: const GetAnimePageVars(page: 1, perPage: 20)),
+  getItems: (data) => data.page?.media ?? [],
+  updatePage: (vars, nextPage) => vars.copyWith(page: nextPage),
+  initialPage: 1,
+  pageSize: 20,
+  getPage: (data) => data.page?.pageInfo?.currentPage,
+  hasNextPage: (data) => data.page?.pageInfo?.hasNextPage ?? false,
+);
+
+// Relay cursor — stops when hasNextPage is false or endCursor is null/empty
+final p3 = client.paginateCursor(
+  initialRequest: GetFeedReq(variables: const GetFeedVars()),
+  getItems: (data) => data.feed.edges.map((e) => e.node).toList(),
+  getEndCursor: (data) => data.feed.pageInfo.endCursor,
+  getHasNextPage: (data) => data.feed.pageInfo.hasNextPage,
+  updateCursor: (vars, cursor) => vars.copyWith(after: cursor),
+);
+```
+
+API:
+
+| Method | Returns | Behavior |
+|---|---|---|
+| `loadInitial({cancelToken})` | `Future<List<TItem>>` | Fetches the first page. |
+| `loadNext({cancelToken})` | `Future<List<TItem>>` | Fetches next page, persists active filter/query vars, returns complete accumulated list. |
+| `applyVariables(updateFn, {cancelToken})` | `Future<List<TItem>>` | Updates variables (search, filters) without tearing down streams; resets to page 1. |
+| `updateVariables(newVariables, {cancelToken})` | `Future<List<TItem>>` | Replaces variables on page 1 and fetches. |
+| `refetch({cancelToken})` | `Future<List<TItem>>` | Resets to `initialRequest` (clears filters), `FetchPolicy.networkOnly`, resets pagination state. |
+| `loadAll({maxPages = 100})` | `Future<List<TItem>>` | Fetches subsequent pages until `hasMore` is false or `maxPages` reached. |
+| `dispose()` | `void` | Closes internal streams/controllers. |
+
+Properties: `items` (`List<TItem>`), `accumulatedData` (`TData?`), `itemsStream` (`Stream<List<TItem>>`, deduped), `state` (`PaginationState<TItem>`: `items`, `isLoading`, `isLoadingMore`, `hasMore`, `error`), `stream` (`Stream<PaginationState<TItem>>`), `isLoading`, `isLoadingMore`, `hasMore`.
+
+Filter/search lifecycle: `applyVariables`/`updateVariables` for search bars / filter chips (resets to page 1, keeps other filters); `loadNext` for infinite scroll (persists all current filters, accumulates); `refetch` for pull-to-refresh (clears transient filters back to `initialRequest`).
+
+### Flutter widget example
+
+```dart
+class CountriesListView extends StatefulWidget {
+  final GraphQLClient client;
+  const CountriesListView({super.key, required this.client});
+  @override
+  State<CountriesListView> createState() => _CountriesListViewState();
+}
+
+class _CountriesListViewState extends State<CountriesListView> {
+  late final GraphQLPaginator<GetCountriesModel, GetCountriesVars, CountryPartialModel> _paginator;
+  final _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _paginator = widget.client.paginateOffset(
+      initialRequest: GetCountriesReq(variables: const GetCountriesVars(offset: 0, limit: 20)),
+      getItems: (data) => data.countries,
+      updateOffset: (vars, offset, limit) => vars.copyWith(offset: offset, limit: limit),
+      limit: 20,
+    );
+    _scrollController.addListener(_onScroll);
+    _paginator.loadInitial();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      if (_paginator.hasMore && !_paginator.isLoadingMore) _paginator.loadNext();
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _paginator.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<PaginationState<CountryPartialModel>>(
+      stream: _paginator.stream,
+      initialData: _paginator.state,
+      builder: (context, snapshot) {
+        final state = snapshot.data!;
+        if (state.isLoading && state.isEmpty) return const Center(child: CircularProgressIndicator());
+        if (state.hasError && state.isEmpty) return Center(child: Text('Error: ${state.error}'));
+        return RefreshIndicator(
+          onRefresh: () => _paginator.refetch(),
+          child: ListView.builder(
+            controller: _scrollController,
+            itemCount: state.count + (state.hasMore ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index == state.count) {
+                return const Padding(padding: EdgeInsets.all(16.0), child: Center(child: CircularProgressIndicator()));
+              }
+              final country = state.items[index];
+              return ListTile(leading: Text(country.emoji), title: Text(country.name), subtitle: Text(country.capital ?? 'No capital'));
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+```
+
+### `flutter_bloc` integration (`emit.forEach`)
+
+```dart
+class AnimeListBloc extends Bloc<AnimeListEvent, AnimeListState> {
+  final GraphQLPaginator<GetAnimePageModel, GetAnimePageVars, MediaPartialModel> _paginator;
+
+  AnimeListBloc(this._paginator) : super(const AnimeListState()) {
+    on<AnimeListStarted>((event, emit) async {
+      await emit.forEach<PaginationState<MediaPartialModel>>(
+        _paginator.stream,
+        onData: (pState) => state.copyWith(
+          items: pState.items,
+          isLoading: pState.isLoading,
+          isLoadingMore: pState.isLoadingMore,
+          hasMore: pState.hasMore,
+          error: pState.error,
+        ),
+      );
+    });
+    on<SearchChanged>((event, emit) => _paginator.applyVariables((vars) => vars.copyWith(search: event.query)));
+    on<FetchNextPage>((event, emit) => _paginator.loadNext());
+    on<Refreshed>((event, emit) => _paginator.refetch());
+  }
+
+  @override
+  Future<void> close() {
+    _paginator.dispose();
+    return super.close();
+  }
+}
+```
+
+---
+
+## 8. Cancellation & Uploads
+
+- Pass a Dio `CancelToken` to `future`/`stream`/`request` calls, or set `GraphQLRequest.cancelToken`, to cancel an in-flight request — it throws `RequestCancelledException`.
+- File uploads: a variable containing a Dio `MultipartFile` (GraphQL `Upload` scalar) is automatically sent as a multipart request by `DioLink`/`HttpLink` — no special handling needed beyond passing the `MultipartFile` as a variable value.
+
+---
+
+## 9. Link Pipeline (only if you need to customize it)
+
+`mk_graphql` builds on `gql_link`'s `Link` abstraction. `GraphQLClient`'s constructor covers the common cases by building the pipeline internally — there is no way to hand it a fully custom pre-assembled chain except for the subscription branch (`subscriptionLink`). If you need a link the constructor doesn't expose (e.g. `BatchLink` as the terminating transport), use `gql_link`'s lower-level APIs directly instead of going through `GraphQLClient`.
+
+Default pipeline: `AuthLink? → TypenameLink? → LoggerLink → split(is-subscription?, WebSocketLink|SseLink, DioLink)`.
+
+- **`LoggerLink`** — configure via `GraphQLClient(loggerOptions: LoggerOptions(requestBody: true, responseBody: true, authHeader: false, redact: true, ...))`. Sits after `AuthLink`/`TypenameLink`, so it logs the final document/headers, including refresh/retry sequences.
+- **`DioLink`** — default HTTP transport. Handles multipart uploads automatically, supports cancellation.
+- **`HttpLink`** — lightweight Dio-based alternative (no proactive GET-for-queries, no response-context headers).
+- **`SseLink`** — SSE transport for subscriptions, with the same auth-header/refresh semantics as `AuthLink` built in.
+- **`WebSocketLink`** — `graphql-ws`/`graphql-transport-ws` subscriptions with automatic reconnect/backoff.
+- **`BatchLink`** — batches multiple queries/mutations within `batchTimeout` (default 10ms) into one HTTP request, up to `maxBatchSize` (default 10).
+
+---
+
+## 10. Common mistakes to avoid
+
+1. **Expecting `setTokenListener` to fire on token refresh.** It doesn't — refresh is silent by design (see section 4). Don't drive router rebuilds off "any token change"; use it only for login/logout.
+2. **Disabling `addTypename` without a reason.** The normalized cache (section 6) needs `__typename` to key entities and for `invalidateQueries(types: ...)` to work. Only disable it if your server rejects the field.
+3. **Overriding `copyWithRequest` on a hand-written `GraphQLRequest` without forwarding `staleTime`/`cacheTime`/`retry`/`refetchInterval`.** They silently drop on `copyWithFetchPolicy`/`refetch`/background refetches otherwise. Prefer generating requests with `mk_graphql_generator` to avoid this entirely.
+4. **Assuming `cacheFirst` never re-hits the network.** `defaultStaleTime` defaults to `Duration.zero`, so `cacheFirst` always triggers a background revalidation. Set an explicit `staleTime` if you want true cache-forever behavior.
+5. **Mutating a caller-supplied `Dio` instance's base headers and expecting `defaultHeaders` to be the source of truth.** `mk_graphql` never mutates a `dio:` you pass in; set `defaultHeaders` on `GraphQLClient` instead of the `Dio`'s own `options.headers` if you want it to apply to GraphQL requests specifically.
+6. **Forgetting mutations/subscriptions don't get `defaultRetry` automatically.** Only queries retry by default; opt a specific mutation in via `GraphQLRequest.retry`.
+7. **Calling `Hive.initFlutter()`/`Hive.init()` inside `mk_graphql` code, or expecting `HiveCache` to do it.** The app must initialize Hive itself before `HiveCache.open(...)`.
+8. **Using the sync `GraphQLClient(...)` constructor with an async cache like `HiveCache.open(...)`.** Use `GraphQLClient.create({...})` instead, which accepts a `FutureOr<Cache>?`.

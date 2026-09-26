@@ -84,6 +84,11 @@ class _AnimeListViewState extends State<_AnimeListView> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.bolt_rounded),
+            tooltip: 'Client optimizations demo',
+            onPressed: () => context.router.push(const OptimizationsRoute()),
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refetch page 1',
             onPressed: () => context

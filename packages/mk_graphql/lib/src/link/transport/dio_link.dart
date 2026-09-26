@@ -6,6 +6,8 @@ import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 import 'package:meta/meta.dart';
 
+import '../../core/document_print_cache.dart';
+
 /// Context entry for attaching a [dio.CancelToken] to a [Request].
 @immutable
 class DioLinkCancelTokenContextEntry extends ContextEntry {
@@ -96,6 +98,112 @@ class DioLinkCanceledException extends LinkException {
   }) : super(originalException, originalStackTrace);
 }
 
+/// Exception thrown when there is no network connectivity, or the
+/// connection is refused/reset (DNS failure, socket error, etc).
+@immutable
+class DioLinkConnectionException extends LinkException {
+  const DioLinkConnectionException({
+    required Object? originalException,
+    required StackTrace? originalStackTrace,
+  }) : super(originalException, originalStackTrace);
+}
+
+/// Exception thrown when the server's TLS/SSL certificate fails validation.
+@immutable
+class DioLinkCertificateException extends LinkException {
+  const DioLinkCertificateException({
+    required Object? originalException,
+    required StackTrace? originalStackTrace,
+  }) : super(originalException, originalStackTrace);
+}
+
+// -----------------------------------------------------------------------------
+// Shared Dio exception classification
+// -----------------------------------------------------------------------------
+
+/// Classifies a [dio.DioException] into the matching `DioLink*Exception` —
+/// shared by every Dio-based terminating link ([DioLink], [SseLink]) so
+/// connection failures (timeouts, cancellation, DNS/socket errors, bad TLS
+/// certificates, non-2xx statuses) are reported the same, structured way
+/// everywhere instead of each transport bucketing most of them into one
+/// generic exception.
+///
+/// Doesn't special-case a `badResponse` whose body might still parse as
+/// GraphQL data — only [DioLink]'s non-streamed responses can, so that
+/// link checks for it itself before falling back to this.
+LinkException classifyDioException(dio.DioException e, StackTrace stackTrace) {
+  switch (e.type) {
+    case dio.DioExceptionType.connectionTimeout:
+    case dio.DioExceptionType.receiveTimeout:
+    case dio.DioExceptionType.sendTimeout:
+      return DioLinkTimeoutException(
+        type: e.type,
+        originalException: e,
+        originalStackTrace: stackTrace,
+      );
+    case dio.DioExceptionType.cancel:
+      return DioLinkCanceledException(
+        originalException: e,
+        originalStackTrace: stackTrace,
+      );
+    case dio.DioExceptionType.connectionError:
+      return DioLinkConnectionException(
+        originalException: e,
+        originalStackTrace: stackTrace,
+      );
+    case dio.DioExceptionType.badCertificate:
+      return DioLinkCertificateException(
+        originalException: e,
+        originalStackTrace: stackTrace,
+      );
+    case dio.DioExceptionType.badResponse:
+      return DioLinkServerException(
+        response: e.response ??
+            dio.Response(
+              requestOptions: e.requestOptions,
+              statusCode: e.response?.statusCode,
+            ),
+        parsedResponse: null,
+        statusCode: e.response?.statusCode,
+        originalException: e,
+        originalStackTrace: stackTrace,
+      );
+    default:
+      return DioLinkUnkownException(
+        originalException: e,
+        originalStackTrace: stackTrace,
+      );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Cached request serializer
+// -----------------------------------------------------------------------------
+
+/// Mirrors `RequestSerializer.serializeRequest` (`package:gql_link`) except
+/// it prints the query document through [printDocumentCached] instead of
+/// calling `printNode` directly — this is the actual per-request hot path
+/// (every network call serializes its request body), so caching it matters
+/// more than caching the AST transform in [TypenameLink] alone would.
+///
+/// Kept in sync with the upstream method by hand since `gql_link` doesn't
+/// expose an overridable seam for just the printing step; re-check this
+/// against `RequestSerializer.serializeRequest` on any `gql_link` bump.
+class _CachedRequestSerializer extends RequestSerializer {
+  const _CachedRequestSerializer();
+
+  @override
+  Map<String, dynamic> serializeRequest(Request request) {
+    final RequestExtensionsThunk? thunk = request.context.entry();
+    return <String, dynamic>{
+      'operationName': request.operation.operationName,
+      'variables': request.variables,
+      'query': printDocumentCached(request.operation.document),
+      if (thunk != null) 'extensions': thunk.getRequestExtensions(request),
+    };
+  }
+}
+
 // -----------------------------------------------------------------------------
 // DioLink Implementation
 // -----------------------------------------------------------------------------
@@ -127,7 +235,7 @@ class DioLink extends Link {
     this.endpoint, {
     required this.client,
     this.defaultHeaders = const {},
-    this.serializer = const RequestSerializer(),
+    this.serializer = const _CachedRequestSerializer(),
     this.parser = const ResponseParser(),
     this.useGETForQueries = false,
   });
@@ -150,9 +258,19 @@ class DioLink extends Link {
     if ((dioResponse.statusCode ?? 200) >= 300 ||
         (dioResponse.data!['data'] == null &&
             dioResponse.data!['errors'] == null)) {
+      // Best-effort: an error response with an unparseable body still
+      // reports as DioLinkServerException (with the real status code),
+      // just without parsedResponse rather than losing that status
+      // classification to a parser exception.
+      Response? parsedResponse;
+      try {
+        parsedResponse = _parseDioResponse(dioResponse);
+      } on DioLinkParserException {
+        parsedResponse = null;
+      }
       throw DioLinkServerException(
         response: dioResponse,
-        parsedResponse: _parseDioResponse(dioResponse),
+        parsedResponse: parsedResponse,
         statusCode: dioResponse.statusCode,
       );
     }
@@ -283,7 +401,12 @@ class DioLink extends Link {
       } else {
         final effectiveHeaders = Map<String, String>.from(headers);
         if (body is dio.FormData) {
-          effectiveHeaders.remove(dio.Headers.contentTypeHeader);
+          // Dio sets the multipart Content-Type (with its boundary) itself; a
+          // header of any casing here — e.g. one from defaultHeaders — would
+          // otherwise be sent instead and break the upload.
+          effectiveHeaders.removeWhere(
+            (key, _) => key.toLowerCase() == dio.Headers.contentTypeHeader,
+          );
         }
         res = await client.post<dynamic>(
           endpoint,
@@ -304,62 +427,18 @@ class DioLink extends Link {
           response: res,
         );
       }
-      return dio.Response<Map<String, dynamic>>(
-        data: res.data as Map<String, dynamic>,
-        headers: res.headers,
-        requestOptions: res.requestOptions,
-        isRedirect: res.isRedirect,
-        statusCode: res.statusCode,
-        statusMessage: res.statusMessage,
-        redirects: res.redirects,
-        extra: res.extra,
-      );
+      return _asJsonResponse(res);
     } on dio.DioException catch (e, stackTrace) {
-      switch (e.type) {
-        case dio.DioExceptionType.connectionTimeout:
-        case dio.DioExceptionType.receiveTimeout:
-        case dio.DioExceptionType.sendTimeout:
-          throw DioLinkTimeoutException(
-            type: e.type,
-            originalException: e,
-            originalStackTrace: stackTrace,
-          );
-        case dio.DioExceptionType.cancel:
-          throw DioLinkCanceledException(
-            originalException: e,
-            originalStackTrace: stackTrace,
-          );
-        case dio.DioExceptionType.badResponse:
-          final res = e.response;
-          if (res != null && res.data is Map<String, dynamic>) {
-            return dio.Response<Map<String, dynamic>>(
-              data: res.data as Map<String, dynamic>,
-              headers: res.headers,
-              requestOptions: res.requestOptions,
-              isRedirect: res.isRedirect,
-              statusCode: res.statusCode,
-              statusMessage: res.statusMessage,
-              redirects: res.redirects,
-              extra: res.extra,
-            );
-          }
-          throw DioLinkServerException(
-            response: e.response ??
-                dio.Response(
-                  requestOptions: e.requestOptions,
-                  statusCode: e.response?.statusCode,
-                ),
-            parsedResponse: null,
-            statusCode: e.response?.statusCode,
-            originalException: e,
-            originalStackTrace: stackTrace,
-          );
-        default:
-          throw DioLinkUnkownException(
-            originalException: e,
-            originalStackTrace: stackTrace,
-          );
+      // A badResponse whose body still parsed as JSON might carry a
+      // GraphQL error payload — only DioLink's non-streamed responses can,
+      // so it's the one link that checks for this before classifying.
+      if (e.type == dio.DioExceptionType.badResponse) {
+        final res = e.response;
+        if (res != null && res.data is Map<String, dynamic>) {
+          return _asJsonResponse(res);
+        }
       }
+      throw classifyDioException(e, stackTrace);
     } catch (e, stackTrace) {
       if (e is LinkException) rethrow;
       throw DioLinkUnkownException(
@@ -369,8 +448,41 @@ class DioLink extends Link {
     }
   }
 
-  Response _parseDioResponse(dio.Response<Map<String, dynamic>> res) =>
-      parser.parseResponse(res.data!);
+  /// Re-wraps a raw [dio.Response] whose `data` is known to already be a
+  /// `Map<String, dynamic>` as a typed [dio.Response<Map<String, dynamic>>],
+  /// preserving every other field. Used both for the success path and for
+  /// a `badResponse` [dio.DioException] whose body still parsed as JSON.
+  static dio.Response<Map<String, dynamic>> _asJsonResponse(
+    dio.Response<dynamic> res,
+  ) {
+    return dio.Response<Map<String, dynamic>>(
+      data: res.data as Map<String, dynamic>,
+      headers: res.headers,
+      requestOptions: res.requestOptions,
+      isRedirect: res.isRedirect,
+      statusCode: res.statusCode,
+      statusMessage: res.statusMessage,
+      redirects: res.redirects,
+      extra: res.extra,
+    );
+  }
+
+  /// [ResponseParser.parseResponse] does unchecked casts on the response
+  /// body (`errors[].message as String`, `data as Map?`, ...) — a malformed
+  /// GraphQL payload (present but wrongly-shaped `data`/`errors`) throws a
+  /// raw [TypeError] here rather than a [LinkException]. Wrap it so it's
+  /// classified the same way as any other unparseable response.
+  Response _parseDioResponse(dio.Response<Map<String, dynamic>> res) {
+    try {
+      return parser.parseResponse(res.data!);
+    } catch (e, stackTrace) {
+      throw DioLinkParserException(
+        originalException: e,
+        originalStackTrace: stackTrace,
+        response: res,
+      );
+    }
+  }
 
   static Map<String, dio.MultipartFile> _extractFlattenedFileMap(
     dynamic body, {

@@ -10,14 +10,11 @@ lib/graphql/
 ├── operations.graphql
 └── generated/
     ├── enums/
-    │   ├── {enum}_enum.dart        # one per schema enum
-    │   └── enums.dart              # barrel
+    │   └── enums.dart              # every schema enum, in one file
     ├── inputs/
-    │   ├── {input}.dart            # one per schema input type
-    │   └── inputs.dart             # barrel
+    │   └── inputs.dart             # every schema input type, in one file
     ├── models/
-    │   ├── {type}_model.dart       # one per schema object type (Query/Mutation/Subscription excluded)
-    │   └── models.dart             # barrel
+    │   └── models.dart             # every schema object type (Query/Mutation/Subscription excluded), in one file
     ├── fragments/
     │   └── fragments.dart          # one class per named GraphQL fragment actually spread, if any
     ├── schema.gql.dart             # schema barrel: exports enums/inputs/models + SchemaGraphQLClientExtension
@@ -31,7 +28,7 @@ lib/graphql/
     └── operations.gql.dart         # barrel: exports every operation folder + OperationsGraphQLClientExtension
 ```
 
-Every `.graphql`/`.gql` operations file gets its own `generated/{fileName}.gql.dart` barrel and `generated/{operationName}/` folders; the schema file gets the schema-wide `enums/`, `inputs/`, `models/`, and `fragments/` output (location controlled by [`shared_dir`](configuration.md#shared_dir)).
+Every `.graphql`/`.gql` operations file gets its own `generated/{fileName}.gql.dart` barrel and `generated/{operationName}/` folders; the schema file gets the schema-wide `enums/enums.dart`, `inputs/inputs.dart`, `models/models.dart`, and `fragments/fragments.dart` output (location controlled by [`shared_dir`](configuration.md#shared_dir)). Each of `enums.dart`/`inputs.dart`/`models.dart` holds every type in its category, not one file per type — this keeps the generator's declared build outputs for the schema file fixed regardless of how many types the schema defines, which matters for `dart run build_runner watch`: growing an already-populated category (adding a type to a schema that already has other enums/inputs/objects) no longer requires restarting `watch`. A category's *first* type appearing while `watch` is already running still does. The same caveat applies to operation (`.graphql` query/mutation) files: adding a new operation to an existing file, or creating a brand-new `.graphql` file, while `watch` is running also isn't picked up without a restart.
 
 ## Schema-driven operations
 
@@ -95,4 +92,4 @@ Fragment spreads are resolved transitively (a fragment spreading another fragmen
 
 ### What `models/models.dart` is for
 
-The schema-wide `{Type}Model` classes are still generated (one per non-root object type in the schema) because [schema-driven operations](#schema-driven-operations) and any code you write by hand need a way to reference "the full shape of a `User`". They are simply never used to deserialize a hand-written operation's trimmed response.
+The schema-wide `{Type}Model` classes are still generated — one per non-root object type in the schema, all declared together in `models/models.dart` — because [schema-driven operations](#schema-driven-operations) and any code you write by hand need a way to reference "the full shape of a `User`". They are simply never used to deserialize a hand-written operation's trimmed response.

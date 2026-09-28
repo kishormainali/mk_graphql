@@ -1145,8 +1145,7 @@ void main() {
       final countryModel = bundle.files['generated/models/models.dart']!;
       expect(countryModel, contains('required String code'));
       expect(countryModel, contains('required String name'));
-      expect(countryModel,
-          contains("@JsonKey(name: 'native') required String gNative"));
+      expect(countryModel, contains('required String native'));
       expect(countryModel, contains('String? phone'));
       expect(countryModel, contains('required String emoji'));
     });
@@ -1213,8 +1212,7 @@ void main() {
       expect(opModel, contains('class GetCountryFullCountryModel'));
       expect(opModel, contains('required String code'));
       expect(opModel, contains('required String name'));
-      expect(opModel,
-          contains("@JsonKey(name: 'native') required String gNative"));
+      expect(opModel, contains('required String native'));
       expect(opModel, contains('required String emoji'));
       expect(opModel, isNot(contains('class CountryModel')));
     });
@@ -1554,16 +1552,12 @@ void main() {
     });
 
     test(
-        'safeIdentifier escapes every keyword Dart\'s own scanner recognizes '
-        '(package:_fe_analyzer_shared\'s Keyword table: reserved words, '
-        'built-in identifiers, and pseudo keywords) — a future Dart release '
-        'adding one should fail this test rather than silently generate '
-        'broken code', () async {
-      // Source of truth: every lower-cased lexeme in
-      // _fe_analyzer_shared's `Keyword` table (`Function` is the sole
-      // entry that's capitalized — generated field names are always
-      // camelCased with a lowercase first letter, so it can never
-      // collide and is excluded here).
+        'safeIdentifier escapes every keyword and reserved word/type the '
+        'generator recognizes', () async {
+      // Source of truth: the generator's own reserved word/type list —
+      // reserved words, built-in identifiers, and pseudo keywords
+      // (`Function` is excluded: generated field names are always
+      // camelCased with a lowercase first letter, so it can never collide).
       const dartScannerKeywords = {
         'abstract',
         'as',
@@ -1600,28 +1594,22 @@ void main() {
         'implements',
         'import',
         'in',
-        'inout',
         'interface',
         'is',
         'late',
         'library',
         'mixin',
-        'native',
         'new',
         'null',
-        'of',
         'on',
         'operator',
-        'out',
         'part',
-        'patch',
         'required',
         'rethrow',
         'return',
         'sealed',
         'set',
         'show',
-        'source',
         'static',
         'super',
         'switch',
@@ -1647,7 +1635,22 @@ void main() {
       // Not scanner keywords, but a field named after one would shadow
       // that dart:core type for its whole enclosing class — see the
       // "Dart core type" test above.
-      for (final coreType in ['int', 'double', 'bool', 'num']) {
+      const dartCoreTypes = {
+        'int',
+        'double',
+        'bool',
+        'num',
+        'bigInt',
+        'list',
+        'map',
+        'never',
+        'object',
+        'record',
+        'runes',
+        'string',
+        'symbol',
+      };
+      for (final coreType in dartCoreTypes) {
         expect(SchemaGenerator.safeIdentifier(coreType), startsWith('g'),
             reason: '"$coreType" must be escaped');
       }

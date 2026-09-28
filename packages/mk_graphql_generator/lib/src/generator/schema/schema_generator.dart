@@ -346,22 +346,15 @@ class SchemaGenerator {
   /// Returns true if the outermost (after stripping NonNull) type node is a list.
   static bool isListType(TypeNode type) => type is ListTypeNode;
 
-  /// Every reserved/built-in/pseudo keyword Dart's own scanner recognizes
-  /// (`package:_fe_analyzer_shared`'s `Keyword` table — reserved words like
-  /// `class`/`for`, built-in identifiers like `late`/`required`, and pseudo
-  /// keywords like `await`/`sealed`/`when`), lower-cased — `Function` is the
-  /// only entry there that's capitalized, and since generated field names
-  /// are always camelCased with a lowercase first letter they can never
-  /// collide with it.
-  ///
-  /// Plus a handful of `dart:core` type names (`int`/`double`/`bool`/`num`)
-  /// that aren't keywords at all but are just as unsafe as a field name:
-  /// declaring `final double double;` shadows `double` the *type* for the
-  /// rest of the enclosing class, breaking any other member that's actually
-  /// typed `double`. `dynamic`/`void` are already covered above as true
-  /// keywords; `String`/`List`/`Map`/etc. are capitalized and so never
-  /// collide with a camelCased field name either.
+  /// Reserved words, built-ins, and contextual keywords Dart's scanner
+  /// recognizes, plus `dart:core` type names that are just as unsafe as a
+  /// field name (e.g. `final double double;` shadows the *type* `double`
+  /// for the rest of the enclosing class). Lower-cased to match against
+  /// `name.camelCase`, which always lowercases the first letter — so e.g.
+  /// `Function`/`String`/`List` here are the lower-cased forms `function`/
+  /// `string`/`list`.
   static const _dartKeywords = {
+    // Reserved words, built-ins, and contextual keywords
     'abstract',
     'as',
     'assert',
@@ -369,7 +362,6 @@ class SchemaGenerator {
     'augment',
     'await',
     'base',
-    'bool',
     'break',
     'case',
     'catch',
@@ -380,7 +372,6 @@ class SchemaGenerator {
     'default',
     'deferred',
     'do',
-    'double',
     'dynamic',
     'else',
     'enum',
@@ -400,30 +391,22 @@ class SchemaGenerator {
     'implements',
     'import',
     'in',
-    'inout',
-    'int',
     'interface',
     'is',
     'late',
     'library',
     'mixin',
-    'native',
     'new',
     'null',
-    'num',
-    'of',
     'on',
     'operator',
-    'out',
     'part',
-    'patch',
     'required',
     'rethrow',
     'return',
     'sealed',
     'set',
     'show',
-    'source',
     'static',
     'super',
     'switch',
@@ -439,6 +422,21 @@ class SchemaGenerator {
     'while',
     'with',
     'yield',
+
+    // Core Data Types
+    'bigInt',
+    'bool',
+    'double',
+    'int',
+    'list',
+    'map',
+    'never',
+    'num',
+    'object',
+    'record',
+    'runes',
+    'string',
+    'symbol',
   };
 
   static String safeIdentifier(String name) {

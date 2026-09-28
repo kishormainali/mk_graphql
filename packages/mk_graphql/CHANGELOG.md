@@ -1,4 +1,4 @@
-## 1.2.1-dev.7
+## 1.2.1
 
 - **New**: mutations and subscriptions now force `FetchPolicy.noCache` unconditionally — enforced centrally in `GraphQLClient.request()`, regardless of the client's `defaultFetchPolicy` or a per-request `fetchPolicy` override (a hand-built request, or a future generator default, can no longer make a mutation/subscription read or write the normalized cache under its own operation key). `GraphQLRequest.optimisticResponse` is unaffected — it still writes to the optimistic layer other *queries* read from, which is how a mutation drives an optimistic UI update elsewhere in the cache.
 - **New**: `GraphQLClient(refreshTimeout: ...)` bounds how long a single token-refresh call may take before it's treated as a failed refresh (same outcome as it throwing — the session is revoked). `null` (the default) waits indefinitely, unchanged from before.

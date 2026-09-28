@@ -1,4 +1,4 @@
-## Unreleased
+## 1.2.1-dev.5
 
 - **Fix**: the reserved-word list used by `safeIdentifier` to escape field names to `g{Name}` is now a curated set of Dart's actual reserved words, built-in identifiers, and `dart:core` type names, replacing the previous list derived from `package:_fe_analyzer_shared`'s full `Keyword` table. `inout`, `native`, `of`, `out`, `patch`, and `source` are context-only pseudo-keywords that are valid Dart identifiers outside their specific syntactic positions (FFI `native` functions, variance annotations, augmentation libraries) — fields named after them are no longer escaped. `bigInt`, `list`, `map`, `never`, `object`, `record`, `runes`, `string`, and `symbol` (additional `dart:core` type names, alongside the already-covered `int`/`double`/`bool`/`num`) are now escaped for the same reason those four already were: a field named after a type shadows that type for the rest of the enclosing class.
 

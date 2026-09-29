@@ -19,22 +19,23 @@ class _MediaEntity {
   final int id;
   final String? title;
   const _MediaEntity({required this.id, this.title});
-  factory _MediaEntity.fromJson(Map<String, dynamic> json) => _MediaEntity(
-        id: json['id'] as int,
-        title: json['title'] as String?,
-      );
-  Map<String, dynamic> toJson() =>
-      {'__typename': 'Media', 'id': id, 'title': title};
+  factory _MediaEntity.fromJson(Map<String, dynamic> json) =>
+      _MediaEntity(id: json['id'] as int, title: json['title'] as String?);
+  Map<String, dynamic> toJson() => {
+    '__typename': 'Media',
+    'id': id,
+    'title': title,
+  };
 }
 
 class _Wrapper {
   final _MediaEntity? media;
   const _Wrapper({this.media});
   factory _Wrapper.fromJson(Map<String, dynamic> json) => _Wrapper(
-        media: json['Media'] == null
-            ? null
-            : _MediaEntity.fromJson(json['Media'] as Map<String, dynamic>),
-      );
+    media: json['Media'] == null
+        ? null
+        : _MediaEntity.fromJson(json['Media'] as Map<String, dynamic>),
+  );
   // Deliberately NOT calling media?.toJson() here — this is the shape the
   // generator actually emits.
   Map<String, dynamic> toJson() => {'Media': media};
@@ -66,8 +67,7 @@ class _Req extends GraphQLRequest<_Wrapper, _Vars> {
     Map<String, String>? headers,
     CancelToken? cancelToken,
     _Wrapper? optimisticResponse,
-  }) =>
-      _Req(variables ?? this.variables);
+  }) => _Req(variables ?? this.variables);
 }
 
 /// Same shape as [_Req] but a distinct operation — used to prove the
@@ -99,8 +99,7 @@ class _ReqB extends GraphQLRequest<_Wrapper, _Vars> {
     Map<String, String>? headers,
     CancelToken? cancelToken,
     _Wrapper? optimisticResponse,
-  }) =>
-      _ReqB(variables ?? this.variables);
+  }) => _ReqB(variables ?? this.variables);
 }
 
 /// Same shape as [_Req], but counts every [parseData] call via [onParse] —
@@ -138,13 +137,11 @@ class _CountingReq extends GraphQLRequest<_Wrapper, _Vars> {
     Map<String, String>? headers,
     CancelToken? cancelToken,
     _Wrapper? optimisticResponse,
-  }) =>
-      _CountingReq(variables ?? this.variables, onParse);
+  }) => _CountingReq(variables ?? this.variables, onParse);
 }
 
 void main() {
-  test(
-      'writeQuery/readQuery round-trip a wrapper whose toJson() embeds a '
+  test('writeQuery/readQuery round-trip a wrapper whose toJson() embeds a '
       'raw (not pre-serialized) nested model object', () {
     final cache = InMemoryCache();
     const req = _Req(_Vars(1));
@@ -160,8 +157,7 @@ void main() {
     expect(result?.media?.title, 'Cowboy Bebop');
   });
 
-  test(
-      'the nested entity is still extracted into its own normalized record '
+  test('the nested entity is still extracted into its own normalized record '
       '(matchingQueryKeys by type works even for an un-pre-serialized '
       'nested field)', () {
     final cache = InMemoryCache();
@@ -176,8 +172,7 @@ void main() {
   });
 
   group('readQuery memoization', () {
-    test(
-        'reading the same query repeatedly with no write in between reuses '
+    test('reading the same query repeatedly with no write in between reuses '
         'the memoized result instead of denormalizing and parsing again', () {
       final cache = InMemoryCache();
       var parseCount = 0;
@@ -193,16 +188,19 @@ void main() {
       final second = cache.readQuery(req);
       final third = cache.readQuery(req);
 
-      expect(parseCount, 1,
-          reason: 'only the first read actually denormalizes and parses; '
-              'the next two are served from the memoized result since '
-              'nothing was written in between');
+      expect(
+        parseCount,
+        1,
+        reason:
+            'only the first read actually denormalizes and parses; '
+            'the next two are served from the memoized result since '
+            'nothing was written in between',
+      );
       expect(second?.media?.title, first?.media?.title);
       expect(third?.media?.title, first?.media?.title);
     });
 
-    test(
-        'a write to a different query sharing the same normalized entity '
+    test('a write to a different query sharing the same normalized entity '
         'invalidates a previously memoized read — the coarse invalidation '
         'never serves stale data', () {
       final cache = InMemoryCache();
@@ -224,10 +222,14 @@ void main() {
       );
 
       final secondRead = cache.readQuery(reqA);
-      expect(secondRead?.media?.title, 'Updated Title',
-          reason: 'reqA\'s memoized read must be invalidated by a write '
-              'that happened through a completely different query, since '
-              'both reference the same normalized Media:1 entity');
+      expect(
+        secondRead?.media?.title,
+        'Updated Title',
+        reason:
+            'reqA\'s memoized read must be invalidated by a write '
+            'that happened through a completely different query, since '
+            'both reference the same normalized Media:1 entity',
+      );
     });
 
     test('evicting a query invalidates its memoized read', () {

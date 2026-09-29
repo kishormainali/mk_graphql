@@ -69,20 +69,19 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
     Map<String, String>? headers,
     dio.CancelToken? cancelToken,
     _TestData? optimisticResponse,
-  }) =>
-      _TestReq(
-        variables ?? this.variables,
-        fetchPolicy: fetchPolicy ?? this.fetchPolicy,
-        errorPolicy: errorPolicy ?? this.errorPolicy,
-        headers: headers ?? this.headers,
-        cancelToken: cancelToken ?? this.cancelToken,
-        optimisticResponse: optimisticResponse ?? this.optimisticResponse,
-        requestId: requestId,
-        staleTime: staleTime,
-        cacheTime: cacheTime,
-        retry: retry,
-        refetchInterval: refetchInterval,
-      );
+  }) => _TestReq(
+    variables ?? this.variables,
+    fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+    errorPolicy: errorPolicy ?? this.errorPolicy,
+    headers: headers ?? this.headers,
+    cancelToken: cancelToken ?? this.cancelToken,
+    optimisticResponse: optimisticResponse ?? this.optimisticResponse,
+    requestId: requestId,
+    staleTime: staleTime,
+    cacheTime: cacheTime,
+    retry: retry,
+    refetchInterval: refetchInterval,
+  );
 }
 
 class _TestMutationReq extends GraphQLRequest<_TestData, _TestVars> {
@@ -110,11 +109,10 @@ class _TestMutationReq extends GraphQLRequest<_TestData, _TestVars> {
     Map<String, String>? headers,
     dio.CancelToken? cancelToken,
     _TestData? optimisticResponse,
-  }) =>
-      _TestMutationReq(
-        variables ?? this.variables,
-        fetchPolicy: fetchPolicy ?? this.fetchPolicy,
-      );
+  }) => _TestMutationReq(
+    variables ?? this.variables,
+    fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+  );
 }
 
 class _TestSubscriptionReq extends GraphQLRequest<_TestData, _TestVars> {
@@ -142,11 +140,10 @@ class _TestSubscriptionReq extends GraphQLRequest<_TestData, _TestVars> {
     Map<String, String>? headers,
     dio.CancelToken? cancelToken,
     _TestData? optimisticResponse,
-  }) =>
-      _TestSubscriptionReq(
-        variables ?? this.variables,
-        fetchPolicy: fetchPolicy ?? this.fetchPolicy,
-      );
+  }) => _TestSubscriptionReq(
+    variables ?? this.variables,
+    fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+  );
 }
 
 class _TypedData {
@@ -155,8 +152,11 @@ class _TypedData {
   const _TypedData({this.id, this.name});
   factory _TypedData.fromJson(Map<String, dynamic> json) =>
       _TypedData(id: json['id'] as String?, name: json['name'] as String?);
-  Map<String, dynamic> toJson() =>
-      {'__typename': 'User', 'id': id, 'name': name};
+  Map<String, dynamic> toJson() => {
+    '__typename': 'User',
+    'id': id,
+    'name': name,
+  };
 }
 
 class _TypedTestReq extends GraphQLRequest<_TypedData, _TestVars> {
@@ -184,8 +184,7 @@ class _TypedTestReq extends GraphQLRequest<_TypedData, _TestVars> {
     Map<String, String>? headers,
     dio.CancelToken? cancelToken,
     _TypedData? optimisticResponse,
-  }) =>
-      _TypedTestReq(variables ?? this.variables);
+  }) => _TypedTestReq(variables ?? this.variables);
 }
 
 // ---------------------------------------------------------------------------
@@ -239,8 +238,9 @@ class _PreparsedDocReq extends GraphQLRequest<_TestData, _TestVars> {
   final _TestVars variables;
   _PreparsedDocReq(this.variables);
 
-  static final DocumentNode _documentNode =
-      parseString('query Preparsed { user { id name } }');
+  static final DocumentNode _documentNode = parseString(
+    'query Preparsed { user { id name } }',
+  );
 
   @override
   String get document => 'query Preparsed { user { id name } }';
@@ -265,8 +265,7 @@ class _PreparsedDocReq extends GraphQLRequest<_TestData, _TestVars> {
     Map<String, String>? headers,
     dio.CancelToken? cancelToken,
     _TestData? optimisticResponse,
-  }) =>
-      _PreparsedDocReq(variables ?? this.variables);
+  }) => _PreparsedDocReq(variables ?? this.variables);
 }
 
 class _ErrorLink extends Link {
@@ -287,7 +286,8 @@ Future<void> _seedTokenStorage({String? accessToken, String? refreshToken}) {
   FlutterSecureStorage.setMockInitialValues({});
   if (accessToken == null) return Future.value();
   return TokenStorage.i.saveToken(
-      TokenPair(accessToken: accessToken, refreshToken: refreshToken));
+    TokenPair(accessToken: accessToken, refreshToken: refreshToken),
+  );
 }
 
 /// Throws [exception] on the first call (simulating a terminating link like
@@ -327,7 +327,9 @@ class _FlakyLink extends Link {
       );
     }
     yield const gql.Response(
-        data: {'id': '1', 'name': 'Recovered'}, response: {});
+      data: {'id': '1', 'name': 'Recovered'},
+      response: {},
+    );
   }
 }
 
@@ -396,16 +398,16 @@ void main() {
       final req = _TestReq(const _TestVars('123'));
       cache.writeQuery(req, const _TestData(id: '123', name: 'Alice'));
 
-      expect(
-        cache.matchingQueryKeys(operationNames: ['Test']),
-        isNotEmpty,
-      );
+      expect(cache.matchingQueryKeys(operationNames: ['Test']), isNotEmpty);
       expect(
         cache.matchingQueryKeys(operationNames: ['SomethingElse']),
         isEmpty,
       );
-      expect(cache.matchingQueryKeys(), isEmpty,
-          reason: 'no operationNames or types given → no matches');
+      expect(
+        cache.matchingQueryKeys(),
+        isEmpty,
+        reason: 'no operationNames or types given → no matches',
+      );
     });
 
     test('evict clears writtenAt bookkeeping for the evicted query', () {
@@ -424,7 +426,7 @@ void main() {
       final error = GraphQLError.fromJson({
         'message': 'Field error',
         'locations': [
-          {'line': 2, 'column': 4}
+          {'line': 2, 'column': 4},
         ],
         'path': ['user', 'email'],
       });
@@ -446,9 +448,13 @@ void main() {
 
     test('copyWith replaces only specified fields', () {
       const original = GraphQLResponse<_TestData>(
-          data: _TestData(id: '1'), source: ResponseSource.network);
-      final copy =
-          original.copyWith(source: ResponseSource.cache, loading: true);
+        data: _TestData(id: '1'),
+        source: ResponseSource.network,
+      );
+      final copy = original.copyWith(
+        source: ResponseSource.cache,
+        loading: true,
+      );
       expect(copy.data?.id, equals('1'));
       expect(copy.source, equals(ResponseSource.cache));
       expect(copy.loading, isTrue);
@@ -459,7 +465,9 @@ void main() {
     test('constructs without auth params', () {
       expect(
         GraphQLClient(
-            url: 'https://api.example.com/graphql', addTypename: false),
+          url: 'https://api.example.com/graphql',
+          addTypename: false,
+        ),
         isA<GraphQLClient>(),
       );
     });
@@ -489,36 +497,40 @@ void main() {
     });
 
     test(
-        'GraphQLClient.create resolves a synchronous cache and builds a client',
-        () async {
-      final client = await GraphQLClient.create(
-        url: 'https://api.example.com/graphql',
-        cache: InMemoryCache(),
-      );
-      expect(client, isA<GraphQLClient>());
-    });
-
-    test('GraphQLClient.create awaits a FutureOr<Cache> before constructing',
-        () async {
-      final cache = InMemoryCache();
-      final client = await GraphQLClient.create(
-        url: 'https://api.example.com/graphql',
-        cache: Future.value(cache),
-      );
-      expect(client.cache, same(cache));
-    });
+      'GraphQLClient.create resolves a synchronous cache and builds a client',
+      () async {
+        final client = await GraphQLClient.create(
+          url: 'https://api.example.com/graphql',
+          cache: InMemoryCache(),
+        );
+        expect(client, isA<GraphQLClient>());
+      },
+    );
 
     test(
-        'GraphQLClient.create defaults to a fresh InMemoryCache when cache '
+      'GraphQLClient.create awaits a FutureOr<Cache> before constructing',
+      () async {
+        final cache = InMemoryCache();
+        final client = await GraphQLClient.create(
+          url: 'https://api.example.com/graphql',
+          cache: Future.value(cache),
+        );
+        expect(client.cache, same(cache));
+      },
+    );
+
+    test('GraphQLClient.create defaults to a fresh InMemoryCache when cache '
         'is omitted', () async {
-      final client =
-          await GraphQLClient.create(url: 'https://api.example.com/graphql');
+      final client = await GraphQLClient.create(
+        url: 'https://api.example.com/graphql',
+      );
       expect(client.cache, isA<InMemoryCache>());
     });
 
     test('maps Dio network error to GraphQLException', () {
       final client = GraphQLClient(
-          url: 'https://invalid-host-unreachable-12345.com/graphql');
+        url: 'https://invalid-host-unreachable-12345.com/graphql',
+      );
       expect(
         () => client.future(_TestReq(const _TestVars('1'))),
         throwsA(isA<GraphQLException>()),
@@ -533,7 +545,8 @@ void main() {
       expect(reqWithToken.cancelToken, equals(token));
 
       final client = GraphQLClient(
-          url: 'https://invalid-host-unreachable-12345.com/graphql');
+        url: 'https://invalid-host-unreachable-12345.com/graphql',
+      );
 
       expect(
         () => client.future(_TestReq(const _TestVars('1')), cancelToken: token),
@@ -541,145 +554,184 @@ void main() {
       );
     });
 
-    test('deduplicates concurrent identical queries into a single network call',
-        () async {
-      var callCount = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        callCount++;
-      }));
+    test(
+      'deduplicates concurrent identical queries into a single network call',
+      () async {
+        var callCount = 0;
+        final client = GraphQLClient.fromLink(
+          _CountingLink(() {
+            callCount++;
+          }),
+        );
 
-      final results = await Future.wait([
-        for (var i = 0; i < 5; i++)
-          client.future(_TestReq(const _TestVars('1'))),
-      ]);
+        final results = await Future.wait([
+          for (var i = 0; i < 5; i++)
+            client.future(_TestReq(const _TestVars('1'))),
+        ]);
 
-      expect(callCount, equals(1),
-          reason: 'identical concurrent queries must share one network call');
-      expect(results, hasLength(5));
-    });
-
-    test('mutations are never deduplicated, even with identical variables',
-        () async {
-      var callCount = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        callCount++;
-      }));
-
-      await Future.wait([
-        for (var i = 0; i < 3; i++)
-          client.future(_TestMutationReq(const _TestVars('1'))),
-      ]);
-
-      expect(callCount, equals(3),
-          reason: 'mutations must each hit the network independently');
-    });
-
-    test('a request with an explicit cancelToken is never deduplicated',
-        () async {
-      var callCount = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        callCount++;
-      }));
-
-      await Future.wait([
-        client
-            .future(_TestReq(const _TestVars('1'), cancelToken: CancelToken())),
-        client
-            .future(_TestReq(const _TestVars('1'), cancelToken: CancelToken())),
-      ]);
-
-      expect(callCount, equals(2));
-    });
-
-    test('subscriptions are never deduplicated, even with identical variables',
-        () async {
-      var callCount = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        callCount++;
-      }));
-
-      await Future.wait([
-        for (var i = 0; i < 3; i++)
-          client.future(_TestSubscriptionReq(const _TestVars('1'))),
-      ]);
-
-      expect(callCount, equals(3),
-          reason: 'subscriptions must each hit the network independently — '
-              'they have their own reconnect semantics in WebSocketLink/'
-              'SseLink and are excluded from dedup entirely');
-    });
+        expect(
+          callCount,
+          equals(1),
+          reason: 'identical concurrent queries must share one network call',
+        );
+        expect(results, hasLength(5));
+      },
+    );
 
     test(
-        'a mutation never reads or writes the cache, even with an explicit '
+      'mutations are never deduplicated, even with identical variables',
+      () async {
+        var callCount = 0;
+        final client = GraphQLClient.fromLink(
+          _CountingLink(() {
+            callCount++;
+          }),
+        );
+
+        await Future.wait([
+          for (var i = 0; i < 3; i++)
+            client.future(_TestMutationReq(const _TestVars('1'))),
+        ]);
+
+        expect(
+          callCount,
+          equals(3),
+          reason: 'mutations must each hit the network independently',
+        );
+      },
+    );
+
+    test(
+      'a request with an explicit cancelToken is never deduplicated',
+      () async {
+        var callCount = 0;
+        final client = GraphQLClient.fromLink(
+          _CountingLink(() {
+            callCount++;
+          }),
+        );
+
+        await Future.wait([
+          client.future(
+            _TestReq(const _TestVars('1'), cancelToken: CancelToken()),
+          ),
+          client.future(
+            _TestReq(const _TestVars('1'), cancelToken: CancelToken()),
+          ),
+        ]);
+
+        expect(callCount, equals(2));
+      },
+    );
+
+    test(
+      'subscriptions are never deduplicated, even with identical variables',
+      () async {
+        var callCount = 0;
+        final client = GraphQLClient.fromLink(
+          _CountingLink(() {
+            callCount++;
+          }),
+        );
+
+        await Future.wait([
+          for (var i = 0; i < 3; i++)
+            client.future(_TestSubscriptionReq(const _TestVars('1'))),
+        ]);
+
+        expect(
+          callCount,
+          equals(3),
+          reason:
+              'subscriptions must each hit the network independently — '
+              'they have their own reconnect semantics in WebSocketLink/'
+              'SseLink and are excluded from dedup entirely',
+        );
+      },
+    );
+
+    test('a mutation never reads or writes the cache, even with an explicit '
         'caching fetchPolicy', () async {
       final cache = InMemoryCache();
-      final client = GraphQLClient.fromLink(
-        _CountingLink(() {}),
-        cache: cache,
-      );
+      final client = GraphQLClient.fromLink(_CountingLink(() {}), cache: cache);
 
       // Pre-seed the cache under this exact request key, so a mistaken
       // cache read would return it instead of hitting the network.
       final probe = _TestMutationReq(const _TestVars('1'));
       cache.writeQuery(probe, const _TestData(id: 'stale', name: 'Stale'));
 
-      final result = await client.future(_TestMutationReq(
-        const _TestVars('1'),
-        fetchPolicy: FetchPolicy.cacheFirst,
-      ));
+      final result = await client.future(
+        _TestMutationReq(
+          const _TestVars('1'),
+          fetchPolicy: FetchPolicy.cacheFirst,
+        ),
+      );
 
-      expect(result.name, equals('Dedup'),
-          reason: 'must come from the network response, not the '
-              'pre-seeded cache entry, despite requesting cacheFirst');
+      expect(
+        result.name,
+        equals('Dedup'),
+        reason:
+            'must come from the network response, not the '
+            'pre-seeded cache entry, despite requesting cacheFirst',
+      );
       expect(
         cache.readQuery(_TestMutationReq(const _TestVars('1')))?.name,
         equals('Stale'),
-        reason: 'the mutation response must never overwrite the cache '
+        reason:
+            'the mutation response must never overwrite the cache '
             'under its own operation key',
       );
     });
 
-    test(
-        'a subscription never reads or writes the cache, even with an '
+    test('a subscription never reads or writes the cache, even with an '
         'explicit caching fetchPolicy', () async {
       final cache = InMemoryCache();
-      final client = GraphQLClient.fromLink(
-        _CountingLink(() {}),
-        cache: cache,
-      );
+      final client = GraphQLClient.fromLink(_CountingLink(() {}), cache: cache);
 
       final probe = _TestSubscriptionReq(const _TestVars('1'));
       cache.writeQuery(probe, const _TestData(id: 'stale', name: 'Stale'));
 
-      final result = await client.future(_TestSubscriptionReq(
-        const _TestVars('1'),
-        fetchPolicy: FetchPolicy.cacheAndNetwork,
-      ));
+      final result = await client.future(
+        _TestSubscriptionReq(
+          const _TestVars('1'),
+          fetchPolicy: FetchPolicy.cacheAndNetwork,
+        ),
+      );
 
-      expect(result.name, equals('Dedup'),
-          reason: 'must come from the network response, not the '
-              'pre-seeded cache entry, despite requesting cacheAndNetwork');
+      expect(
+        result.name,
+        equals('Dedup'),
+        reason:
+            'must come from the network response, not the '
+            'pre-seeded cache entry, despite requesting cacheAndNetwork',
+      );
       expect(
         cache.readQuery(_TestSubscriptionReq(const _TestVars('1')))?.name,
         equals('Stale'),
-        reason: 'the subscription response must never overwrite the cache '
+        reason:
+            'the subscription response must never overwrite the cache '
             'under its own operation key',
       );
     });
 
-    test(
-        'callers reaching the network at different microtask depths (e.g. '
+    test('callers reaching the network at different microtask depths (e.g. '
         'networkOnly vs cacheAndNetwork) still all receive the deduped '
         'response, not a generic "no response received" error', () async {
       var callCount = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        callCount++;
-      }));
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {
+          callCount++;
+        }),
+      );
 
-      final networkOnlyReq =
-          _TestReq(const _TestVars('1'), fetchPolicy: FetchPolicy.networkOnly);
-      final cacheAndNetworkReq = _TestReq(const _TestVars('1'),
-          fetchPolicy: FetchPolicy.cacheAndNetwork);
+      final networkOnlyReq = _TestReq(
+        const _TestVars('1'),
+        fetchPolicy: FetchPolicy.networkOnly,
+      );
+      final cacheAndNetworkReq = _TestReq(
+        const _TestVars('1'),
+        fetchPolicy: FetchPolicy.cacheAndNetwork,
+      );
 
       // cacheAndNetworkReq reaches the dedup'd network call only after an
       // extra await gap (a cache read first), so these two callers land at
@@ -691,28 +743,34 @@ void main() {
         client.future(cacheAndNetworkReq),
       ]);
 
-      expect(callCount, equals(1),
-          reason: 'both reach the network for the identical query, just at '
-              'different await depths — still only one real call');
+      expect(
+        callCount,
+        equals(1),
+        reason:
+            'both reach the network for the identical query, just at '
+            'different await depths — still only one real call',
+      );
       expect(results[0].name, equals('Dedup'));
       expect(results[1].name, equals('Dedup'));
     });
 
-    test('retries a query on NetworkException up to maxAttempts, then succeeds',
-        () async {
-      var attempts = 0;
-      final client = GraphQLClient.fromLink(
-        _FlakyLink(failTimes: 2, onAttempt: () => attempts++),
-        defaultRetry: const RetryOptions(
-          maxAttempts: 3,
-          initialDelay: Duration(milliseconds: 1),
-        ),
-      );
+    test(
+      'retries a query on NetworkException up to maxAttempts, then succeeds',
+      () async {
+        var attempts = 0;
+        final client = GraphQLClient.fromLink(
+          _FlakyLink(failTimes: 2, onAttempt: () => attempts++),
+          defaultRetry: const RetryOptions(
+            maxAttempts: 3,
+            initialDelay: Duration(milliseconds: 1),
+          ),
+        );
 
-      final result = await client.future(_TestReq(const _TestVars('1')));
-      expect(attempts, equals(3));
-      expect(result.name, equals('Recovered'));
-    });
+        final result = await client.future(_TestReq(const _TestVars('1')));
+        expect(attempts, equals(3));
+        expect(result.name, equals('Recovered'));
+      },
+    );
 
     test('exhausts retries and surfaces the final failure', () async {
       var attempts = 0;
@@ -731,26 +789,27 @@ void main() {
       expect(attempts, equals(2));
     });
 
-    test('mutations never auto-retry by default, even with defaultRetry set',
-        () async {
-      var attempts = 0;
-      final client = GraphQLClient.fromLink(
-        _FlakyLink(failTimes: 10, onAttempt: () => attempts++),
-        defaultRetry: const RetryOptions(
-          maxAttempts: 3,
-          initialDelay: Duration(milliseconds: 1),
-        ),
-      );
-
-      await expectLater(
-        client.future(_TestMutationReq(const _TestVars('1'))),
-        throwsA(isA<NetworkException>()),
-      );
-      expect(attempts, equals(1));
-    });
-
     test(
-        'subscriptions never auto-retry by default, even with defaultRetry '
+      'mutations never auto-retry by default, even with defaultRetry set',
+      () async {
+        var attempts = 0;
+        final client = GraphQLClient.fromLink(
+          _FlakyLink(failTimes: 10, onAttempt: () => attempts++),
+          defaultRetry: const RetryOptions(
+            maxAttempts: 3,
+            initialDelay: Duration(milliseconds: 1),
+          ),
+        );
+
+        await expectLater(
+          client.future(_TestMutationReq(const _TestVars('1'))),
+          throwsA(isA<NetworkException>()),
+        );
+        expect(attempts, equals(1));
+      },
+    );
+
+    test('subscriptions never auto-retry by default, even with defaultRetry '
         'set', () async {
       var attempts = 0;
       final client = GraphQLClient.fromLink(
@@ -765,9 +824,13 @@ void main() {
         client.future(_TestSubscriptionReq(const _TestVars('1'))),
         throwsA(isA<NetworkException>()),
       );
-      expect(attempts, equals(1),
-          reason: 'subscriptions reconnect via their own transport link, '
-              'not defaultRetry');
+      expect(
+        attempts,
+        equals(1),
+        reason:
+            'subscriptions reconnect via their own transport link, '
+            'not defaultRetry',
+      );
     });
   });
 
@@ -775,81 +838,93 @@ void main() {
     test('isAuthenticated reflects TokenStorage.i', () async {
       await _seedTokenStorage();
       final client = GraphQLClient(
-          url: 'https://api.example.com/graphql', addTypename: false);
+        url: 'https://api.example.com/graphql',
+        addTypename: false,
+      );
       expect(await client.isAuthenticated, isFalse);
 
       await _seedTokenStorage(
-          accessToken: 'access-1', refreshToken: 'refresh-1');
+        accessToken: 'access-1',
+        refreshToken: 'refresh-1',
+      );
       expect(await client.isAuthenticated, isTrue);
     });
 
     test(
-        'refreshCallback receives the stored refresh token, persists the new '
-        'TokenPair, and the failed request is retried with the new access token',
-        () async {
-      await _seedTokenStorage(
-        accessToken: 'old-access',
-        refreshToken: 'old-refresh',
-      );
+      'refreshCallback receives the stored refresh token, persists the new '
+      'TokenPair, and the failed request is retried with the new access token',
+      () async {
+        await _seedTokenStorage(
+          accessToken: 'old-access',
+          refreshToken: 'old-refresh',
+        );
 
-      var callCount = 0;
-      final capturedHeaders = <Map<String, dynamic>>[];
-      final dioInstance = dio.Dio();
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
-        callCount++;
-        capturedHeaders.add(Map.from(options.headers));
-        if (callCount == 1) {
+        var callCount = 0;
+        final capturedHeaders = <Map<String, dynamic>>[];
+        final dioInstance = dio.Dio();
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+          callCount++;
+          capturedHeaders.add(Map.from(options.headers));
+          if (callCount == 1) {
+            return dio.ResponseBody.fromString(
+              jsonEncode({
+                'errors': [
+                  {
+                    'message': 'Unauthenticated',
+                    'extensions': {'code': 'UNAUTHENTICATED'},
+                  },
+                ],
+              }),
+              401,
+              headers: {
+                'content-type': ['application/json'],
+              },
+            );
+          }
           return dio.ResponseBody.fromString(
             jsonEncode({
-              'errors': [
-                {
-                  'message': 'Unauthenticated',
-                  'extensions': {'code': 'UNAUTHENTICATED'},
-                }
-              ]
+              'data': {'id': '123', 'name': 'Refreshed User'},
             }),
-            401,
+            200,
             headers: {
-              'content-type': ['application/json']
+              'content-type': ['application/json'],
             },
           );
-        }
-        return dio.ResponseBody.fromString(
-          jsonEncode({
-            'data': {'id': '123', 'name': 'Refreshed User'}
-          }),
-          200,
-          headers: {
-            'content-type': ['application/json']
+        });
+
+        String? refreshTokenSeen;
+        final client = GraphQLClient(
+          url: 'https://example.com/graphql',
+          dio: dioInstance,
+          addTypename: false,
+          refreshCallback: (refreshClient, refreshToken) async {
+            refreshTokenSeen = refreshToken;
+            return TokenPair(
+              accessToken: 'new-access',
+              refreshToken: 'new-refresh',
+            );
           },
         );
-      });
 
-      String? refreshTokenSeen;
-      final client = GraphQLClient(
-        url: 'https://example.com/graphql',
-        dio: dioInstance,
-        addTypename: false,
-        refreshCallback: (refreshClient, refreshToken) async {
-          refreshTokenSeen = refreshToken;
-          return TokenPair(
-              accessToken: 'new-access', refreshToken: 'new-refresh');
-        },
-      );
+        final result = await client.future(_TestReq(const _TestVars('123')));
 
-      final result = await client.future(_TestReq(const _TestVars('123')));
+        expect(result.name, equals('Refreshed User'));
+        expect(callCount, equals(2));
+        expect(refreshTokenSeen, equals('old-refresh'));
+        expect(
+          capturedHeaders[0]['Authorization'],
+          equals('Bearer old-access'),
+        );
+        expect(
+          capturedHeaders[1]['Authorization'],
+          equals('Bearer new-access'),
+        );
+        expect(await TokenStorage.i.accessToken, equals('new-access'));
+        expect(await TokenStorage.i.refreshToken, equals('new-refresh'));
+      },
+    );
 
-      expect(result.name, equals('Refreshed User'));
-      expect(callCount, equals(2));
-      expect(refreshTokenSeen, equals('old-refresh'));
-      expect(capturedHeaders[0]['Authorization'], equals('Bearer old-access'));
-      expect(capturedHeaders[1]['Authorization'], equals('Bearer new-access'));
-      expect(await TokenStorage.i.accessToken, equals('new-access'));
-      expect(await TokenStorage.i.refreshToken, equals('new-refresh'));
-    });
-
-    test(
-        'a token refresh updates storage silently — the TokenStorage listener '
+    test('a token refresh updates storage silently — the TokenStorage listener '
         '(e.g. app routing) is not notified, createdAt is kept and updatedAt '
         'advances', () async {
       await _seedTokenStorage(
@@ -864,21 +939,23 @@ void main() {
       dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
         callCount++;
         return dio.ResponseBody.fromString(
-          jsonEncode(callCount == 1
-              ? {
-                  'errors': [
-                    {
-                      'message': 'Unauthenticated',
-                      'extensions': {'code': 'UNAUTHENTICATED'},
-                    }
-                  ]
-                }
-              : {
-                  'data': {'id': '123', 'name': 'Refreshed User'}
-                }),
+          jsonEncode(
+            callCount == 1
+                ? {
+                    'errors': [
+                      {
+                        'message': 'Unauthenticated',
+                        'extensions': {'code': 'UNAUTHENTICATED'},
+                      },
+                    ],
+                  }
+                : {
+                    'data': {'id': '123', 'name': 'Refreshed User'},
+                  },
+          ),
           callCount == 1 ? 401 : 200,
           headers: {
-            'content-type': ['application/json']
+            'content-type': ['application/json'],
           },
         );
       });
@@ -891,8 +968,8 @@ void main() {
         url: 'https://example.com/graphql',
         dio: dioInstance,
         addTypename: false,
-        refreshCallback: (_, __) async => TokenPair(
-            accessToken: 'new-access', refreshToken: 'new-refresh'),
+        refreshCallback: (_, __) async =>
+            TokenPair(accessToken: 'new-access', refreshToken: 'new-refresh'),
       );
 
       await client.future(_TestReq(const _TestVars('123')));
@@ -904,8 +981,7 @@ void main() {
       expect(stored.updatedAt.isAfter(seeded.updatedAt), isTrue);
     });
 
-    test(
-        'defaultHeaders reach the token-refresh request too, not just the '
+    test('defaultHeaders reach the token-refresh request too, not just the '
         'original one — AuthLink must share the client\'s configured Dio '
         'instance rather than falling back to an unconfigured one', () async {
       await _seedTokenStorage(
@@ -926,22 +1002,22 @@ void main() {
                 {
                   'message': 'Unauthenticated',
                   'extensions': {'code': 'UNAUTHENTICATED'},
-                }
-              ]
+                },
+              ],
             }),
             401,
             headers: {
-              'content-type': ['application/json']
+              'content-type': ['application/json'],
             },
           );
         }
         return dio.ResponseBody.fromString(
           jsonEncode({
-            'data': {'id': '123', 'name': 'Refreshed User'}
+            'data': {'id': '123', 'name': 'Refreshed User'},
           }),
           200,
           headers: {
-            'content-type': ['application/json']
+            'content-type': ['application/json'],
           },
         );
       });
@@ -958,15 +1034,21 @@ void main() {
       await client.future(_TestReq(const _TestVars('123')));
 
       expect(callCount, equals(2));
-      expect(capturedHeaders[0]['X-Client-Id'], equals('test-client'),
-          reason: 'original request must carry defaultHeaders');
-      expect(capturedHeaders[1]['X-Client-Id'], equals('test-client'),
-          reason: 'refresh request must carry defaultHeaders too — it runs '
-              'through the same configured Dio, not a second bare one');
+      expect(
+        capturedHeaders[0]['X-Client-Id'],
+        equals('test-client'),
+        reason: 'original request must carry defaultHeaders',
+      );
+      expect(
+        capturedHeaders[1]['X-Client-Id'],
+        equals('test-client'),
+        reason:
+            'refresh request must carry defaultHeaders too — it runs '
+            'through the same configured Dio, not a second bare one',
+      );
     });
 
-    test(
-        'refreshCallback is never called without a stored refresh token; '
+    test('refreshCallback is never called without a stored refresh token; '
         'revokes immediately instead', () async {
       await _seedTokenStorage(accessToken: 'old-access');
       var refreshCalls = 0;
@@ -984,12 +1066,12 @@ void main() {
               {
                 'message': 'Unauthenticated',
                 'extensions': {'code': 'UNAUTHENTICATED'},
-              }
-            ]
+              },
+            ],
           }),
           401,
           headers: {
-            'content-type': ['application/json']
+            'content-type': ['application/json'],
           },
         );
       });
@@ -1018,8 +1100,7 @@ void main() {
       GraphQLClient.clearRevokeTokenListeners();
     });
 
-    test(
-        'multiple concurrent requests failing at once trigger only one '
+    test('multiple concurrent requests failing at once trigger only one '
         'refreshCallback call and all retry successfully', () async {
       await _seedTokenStorage(
         accessToken: 'old-access',
@@ -1037,22 +1118,22 @@ void main() {
                 {
                   'message': 'Unauthenticated',
                   'extensions': {'code': 'UNAUTHENTICATED'},
-                }
-              ]
+                },
+              ],
             }),
             401,
             headers: {
-              'content-type': ['application/json']
+              'content-type': ['application/json'],
             },
           );
         }
         return dio.ResponseBody.fromString(
           jsonEncode({
-            'data': {'id': '123', 'name': 'Refreshed User'}
+            'data': {'id': '123', 'name': 'Refreshed User'},
           }),
           200,
           headers: {
-            'content-type': ['application/json']
+            'content-type': ['application/json'],
           },
         );
       });
@@ -1067,7 +1148,9 @@ void main() {
           // single refresh instead of each triggering their own.
           await Future<void>.delayed(const Duration(milliseconds: 30));
           return TokenPair(
-              accessToken: 'new-access', refreshToken: 'new-refresh');
+            accessToken: 'new-access',
+            refreshToken: 'new-refresh',
+          );
         },
       );
 
@@ -1076,15 +1159,19 @@ void main() {
           client.future(_TestReq(const _TestVars('123'))),
       ]);
 
-      expect(refreshCalls, equals(1),
-          reason: 'refreshCallback must be deduped across concurrent 401s');
+      expect(
+        refreshCalls,
+        equals(1),
+        reason: 'refreshCallback must be deduped across concurrent 401s',
+      );
       expect(results, hasLength(5));
       expect(
-          results.map((d) => d.name), everyElement(equals('Refreshed User')));
+        results.map((d) => d.name),
+        everyElement(equals('Refreshed User')),
+      );
     });
 
-    test(
-        'refreshTokenHeader attaches the refresh token to requests made '
+    test('refreshTokenHeader attaches the refresh token to requests made '
         'through the internal refresh client, not the normal access-token '
         'header', () async {
       await _seedTokenStorage(
@@ -1105,22 +1192,22 @@ void main() {
                 {
                   'message': 'Unauthenticated',
                   'extensions': {'code': 'UNAUTHENTICATED'},
-                }
-              ]
+                },
+              ],
             }),
             401,
             headers: {
-              'content-type': ['application/json']
+              'content-type': ['application/json'],
             },
           );
         }
         return dio.ResponseBody.fromString(
           jsonEncode({
-            'data': {'id': '123', 'name': 'Refreshed User'}
+            'data': {'id': '123', 'name': 'Refreshed User'},
           }),
           200,
           headers: {
-            'content-type': ['application/json']
+            'content-type': ['application/json'],
           },
         );
       });
@@ -1129,8 +1216,9 @@ void main() {
         url: 'https://example.com/graphql',
         dio: dioInstance,
         addTypename: false,
-        refreshTokenHeader: (_) async =>
-            {'Authorization': 'Bearer the-refresh-token'},
+        refreshTokenHeader: (_) async => {
+          'Authorization': 'Bearer the-refresh-token',
+        },
         refreshCallback: (refreshClient, refreshToken) async {
           // Hits the mock Dio through the internal refresh client's own
           // pipeline, which is where refreshTokenHeader's headers apply.
@@ -1142,18 +1230,26 @@ void main() {
       await client.future(_TestReq(const _TestVars('123')));
 
       expect(callCount, equals(3));
-      expect(capturedHeaders[0]['Authorization'], equals('Bearer old-access'),
-          reason: 'original request carries the access-token header');
-      expect(capturedHeaders[1]['Authorization'],
-          equals('Bearer the-refresh-token'),
-          reason: 'the request made via refreshClient inside refreshCallback '
-              'carries the refresh-token header instead');
-      expect(capturedHeaders[2]['Authorization'], equals('Bearer new-access'),
-          reason: 'the retried original request carries the new access token');
+      expect(
+        capturedHeaders[0]['Authorization'],
+        equals('Bearer old-access'),
+        reason: 'original request carries the access-token header',
+      );
+      expect(
+        capturedHeaders[1]['Authorization'],
+        equals('Bearer the-refresh-token'),
+        reason:
+            'the request made via refreshClient inside refreshCallback '
+            'carries the refresh-token header instead',
+      );
+      expect(
+        capturedHeaders[2]['Authorization'],
+        equals('Bearer new-access'),
+        reason: 'the retried original request carries the new access token',
+      );
     });
 
-    test(
-        'without refreshTokenHeader, a request made through the internal '
+    test('without refreshTokenHeader, a request made through the internal '
         'refresh client carries no Authorization header at all — the '
         'access-token header must never leak onto refresh requests', () async {
       await _seedTokenStorage(
@@ -1174,22 +1270,22 @@ void main() {
                 {
                   'message': 'Unauthenticated',
                   'extensions': {'code': 'UNAUTHENTICATED'},
-                }
-              ]
+                },
+              ],
             }),
             401,
             headers: {
-              'content-type': ['application/json']
+              'content-type': ['application/json'],
             },
           );
         }
         return dio.ResponseBody.fromString(
           jsonEncode({
-            'data': {'id': '123', 'name': 'Refreshed User'}
+            'data': {'id': '123', 'name': 'Refreshed User'},
           }),
           200,
           headers: {
-            'content-type': ['application/json']
+            'content-type': ['application/json'],
           },
         );
       });
@@ -1210,13 +1306,23 @@ void main() {
       await client.future(_TestReq(const _TestVars('123')));
 
       expect(callCount, equals(3));
-      expect(capturedHeaders[0]['Authorization'], equals('Bearer old-access'),
-          reason: 'original request carries the access-token header');
-      expect(capturedHeaders[1].containsKey('Authorization'), isFalse,
-          reason: 'the refresh client request must carry no Authorization '
-              'header when refreshTokenHeader is not configured');
-      expect(capturedHeaders[2]['Authorization'], equals('Bearer new-access'),
-          reason: 'the retried original request carries the new access token');
+      expect(
+        capturedHeaders[0]['Authorization'],
+        equals('Bearer old-access'),
+        reason: 'original request carries the access-token header',
+      );
+      expect(
+        capturedHeaders[1].containsKey('Authorization'),
+        isFalse,
+        reason:
+            'the refresh client request must carry no Authorization '
+            'header when refreshTokenHeader is not configured',
+      );
+      expect(
+        capturedHeaders[2]['Authorization'],
+        equals('Bearer new-access'),
+        reason: 'the retried original request carries the new access token',
+      );
     });
   });
 
@@ -1231,33 +1337,43 @@ void main() {
           accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
           onTokenRefresh: (_) => throw Exception('Refresh failed'),
         ),
-        _ErrorLink(errors: [
-          const gql.GraphQLError(
-              message: 'Unauthorized', extensions: {'code': 'UNAUTHORIZED'}),
-        ]),
+        _ErrorLink(
+          errors: [
+            const gql.GraphQLError(
+              message: 'Unauthorized',
+              extensions: {'code': 'UNAUTHORIZED'},
+            ),
+          ],
+        ),
       ]);
 
       await expectLater(
         chain
-            .request(gql.Request(
-              operation: gql.Operation(
-                document: parseString('query Test { user { id } }'),
-                operationName: 'Test',
+            .request(
+              gql.Request(
+                operation: gql.Operation(
+                  document: parseString('query Test { user { id } }'),
+                  operationName: 'Test',
+                ),
               ),
-            ))
+            )
             .drain<void>(),
         // The real refresh failure reason is surfaced instead of silently
         // ending the stream.
-        throwsA(isA<RevokeTokenException>()
-            .having((e) => e.message, 'message', contains('Refresh failed'))),
+        throwsA(
+          isA<RevokeTokenException>().having(
+            (e) => e.message,
+            'message',
+            contains('Refresh failed'),
+          ),
+        ),
       );
 
       expect(listenerCalled, isTrue);
       GraphQLClient.clearRevokeTokenListeners();
     });
 
-    test(
-        'refreshTimeout treats a hanging onTokenRefresh as a failed refresh '
+    test('refreshTimeout treats a hanging onTokenRefresh as a failed refresh '
         'instead of waiting forever', () async {
       bool listenerCalled = false;
       GraphQLClient.registerRevokeTokenListener(() => listenerCalled = true);
@@ -1273,32 +1389,41 @@ void main() {
             return {'Authorization': 'Bearer new'};
           },
         ),
-        _ErrorLink(errors: [
-          const gql.GraphQLError(
-              message: 'Unauthorized', extensions: {'code': 'UNAUTHORIZED'}),
-        ]),
+        _ErrorLink(
+          errors: [
+            const gql.GraphQLError(
+              message: 'Unauthorized',
+              extensions: {'code': 'UNAUTHORIZED'},
+            ),
+          ],
+        ),
       ]);
 
       await expectLater(
         chain
-            .request(gql.Request(
-              operation: gql.Operation(
-                document: parseString('query Test { user { id } }'),
-                operationName: 'Test',
+            .request(
+              gql.Request(
+                operation: gql.Operation(
+                  document: parseString('query Test { user { id } }'),
+                  operationName: 'Test',
+                ),
               ),
-            ))
+            )
             .drain<void>(),
         throwsA(isA<RevokeTokenException>()),
       );
 
-      expect(listenerCalled, isTrue,
-          reason: 'a timed-out refresh must revoke exactly like a thrown '
-              'refresh failure, not hang the request forever');
+      expect(
+        listenerCalled,
+        isTrue,
+        reason:
+            'a timed-out refresh must revoke exactly like a thrown '
+            'refresh failure, not hang the request forever',
+      );
       GraphQLClient.clearRevokeTokenListeners();
     });
 
-    test(
-        'without refreshTimeout, a slow-but-eventually-successful '
+    test('without refreshTimeout, a slow-but-eventually-successful '
         'onTokenRefresh still succeeds — the default keeps waiting '
         'indefinitely', () async {
       final chain = Link.from([
@@ -1314,12 +1439,14 @@ void main() {
       ]);
 
       final responses = await chain
-          .request(gql.Request(
-            operation: gql.Operation(
-              document: parseString('query Test { user { id } }'),
-              operationName: 'Test',
+          .request(
+            gql.Request(
+              operation: gql.Operation(
+                document: parseString('query Test { user { id } }'),
+                operationName: 'Test',
+              ),
             ),
-          ))
+          )
           .toList();
 
       expect(responses, isNotEmpty);
@@ -1338,10 +1465,14 @@ void main() {
             return {'Authorization': 'Bearer new'};
           },
         ),
-        _ErrorLink(errors: [
-          const gql.GraphQLError(
-              message: 'Unauthorized', extensions: {'code': 'UNAUTHORIZED'}),
-        ]),
+        _ErrorLink(
+          errors: [
+            const gql.GraphQLError(
+              message: 'Unauthorized',
+              extensions: {'code': 'UNAUTHORIZED'},
+            ),
+          ],
+        ),
       ]);
 
       final gqlReq = gql.Request(
@@ -1355,72 +1486,84 @@ void main() {
         for (var i = 0; i < 5; i++) chain.request(gqlReq).drain<void>(),
       ]);
 
-      expect(refreshCount, equals(1),
-          reason: 'refresh must be deduplicated across concurrent requests');
-    });
-
-    test('retries after a thrown ServerException with HTTP 401 status',
-        () async {
-      final failingLink = _ServerExceptionOnceLink(
-        const ServerException(statusCode: 401),
+      expect(
+        refreshCount,
+        equals(1),
+        reason: 'refresh must be deduplicated across concurrent requests',
       );
-      final chain = Link.from([
-        AuthLink(
-          url: 'https://api.example.com/graphql',
-          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
-          onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
-        ),
-        failingLink,
-      ]);
-
-      final responses = await chain
-          .request(gql.Request(
-            operation: gql.Operation(
-              document: parseString('query Test { user { id } }'),
-              operationName: 'Test',
-            ),
-          ))
-          .toList();
-
-      expect(failingLink.calls, equals(2));
-      expect(responses.single.data, equals({'ok': true}));
     });
 
     test(
-        'retries when a thrown ServerException carries a parsed unauthorized error',
-        () async {
-      final failingLink = _ServerExceptionOnceLink(
-        ServerException(
-          parsedResponse: const gql.Response(
-            errors: [
-              gql.GraphQLError(
-                  message: 'nope', extensions: {'code': 'unauthenticated'}),
-            ],
-            response: {},
+      'retries after a thrown ServerException with HTTP 401 status',
+      () async {
+        final failingLink = _ServerExceptionOnceLink(
+          const ServerException(statusCode: 401),
+        );
+        final chain = Link.from([
+          AuthLink(
+            url: 'https://api.example.com/graphql',
+            accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
+            onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
           ),
-        ),
-      );
-      final chain = Link.from([
-        AuthLink(
-          url: 'https://api.example.com/graphql',
-          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
-          onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
-        ),
-        failingLink,
-      ]);
+          failingLink,
+        ]);
 
-      final responses = await chain
-          .request(gql.Request(
-            operation: gql.Operation(
-              document: parseString('query Test { user { id } }'),
-              operationName: 'Test',
+        final responses = await chain
+            .request(
+              gql.Request(
+                operation: gql.Operation(
+                  document: parseString('query Test { user { id } }'),
+                  operationName: 'Test',
+                ),
+              ),
+            )
+            .toList();
+
+        expect(failingLink.calls, equals(2));
+        expect(responses.single.data, equals({'ok': true}));
+      },
+    );
+
+    test(
+      'retries when a thrown ServerException carries a parsed unauthorized error',
+      () async {
+        final failingLink = _ServerExceptionOnceLink(
+          ServerException(
+            parsedResponse: const gql.Response(
+              errors: [
+                gql.GraphQLError(
+                  message: 'nope',
+                  extensions: {'code': 'unauthenticated'},
+                ),
+              ],
+              response: {},
             ),
-          ))
-          .toList();
+          ),
+        );
+        final chain = Link.from([
+          AuthLink(
+            url: 'https://api.example.com/graphql',
+            accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
+            onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
+          ),
+          failingLink,
+        ]);
 
-      expect(failingLink.calls, equals(2));
-      expect(responses.single.data, equals({'ok': true}));
-    });
+        final responses = await chain
+            .request(
+              gql.Request(
+                operation: gql.Operation(
+                  document: parseString('query Test { user { id } }'),
+                  operationName: 'Test',
+                ),
+              ),
+            )
+            .toList();
+
+        expect(failingLink.calls, equals(2));
+        expect(responses.single.data, equals({'ok': true}));
+      },
+    );
 
     test('rethrows a ServerException that is not unauthorized', () async {
       final failingLink = _ServerExceptionOnceLink(
@@ -1437,59 +1580,71 @@ void main() {
 
       await expectLater(
         chain
-            .request(gql.Request(
-              operation: gql.Operation(
-                document: parseString('query Test { user { id } }'),
-                operationName: 'Test',
+            .request(
+              gql.Request(
+                operation: gql.Operation(
+                  document: parseString('query Test { user { id } }'),
+                  operationName: 'Test',
+                ),
               ),
-            ))
+            )
             .drain<void>(),
         throwsA(isA<ServerException>()),
       );
-      expect(failingLink.calls, equals(1),
-          reason: 'must not retry non-unauthorized failures');
+      expect(
+        failingLink.calls,
+        equals(1),
+        reason: 'must not retry non-unauthorized failures',
+      );
     });
 
     test(
-        'isUnauthorized lets a custom API convention (a non-standard error '
-        'code the built-in default would not recognize) trigger refresh',
-        () async {
-      final chain = Link.from([
-        AuthLink(
-          url: 'https://api.example.com/graphql',
-          accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
-          onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
-          isUnauthorized: (context) => context.errorCode == 'TOKEN_EXPIRED'
-              ? AuthFailure.refresh
-              : AuthFailure.none,
-        ),
-        _ErrorLink(errors: [
-          const gql.GraphQLError(
-              message: 'Session expired',
-              extensions: {'code': 'TOKEN_EXPIRED'}),
-        ]),
-      ]);
+      'isUnauthorized lets a custom API convention (a non-standard error '
+      'code the built-in default would not recognize) trigger refresh',
+      () async {
+        final chain = Link.from([
+          AuthLink(
+            url: 'https://api.example.com/graphql',
+            accessTokenHeader: (_) => {'Authorization': 'Bearer old'},
+            onTokenRefresh: (_) async => {'Authorization': 'Bearer new'},
+            isUnauthorized: (context) => context.errorCode == 'TOKEN_EXPIRED'
+                ? AuthFailure.refresh
+                : AuthFailure.none,
+          ),
+          _ErrorLink(
+            errors: [
+              const gql.GraphQLError(
+                message: 'Session expired',
+                extensions: {'code': 'TOKEN_EXPIRED'},
+              ),
+            ],
+          ),
+        ]);
 
-      final responses = await chain
-          .request(gql.Request(
-            operation: gql.Operation(
-              document: parseString('query Test { user { id } }'),
-              operationName: 'Test',
-            ),
-          ))
-          .toList();
+        final responses = await chain
+            .request(
+              gql.Request(
+                operation: gql.Operation(
+                  document: parseString('query Test { user { id } }'),
+                  operationName: 'Test',
+                ),
+              ),
+            )
+            .toList();
 
-      // _ErrorLink always yields the same error response — the "retry"
-      // observed here is just that response coming through once more,
-      // proving the refresh-and-retry path fired instead of the error
-      // being yielded straight through.
-      expect(responses, hasLength(1));
-      expect(responses.single.errors?.first.extensions?['code'],
-          equals('TOKEN_EXPIRED'));
-    });
+        // _ErrorLink always yields the same error response — the "retry"
+        // observed here is just that response coming through once more,
+        // proving the refresh-and-retry path fired instead of the error
+        // being yielded straight through.
+        expect(responses, hasLength(1));
+        expect(
+          responses.single.errors?.first.extensions?['code'],
+          equals('TOKEN_EXPIRED'),
+        );
+      },
+    );
 
-    test(
-        'isUnauthorized overrides the built-in default entirely — a 401 it '
+    test('isUnauthorized overrides the built-in default entirely — a 401 it '
         'does not recognize is left alone, not refreshed', () async {
       final failingLink = _ServerExceptionOnceLink(
         const ServerException(statusCode: 401),
@@ -1510,12 +1665,14 @@ void main() {
 
       await expectLater(
         chain
-            .request(gql.Request(
-              operation: gql.Operation(
-                document: parseString('query Test { user { id } }'),
-                operationName: 'Test',
+            .request(
+              gql.Request(
+                operation: gql.Operation(
+                  document: parseString('query Test { user { id } }'),
+                  operationName: 'Test',
+                ),
               ),
-            ))
+            )
             .drain<void>(),
         throwsA(isA<ServerException>()),
       );
@@ -1523,8 +1680,7 @@ void main() {
       expect(failingLink.calls, equals(1));
     });
 
-    test(
-        'a 403/FORBIDDEN response revokes immediately without attempting a '
+    test('a 403/FORBIDDEN response revokes immediately without attempting a '
         'refresh — the token is valid but lacks permission, so refreshing '
         "wouldn't help", () async {
       var refreshCalls = 0;
@@ -1539,33 +1695,43 @@ void main() {
           },
           onRevokeToken: () => revokeCalls++,
         ),
-        _ErrorLink(errors: [
-          const gql.GraphQLError(
+        _ErrorLink(
+          errors: [
+            const gql.GraphQLError(
               message: 'Insufficient permissions',
-              extensions: {'code': 'FORBIDDEN'}),
-        ]),
+              extensions: {'code': 'FORBIDDEN'},
+            ),
+          ],
+        ),
       ]);
 
       final responses = await chain
-          .request(gql.Request(
-            operation: gql.Operation(
-              document: parseString('query Test { user { id } }'),
-              operationName: 'Test',
+          .request(
+            gql.Request(
+              operation: gql.Operation(
+                document: parseString('query Test { user { id } }'),
+                operationName: 'Test',
+              ),
             ),
-          ))
+          )
           .toList();
 
       expect(refreshCalls, equals(0));
       expect(revokeCalls, equals(1));
-      expect(responses, hasLength(1),
-          reason: 'the real FORBIDDEN response is still yielded instead of '
-              'silently ending the stream');
-      expect(responses.single.errors?.first.message,
-          equals('Insufficient permissions'));
+      expect(
+        responses,
+        hasLength(1),
+        reason:
+            'the real FORBIDDEN response is still yielded instead of '
+            'silently ending the stream',
+      );
+      expect(
+        responses.single.errors?.first.message,
+        equals('Insufficient permissions'),
+      );
     });
 
-    test(
-        'a thrown ServerException with HTTP 403 status also revokes '
+    test('a thrown ServerException with HTTP 403 status also revokes '
         'immediately instead of attempting a refresh', () async {
       final failingLink = _ServerExceptionOnceLink(
         const ServerException(statusCode: 403),
@@ -1587,12 +1753,14 @@ void main() {
 
       await expectLater(
         chain
-            .request(gql.Request(
-              operation: gql.Operation(
-                document: parseString('query Test { user { id } }'),
-                operationName: 'Test',
+            .request(
+              gql.Request(
+                operation: gql.Operation(
+                  document: parseString('query Test { user { id } }'),
+                  operationName: 'Test',
+                ),
               ),
-            ))
+            )
             .toList(),
         // The real ServerException is rethrown instead of silently ending
         // the stream.
@@ -1601,8 +1769,11 @@ void main() {
 
       expect(refreshCalls, equals(0));
       expect(revokeCalls, equals(1));
-      expect(failingLink.calls, equals(1),
-          reason: 'must not retry — a revoke is not a refresh-and-retry');
+      expect(
+        failingLink.calls,
+        equals(1),
+        reason: 'must not retry — a revoke is not a refresh-and-retry',
+      );
     });
   });
 
@@ -1610,12 +1781,14 @@ void main() {
     test('injects __typename into every selection set', () async {
       final capture = _CapturingLink();
       await Link.from([const TypenameLink(), capture])
-          .request(gql.Request(
-            operation: gql.Operation(
-              document: parseString('query Test { user { id name } }'),
-              operationName: 'Test',
+          .request(
+            gql.Request(
+              operation: gql.Operation(
+                document: parseString('query Test { user { id name } }'),
+                operationName: 'Test',
+              ),
             ),
-          ))
+          )
           .first;
 
       expect(
@@ -1625,29 +1798,30 @@ void main() {
     });
 
     test(
-        'reuses the transformed document instance across repeated requests '
-        'for the same original document (identity-cached, not re-walked)',
-        () async {
-      final capture = _CapturingLink();
-      const link = TypenameLink();
-      final originalDoc = parseString('query Test { user { id name } }');
+      'reuses the transformed document instance across repeated requests '
+      'for the same original document (identity-cached, not re-walked)',
+      () async {
+        final capture = _CapturingLink();
+        const link = TypenameLink();
+        final originalDoc = parseString('query Test { user { id name } }');
 
-      await Link.from([link, capture])
-          .request(gql.Request(
-            operation: gql.Operation(document: originalDoc),
-          ))
-          .first;
-      final firstTransformed = capture.captured!.operation.document;
+        await Link.from([link, capture])
+            .request(
+              gql.Request(operation: gql.Operation(document: originalDoc)),
+            )
+            .first;
+        final firstTransformed = capture.captured!.operation.document;
 
-      await Link.from([link, capture])
-          .request(gql.Request(
-            operation: gql.Operation(document: originalDoc),
-          ))
-          .first;
-      final secondTransformed = capture.captured!.operation.document;
+        await Link.from([link, capture])
+            .request(
+              gql.Request(operation: gql.Operation(document: originalDoc)),
+            )
+            .first;
+        final secondTransformed = capture.captured!.operation.document;
 
-      expect(identical(firstTransformed, secondTransformed), isTrue);
-    });
+        expect(identical(firstTransformed, secondTransformed), isTrue);
+      },
+    );
   });
 
   group('SseLink Tests', () {
@@ -1664,8 +1838,10 @@ void main() {
 
       adapter.setResponse(sseData);
 
-      final sseLink =
-          SseLink('https://example.com/graphql/sse', client: dioInstance);
+      final sseLink = SseLink(
+        'https://example.com/graphql/sse',
+        client: dioInstance,
+      );
 
       final req = gql.Request(
         operation: gql.Operation(
@@ -1697,7 +1873,7 @@ void main() {
           Stream.value(Uint8List.fromList(sseData)),
           200,
           headers: {
-            'content-type': ['text/event-stream']
+            'content-type': ['text/event-stream'],
           },
         );
       });
@@ -1717,107 +1893,119 @@ void main() {
 
       final responses = await sseLink.request(req).toList();
       expect(responses.length, equals(1));
-      expect(capturedOptions?.headers['Authorization'],
-          equals('Bearer dynamic-sse-token'));
+      expect(
+        capturedOptions?.headers['Authorization'],
+        equals('Bearer dynamic-sse-token'),
+      );
     });
 
     test(
-        'surfaces a 401 as ServerException instead of retrying itself — '
-        'SseLink has no refresh logic of its own; that is AuthLink\'s job',
-        () async {
-      final dioInstance = dio.Dio();
-      int callCount = 0;
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
-        callCount++;
-        throw dio.DioException(
-          requestOptions: options,
-          response: dio.Response(requestOptions: options, statusCode: 401),
-          type: dio.DioExceptionType.badResponse,
-        );
-      });
-
-      final sseLink =
-          SseLink('https://example.com/graphql/sse', client: dioInstance);
-      final req = gql.Request(
-        operation: gql.Operation(
-          document: parseString('subscription OnUser { user { id name } }'),
-          operationName: 'OnUser',
-        ),
-      );
-
-      await expectLater(
-        sseLink.request(req).drain<void>(),
-        throwsA(isA<ServerException>()),
-      );
-      expect(callCount, equals(1));
-    });
-
-    test(
-        'AuthLink wraps SseLink and retries a 401 with a refreshed token — '
-        'the same single-flight refresh path every other link goes through',
-        () async {
-      // accessTokenHeader is only invoked when TokenStorage.i actually has
-      // an access token stored.
-      await _seedTokenStorage(accessToken: 'old-token');
-      final dioInstance = dio.Dio();
-      int callCount = 0;
-      final capturedHeaders = <Map<String, dynamic>>[];
-
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
-        callCount++;
-        capturedHeaders.add(Map.from(options.headers));
-        if (callCount == 1) {
+      'surfaces a 401 as ServerException instead of retrying itself — '
+      'SseLink has no refresh logic of its own; that is AuthLink\'s job',
+      () async {
+        final dioInstance = dio.Dio();
+        int callCount = 0;
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+          callCount++;
           throw dio.DioException(
             requestOptions: options,
-            response: dio.Response(
-              requestOptions: options,
-              statusCode: 401,
-            ),
+            response: dio.Response(requestOptions: options, statusCode: 401),
             type: dio.DioExceptionType.badResponse,
           );
-        }
-        final sseData = utf8.encode(
-          'event: next\n'
-          'data: {"data":{"user":{"id":"1","name":"Refreshed SSE User"}}}\n\n'
-          'event: complete\n\n',
+        });
+
+        final sseLink = SseLink(
+          'https://example.com/graphql/sse',
+          client: dioInstance,
         );
-        return dio.ResponseBody(
-          Stream.value(Uint8List.fromList(sseData)),
-          200,
-          headers: {
-            'content-type': ['text/event-stream']
-          },
+        final req = gql.Request(
+          operation: gql.Operation(
+            document: parseString('subscription OnUser { user { id name } }'),
+            operationName: 'OnUser',
+          ),
         );
-      });
 
-      final sseLink =
-          SseLink('https://example.com/graphql/sse', client: dioInstance);
-      final chain = Link.from([
-        AuthLink(
-          url: 'https://example.com/graphql',
-          accessTokenHeader: (_) async => {'Authorization': 'Bearer old-token'},
-          onTokenRefresh: (_) async =>
-              {'Authorization': 'Bearer refreshed-token'},
-        ),
-        sseLink,
-      ]);
+        await expectLater(
+          sseLink.request(req).drain<void>(),
+          throwsA(isA<ServerException>()),
+        );
+        expect(callCount, equals(1));
+      },
+    );
 
-      final req = gql.Request(
-        operation: gql.Operation(
-          document: parseString('subscription OnUser { user { id name } }'),
-          operationName: 'OnUser',
-        ),
-      );
+    test(
+      'AuthLink wraps SseLink and retries a 401 with a refreshed token — '
+      'the same single-flight refresh path every other link goes through',
+      () async {
+        // accessTokenHeader is only invoked when TokenStorage.i actually has
+        // an access token stored.
+        await _seedTokenStorage(accessToken: 'old-token');
+        final dioInstance = dio.Dio();
+        int callCount = 0;
+        final capturedHeaders = <Map<String, dynamic>>[];
 
-      final responses = await chain.request(req).toList();
-      expect(responses.length, equals(1));
-      expect(
-          responses.first.data?['user']?['name'], equals('Refreshed SSE User'));
-      expect(callCount, equals(2));
-      expect(capturedHeaders[0]['Authorization'], equals('Bearer old-token'));
-      expect(capturedHeaders[1]['Authorization'],
-          equals('Bearer refreshed-token'));
-    });
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+          callCount++;
+          capturedHeaders.add(Map.from(options.headers));
+          if (callCount == 1) {
+            throw dio.DioException(
+              requestOptions: options,
+              response: dio.Response(requestOptions: options, statusCode: 401),
+              type: dio.DioExceptionType.badResponse,
+            );
+          }
+          final sseData = utf8.encode(
+            'event: next\n'
+            'data: {"data":{"user":{"id":"1","name":"Refreshed SSE User"}}}\n\n'
+            'event: complete\n\n',
+          );
+          return dio.ResponseBody(
+            Stream.value(Uint8List.fromList(sseData)),
+            200,
+            headers: {
+              'content-type': ['text/event-stream'],
+            },
+          );
+        });
+
+        final sseLink = SseLink(
+          'https://example.com/graphql/sse',
+          client: dioInstance,
+        );
+        final chain = Link.from([
+          AuthLink(
+            url: 'https://example.com/graphql',
+            accessTokenHeader: (_) async => {
+              'Authorization': 'Bearer old-token',
+            },
+            onTokenRefresh: (_) async => {
+              'Authorization': 'Bearer refreshed-token',
+            },
+          ),
+          sseLink,
+        ]);
+
+        final req = gql.Request(
+          operation: gql.Operation(
+            document: parseString('subscription OnUser { user { id name } }'),
+            operationName: 'OnUser',
+          ),
+        );
+
+        final responses = await chain.request(req).toList();
+        expect(responses.length, equals(1));
+        expect(
+          responses.first.data?['user']?['name'],
+          equals('Refreshed SSE User'),
+        );
+        expect(callCount, equals(2));
+        expect(capturedHeaders[0]['Authorization'], equals('Bearer old-token'));
+        expect(
+          capturedHeaders[1]['Authorization'],
+          equals('Bearer refreshed-token'),
+        );
+      },
+    );
   });
 
   group('WebSocketLink Tests', () {
@@ -1829,8 +2017,7 @@ void main() {
   });
 
   group('BatchLink Tests', () {
-    test(
-        'dispose() fails queued-but-undispatched requests instead of '
+    test('dispose() fails queued-but-undispatched requests instead of '
         'leaving their callers hanging forever', () async {
       final batchLink = BatchLink(
         'https://api.example.com/graphql',
@@ -1838,12 +2025,14 @@ void main() {
       );
 
       final pending = batchLink
-          .request(gql.Request(
-            operation: gql.Operation(
-              document: parseString('query Test { user { id } }'),
-              operationName: 'Test',
+          .request(
+            gql.Request(
+              operation: gql.Operation(
+                document: parseString('query Test { user { id } }'),
+                operationName: 'Test',
+              ),
             ),
-          ))
+          )
           .drain<void>();
 
       // Let the async* generator body actually run (enqueueing the item)
@@ -1858,72 +2047,82 @@ void main() {
 
   group('Multipart Upload Tests', () {
     test(
-        'DioLink converts requests with Upload to GraphQL Multipart Request format',
-        () async {
-      final dioInstance = dio.Dio();
-      dio.RequestOptions? capturedOptions;
+      'DioLink converts requests with Upload to GraphQL Multipart Request format',
+      () async {
+        final dioInstance = dio.Dio();
+        dio.RequestOptions? capturedOptions;
 
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
-        capturedOptions = options;
-        return dio.ResponseBody.fromString(
-          jsonEncode({
-            'data': {
-              'uploadFile': {'id': 'uploaded_1'}
-            }
-          }),
-          200,
-          headers: {
-            'content-type': ['application/json'],
-          },
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+          capturedOptions = options;
+          return dio.ResponseBody.fromString(
+            jsonEncode({
+              'data': {
+                'uploadFile': {'id': 'uploaded_1'},
+              },
+            }),
+            200,
+            headers: {
+              'content-type': ['application/json'],
+            },
+          );
+        });
+
+        final dioLink = DioLink(
+          'https://example.com/graphql',
+          client: dioInstance,
         );
-      });
 
-      final dioLink =
-          DioLink('https://example.com/graphql', client: dioInstance);
+        final file = Upload.fromBytes([1, 2, 3, 4], filename: 'avatar.png');
 
-      final file = Upload.fromBytes([1, 2, 3, 4], filename: 'avatar.png');
+        final req = gql.Request(
+          operation: gql.Operation(
+            document: parseString(
+              'mutation UploadAvatar(\$file: Upload!) { uploadFile(file: \$file) { id } }',
+            ),
+            operationName: 'UploadAvatar',
+          ),
+          variables: {'file': file},
+        );
 
-      final req = gql.Request(
-        operation: gql.Operation(
-          document: parseString(
-              'mutation UploadAvatar(\$file: Upload!) { uploadFile(file: \$file) { id } }'),
-          operationName: 'UploadAvatar',
-        ),
-        variables: {'file': file},
-      );
+        final responses = await dioLink.request(req).toList();
+        expect(responses.length, equals(1));
+        expect(
+          responses.first.data?['uploadFile']?['id'],
+          equals('uploaded_1'),
+        );
 
-      final responses = await dioLink.request(req).toList();
-      expect(responses.length, equals(1));
-      expect(responses.first.data?['uploadFile']?['id'], equals('uploaded_1'));
+        expect(capturedOptions, isNotNull);
+        expect(capturedOptions!.data, isA<dio.FormData>());
 
-      expect(capturedOptions, isNotNull);
-      expect(capturedOptions!.data, isA<dio.FormData>());
+        final formData = capturedOptions!.data as dio.FormData;
+        final operationsField = formData.fields
+            .firstWhere((f) => f.key == 'operations')
+            .value;
+        final mapField = formData.fields
+            .firstWhere((f) => f.key == 'map')
+            .value;
 
-      final formData = capturedOptions!.data as dio.FormData;
-      final operationsField =
-          formData.fields.firstWhere((f) => f.key == 'operations').value;
-      final mapField = formData.fields.firstWhere((f) => f.key == 'map').value;
+        final parsedOperations =
+            jsonDecode(operationsField) as Map<String, dynamic>;
+        final parsedMap = jsonDecode(mapField) as Map<String, dynamic>;
 
-      final parsedOperations =
-          jsonDecode(operationsField) as Map<String, dynamic>;
-      final parsedMap = jsonDecode(mapField) as Map<String, dynamic>;
-
-      // Conforms to GraphQL Multipart Request Spec
-      expect(parsedOperations['variables']['file'], isNull);
-      expect(parsedMap['0'], equals(['variables.file']));
-      expect(formData.files.first.key, equals('0'));
-      expect(formData.files.first.value.filename, equals('avatar.png'));
-    });
+        // Conforms to GraphQL Multipart Request Spec
+        expect(parsedOperations['variables']['file'], isNull);
+        expect(parsedMap['0'], equals(['variables.file']));
+        expect(formData.files.first.key, equals('0'));
+        expect(formData.files.first.value.filename, equals('avatar.png'));
+      },
+    );
   });
 
   group('HttpLink Tests', () {
     gql.Request buildReq({gql.Context? context}) => gql.Request(
-          operation: gql.Operation(
-            document: parseString('query Test { user { id name } }'),
-            operationName: 'Test',
-          ),
-          context: context ?? const gql.Context(),
-        );
+      operation: gql.Operation(
+        document: parseString('query Test { user { id name } }'),
+        operationName: 'Test',
+      ),
+      context: context ?? const gql.Context(),
+    );
 
     test('sends a query and parses a successful response', () async {
       final dioInstance = dio.Dio();
@@ -1932,18 +2131,20 @@ void main() {
         return dio.ResponseBody.fromString(
           jsonEncode({
             'data': {
-              'user': {'id': '1', 'name': 'Ada'}
-            }
+              'user': {'id': '1', 'name': 'Ada'},
+            },
           }),
           200,
           headers: {
-            'content-type': ['application/json']
+            'content-type': ['application/json'],
           },
         );
       });
 
-      final httpLink =
-          HttpLink('https://example.com/graphql', client: dioInstance);
+      final httpLink = HttpLink(
+        'https://example.com/graphql',
+        client: dioInstance,
+      );
       final responses = await httpLink.request(buildReq()).toList();
 
       expect(responses.length, equals(1));
@@ -1951,162 +2152,192 @@ void main() {
     });
 
     test(
-        'a connection failure throws HttpLinkConnectionException and maps to NetworkException',
-        () async {
-      final dioInstance = dio.Dio();
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
-        throw dio.DioException(
-          requestOptions: options,
-          type: dio.DioExceptionType.connectionError,
-          error: const SocketException('Failed host lookup'),
+      'a connection failure throws HttpLinkConnectionException and maps to NetworkException',
+      () async {
+        final dioInstance = dio.Dio();
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+          throw dio.DioException(
+            requestOptions: options,
+            type: dio.DioExceptionType.connectionError,
+            error: const SocketException('Failed host lookup'),
+          );
+        });
+        final httpLink = HttpLink(
+          'https://example.com/graphql',
+          client: dioInstance,
         );
-      });
-      final httpLink =
-          HttpLink('https://example.com/graphql', client: dioInstance);
 
-      Object? caught;
-      try {
-        await httpLink.request(buildReq()).toList();
-      } catch (e) {
-        caught = e;
-      }
-      expect(caught, isA<HttpLinkConnectionException>());
-      expect(GraphQLExceptionExtension.fromLinkException(caught!),
-          isA<NetworkException>());
-    });
-
-    test(
-        'a malformed response body throws ResponseFormatException instead of a raw FormatException',
-        () async {
-      final dioInstance = dio.Dio();
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
-        return dio.ResponseBody.fromString('not json', 200);
-      });
-      final httpLink =
-          HttpLink('https://example.com/graphql', client: dioInstance);
-
-      Object? caught;
-      try {
-        await httpLink.request(buildReq()).toList();
-      } catch (e) {
-        caught = e;
-      }
-      expect(caught, isA<ResponseFormatException>());
-    });
+        Object? caught;
+        try {
+          await httpLink.request(buildReq()).toList();
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught, isA<HttpLinkConnectionException>());
+        expect(
+          GraphQLExceptionExtension.fromLinkException(caught!),
+          isA<NetworkException>(),
+        );
+      },
+    );
 
     test(
-        'cancelling via CancelToken while a request is in flight throws '
-        'HttpLinkCanceledException instead of waiting for the response',
-        () async {
-      final handlerStarted = Completer<void>();
-      final dioInstance = dio.Dio();
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) async {
-        handlerStarted.complete();
-        await Future.delayed(const Duration(seconds: 5));
-        return dio.ResponseBody.fromString(jsonEncode({'data': null}), 200);
-      });
-      final httpLink =
-          HttpLink('https://example.com/graphql', client: dioInstance);
-      final cancelToken = dio.CancelToken();
+      'a malformed response body throws ResponseFormatException instead of a raw FormatException',
+      () async {
+        final dioInstance = dio.Dio();
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+          return dio.ResponseBody.fromString('not json', 200);
+        });
+        final httpLink = HttpLink(
+          'https://example.com/graphql',
+          client: dioInstance,
+        );
 
-      final future = httpLink
-          .request(buildReq(
-            context: const gql.Context()
-                .withEntry(DioLinkCancelTokenContextEntry(cancelToken)),
-          ))
-          .toList();
+        Object? caught;
+        try {
+          await httpLink.request(buildReq()).toList();
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught, isA<ResponseFormatException>());
+      },
+    );
 
-      await handlerStarted.future;
-      cancelToken.cancel();
+    test(
+      'cancelling via CancelToken while a request is in flight throws '
+      'HttpLinkCanceledException instead of waiting for the response',
+      () async {
+        final handlerStarted = Completer<void>();
+        final dioInstance = dio.Dio();
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) async {
+          handlerStarted.complete();
+          await Future.delayed(const Duration(seconds: 5));
+          return dio.ResponseBody.fromString(jsonEncode({'data': null}), 200);
+        });
+        final httpLink = HttpLink(
+          'https://example.com/graphql',
+          client: dioInstance,
+        );
+        final cancelToken = dio.CancelToken();
 
-      await expectLater(future, throwsA(isA<HttpLinkCanceledException>()));
-    });
+        final future = httpLink
+            .request(
+              buildReq(
+                context: const gql.Context().withEntry(
+                  DioLinkCancelTokenContextEntry(cancelToken),
+                ),
+              ),
+            )
+            .toList();
 
-    test('an already-cancelled CancelToken fails fast without sending',
-        () async {
-      var handlerCalled = false;
-      final dioInstance = dio.Dio();
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
-        handlerCalled = true;
-        return dio.ResponseBody.fromString(jsonEncode({'data': null}), 200);
-      });
-      final httpLink =
-          HttpLink('https://example.com/graphql', client: dioInstance);
-      final cancelToken = dio.CancelToken()..cancel();
+        await handlerStarted.future;
+        cancelToken.cancel();
 
-      await expectLater(
-        httpLink
-            .request(buildReq(
-              context: const gql.Context()
-                  .withEntry(DioLinkCancelTokenContextEntry(cancelToken)),
-            ))
-            .toList(),
-        throwsA(isA<HttpLinkCanceledException>()),
-      );
-      expect(handlerCalled, isFalse);
-    });
+        await expectLater(future, throwsA(isA<HttpLinkCanceledException>()));
+      },
+    );
+
+    test(
+      'an already-cancelled CancelToken fails fast without sending',
+      () async {
+        var handlerCalled = false;
+        final dioInstance = dio.Dio();
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+          handlerCalled = true;
+          return dio.ResponseBody.fromString(jsonEncode({'data': null}), 200);
+        });
+        final httpLink = HttpLink(
+          'https://example.com/graphql',
+          client: dioInstance,
+        );
+        final cancelToken = dio.CancelToken()..cancel();
+
+        await expectLater(
+          httpLink
+              .request(
+                buildReq(
+                  context: const gql.Context().withEntry(
+                    DioLinkCancelTokenContextEntry(cancelToken),
+                  ),
+                ),
+              )
+              .toList(),
+          throwsA(isA<HttpLinkCanceledException>()),
+        );
+        expect(handlerCalled, isFalse);
+      },
+    );
   });
 
   group('DioLink Exception Handling', () {
     gql.Request buildReq() => gql.Request(
-          operation: gql.Operation(
-            document: parseString('query Test { user { id } }'),
-            operationName: 'Test',
-          ),
-        );
+      operation: gql.Operation(
+        document: parseString('query Test { user { id } }'),
+        operationName: 'Test',
+      ),
+    );
 
     test(
-        'connectionError maps to DioLinkConnectionException and NetworkException',
-        () async {
-      final dioInstance = dio.Dio();
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
-        throw dio.DioException(
-          requestOptions: options,
-          type: dio.DioExceptionType.connectionError,
-          error: const SocketException('Failed host lookup'),
+      'connectionError maps to DioLinkConnectionException and NetworkException',
+      () async {
+        final dioInstance = dio.Dio();
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+          throw dio.DioException(
+            requestOptions: options,
+            type: dio.DioExceptionType.connectionError,
+            error: const SocketException('Failed host lookup'),
+          );
+        });
+        final dioLink = DioLink(
+          'https://example.com/graphql',
+          client: dioInstance,
         );
-      });
-      final dioLink =
-          DioLink('https://example.com/graphql', client: dioInstance);
 
-      Object? caught;
-      try {
-        await dioLink.request(buildReq()).toList();
-      } catch (e) {
-        caught = e;
-      }
-      expect(caught, isA<DioLinkConnectionException>());
-      expect(GraphQLExceptionExtension.fromLinkException(caught!),
-          isA<NetworkException>());
-    });
+        Object? caught;
+        try {
+          await dioLink.request(buildReq()).toList();
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught, isA<DioLinkConnectionException>());
+        expect(
+          GraphQLExceptionExtension.fromLinkException(caught!),
+          isA<NetworkException>(),
+        );
+      },
+    );
 
     test(
-        'badCertificate maps to DioLinkCertificateException and CertificateException',
-        () async {
-      final dioInstance = dio.Dio();
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
-        throw dio.DioException(
-          requestOptions: options,
-          type: dio.DioExceptionType.badCertificate,
-          error: const HandshakeException('Certificate not trusted'),
+      'badCertificate maps to DioLinkCertificateException and CertificateException',
+      () async {
+        final dioInstance = dio.Dio();
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+          throw dio.DioException(
+            requestOptions: options,
+            type: dio.DioExceptionType.badCertificate,
+            error: const HandshakeException('Certificate not trusted'),
+          );
+        });
+        final dioLink = DioLink(
+          'https://example.com/graphql',
+          client: dioInstance,
         );
-      });
-      final dioLink =
-          DioLink('https://example.com/graphql', client: dioInstance);
 
-      Object? caught;
-      try {
-        await dioLink.request(buildReq()).toList();
-      } catch (e) {
-        caught = e;
-      }
-      expect(caught, isA<DioLinkCertificateException>());
-      expect(GraphQLExceptionExtension.fromLinkException(caught!),
-          isA<CertificateException>());
-    });
+        Object? caught;
+        try {
+          await dioLink.request(buildReq()).toList();
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught, isA<DioLinkCertificateException>());
+        expect(
+          GraphQLExceptionExtension.fromLinkException(caught!),
+          isA<CertificateException>(),
+        );
+      },
+    );
 
-    test(
-        'a malformed 200 response body (errors present but wrongly shaped) '
+    test('a malformed 200 response body (errors present but wrongly shaped) '
         'throws DioLinkParserException, not a raw TypeError', () async {
       final dioInstance = dio.Dio();
       dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
@@ -2114,16 +2345,18 @@ void main() {
           // 'errors' is a List but entries are Strings, not Maps —
           // ResponseParser.parseError does `error as Map<String, dynamic>`.
           jsonEncode({
-            'errors': ['not a map']
+            'errors': ['not a map'],
           }),
           200,
           headers: {
-            'content-type': ['application/json']
+            'content-type': ['application/json'],
           },
         );
       });
-      final dioLink =
-          DioLink('https://example.com/graphql', client: dioInstance);
+      final dioLink = DioLink(
+        'https://example.com/graphql',
+        client: dioInstance,
+      );
 
       Object? caught;
       try {
@@ -2132,104 +2365,104 @@ void main() {
         caught = e;
       }
       expect(caught, isA<DioLinkParserException>());
-      expect(GraphQLExceptionExtension.fromLinkException(caught!),
-          isA<ParseException>());
+      expect(
+        GraphQLExceptionExtension.fromLinkException(caught!),
+        isA<ParseException>(),
+      );
     });
 
     test(
-        'a malformed error-status body still classifies as DioLinkServerException '
-        '(status preserved) instead of a parser exception', () async {
-      final dioInstance = dio.Dio();
-      dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
-        return dio.ResponseBody.fromString(
-          jsonEncode({
-            'errors': ['not a map']
-          }),
-          500,
-          headers: {
-            'content-type': ['application/json']
-          },
+      'a malformed error-status body still classifies as DioLinkServerException '
+      '(status preserved) instead of a parser exception',
+      () async {
+        final dioInstance = dio.Dio();
+        dioInstance.httpClientAdapter = _MockUploadAdapter((options) {
+          return dio.ResponseBody.fromString(
+            jsonEncode({
+              'errors': ['not a map'],
+            }),
+            500,
+            headers: {
+              'content-type': ['application/json'],
+            },
+          );
+        });
+        final dioLink = DioLink(
+          'https://example.com/graphql',
+          client: dioInstance,
         );
-      });
-      final dioLink =
-          DioLink('https://example.com/graphql', client: dioInstance);
 
-      Object? caught;
-      try {
-        await dioLink.request(buildReq()).toList();
-      } catch (e) {
-        caught = e;
-      }
-      expect(caught, isA<DioLinkServerException>());
-      expect((caught as DioLinkServerException).parsedResponse, isNull);
-      expect(caught.statusCode, equals(500));
-    });
+        Object? caught;
+        try {
+          await dioLink.request(buildReq()).toList();
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught, isA<DioLinkServerException>());
+        expect((caught as DioLinkServerException).parsedResponse, isNull);
+        expect(caught.statusCode, equals(500));
+      },
+    );
   });
 
   group('GraphQL Conventions & Optimizations', () {
     test(
-        'ErrorPolicy.none throws when response has errors even if data is present',
-        () async {
-      final client = GraphQLClient.fromLink(
-        const _DataAndErrorLink(
-          data: {'id': '123', 'name': 'Alice'},
-          errors: [
-            gql.GraphQLError(message: 'Non-fatal field error'),
-          ],
-        ),
-        defaultErrorPolicy: ErrorPolicy.none,
-      );
+      'ErrorPolicy.none throws when response has errors even if data is present',
+      () async {
+        final client = GraphQLClient.fromLink(
+          const _DataAndErrorLink(
+            data: {'id': '123', 'name': 'Alice'},
+            errors: [gql.GraphQLError(message: 'Non-fatal field error')],
+          ),
+          defaultErrorPolicy: ErrorPolicy.none,
+        );
 
-      expect(
-        () => client.future(_TestReq(const _TestVars('123'))),
-        throwsA(isA<GraphQLException>()),
-      );
-    });
-
-    test('ErrorPolicy.ignore returns data when partial errors are present',
-        () async {
-      final client = GraphQLClient.fromLink(
-        const _DataAndErrorLink(
-          data: {'id': '123', 'name': 'Alice'},
-          errors: [
-            gql.GraphQLError(message: 'Non-fatal field error'),
-          ],
-        ),
-        defaultErrorPolicy: ErrorPolicy.ignore,
-      );
-
-      final result = await client.future(_TestReq(const _TestVars('123')));
-      expect(result.id, '123');
-      expect(result.name, 'Alice');
-    });
+        expect(
+          () => client.future(_TestReq(const _TestVars('123'))),
+          throwsA(isA<GraphQLException>()),
+        );
+      },
+    );
 
     test(
-        'ErrorPolicy.all returns data without throwing when partial errors are present',
-        () async {
-      final client = GraphQLClient.fromLink(
-        const _DataAndErrorLink(
-          data: {'id': '123', 'name': 'Alice'},
-          errors: [
-            gql.GraphQLError(message: 'Non-fatal field error'),
-          ],
-        ),
-      );
+      'ErrorPolicy.ignore returns data when partial errors are present',
+      () async {
+        final client = GraphQLClient.fromLink(
+          const _DataAndErrorLink(
+            data: {'id': '123', 'name': 'Alice'},
+            errors: [gql.GraphQLError(message: 'Non-fatal field error')],
+          ),
+          defaultErrorPolicy: ErrorPolicy.ignore,
+        );
 
-      // Per-request override
-      final result = await client.future(
-        _TestReq(const _TestVars('123'), errorPolicy: ErrorPolicy.all),
-      );
-      expect(result.id, '123');
-      expect(result.name, 'Alice');
-    });
+        final result = await client.future(_TestReq(const _TestVars('123')));
+        expect(result.id, '123');
+        expect(result.name, 'Alice');
+      },
+    );
+
+    test(
+      'ErrorPolicy.all returns data without throwing when partial errors are present',
+      () async {
+        final client = GraphQLClient.fromLink(
+          const _DataAndErrorLink(
+            data: {'id': '123', 'name': 'Alice'},
+            errors: [gql.GraphQLError(message: 'Non-fatal field error')],
+          ),
+        );
+
+        // Per-request override
+        final result = await client.future(
+          _TestReq(const _TestVars('123'), errorPolicy: ErrorPolicy.all),
+        );
+        expect(result.id, '123');
+        expect(result.name, 'Alice');
+      },
+    );
 
     test('ErrorPolicy.all still throws when data is null', () async {
       final client = GraphQLClient.fromLink(
-        const _ErrorLink(
-          errors: [
-            gql.GraphQLError(message: 'Fatal error'),
-          ],
-        ),
+        const _ErrorLink(errors: [gql.GraphQLError(message: 'Fatal error')]),
       );
 
       expect(
@@ -2261,8 +2494,7 @@ void main() {
       expect(identical(node1, node2), isTrue);
     });
 
-    test(
-        'GraphQLRequest.documentNode override is sent as-is, bypassing the '
+    test('GraphQLRequest.documentNode override is sent as-is, bypassing the '
         'string parse cache entirely', () async {
       final capture = _CapturingLink();
       final client = GraphQLClient.fromLink(capture);
@@ -2278,47 +2510,64 @@ void main() {
       );
     });
 
-    test('GraphQLRequest.documentNode defaults to the shared parse cache',
-        () async {
-      final req = _TestReq(const _TestVars('1'));
-      expect(
-        identical(
-            req.documentNode, GraphQLClient.getParsedDocument(req.document)),
-        isTrue,
-      );
-    });
+    test(
+      'GraphQLRequest.documentNode defaults to the shared parse cache',
+      () async {
+        final req = _TestReq(const _TestVars('1'));
+        expect(
+          identical(
+            req.documentNode,
+            GraphQLClient.getParsedDocument(req.document),
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 
   group('Stale-while-revalidate (cacheFirst)', () {
-    test(
-        'default staleTime (Duration.zero): a cache hit emits cached data '
+    test('default staleTime (Duration.zero): a cache hit emits cached data '
         'immediately and also background-refetches', () async {
       var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req =
-          _TestReq(const _TestVars('1'), fetchPolicy: FetchPolicy.cacheFirst);
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {
+          networkCalls++;
+        }),
+      );
+      final req = _TestReq(
+        const _TestVars('1'),
+        fetchPolicy: FetchPolicy.cacheFirst,
+      );
 
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
 
       final responses = await client.request(req).toList();
       expect(responses.first.data?.name, equals('Cached'));
       expect(responses.first.source, equals(ResponseSource.cache));
-      expect(responses.first.loading, isTrue,
-          reason: 'default staleTime means the cache hit is always stale');
-      expect(networkCalls, equals(1),
-          reason: 'stale cache hit must trigger a background network refetch');
+      expect(
+        responses.first.loading,
+        isTrue,
+        reason: 'default staleTime means the cache hit is always stale',
+      );
+      expect(
+        networkCalls,
+        equals(1),
+        reason: 'stale cache hit must trigger a background network refetch',
+      );
     });
 
     test('explicit staleTime, still fresh: no network call at all', () async {
       var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req = _TestReq(const _TestVars('1'),
-          fetchPolicy: FetchPolicy.cacheFirst,
-          staleTime: const Duration(minutes: 5));
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {
+          networkCalls++;
+        }),
+      );
+      final req = _TestReq(
+        const _TestVars('1'),
+        fetchPolicy: FetchPolicy.cacheFirst,
+        staleTime: const Duration(minutes: 5),
+      );
 
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
 
@@ -2328,72 +2577,95 @@ void main() {
       expect(networkCalls, equals(0));
     });
 
-    test('explicit staleTime, expired: cache emission then network emission',
-        () async {
-      var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req = _TestReq(const _TestVars('1'),
+    test(
+      'explicit staleTime, expired: cache emission then network emission',
+      () async {
+        var networkCalls = 0;
+        final client = GraphQLClient.fromLink(
+          _CountingLink(() {
+            networkCalls++;
+          }),
+        );
+        final req = _TestReq(
+          const _TestVars('1'),
           fetchPolicy: FetchPolicy.cacheFirst,
-          staleTime: const Duration(milliseconds: 1));
+          staleTime: const Duration(milliseconds: 1),
+        );
 
-      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+        client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      final responses = await client.request(req).toList();
-      expect(responses, hasLength(2));
-      expect(responses[0].source, equals(ResponseSource.cache));
-      expect(responses[0].loading, isTrue);
-      expect(responses[1].source, equals(ResponseSource.network));
-      expect(networkCalls, equals(1));
-    });
+        final responses = await client.request(req).toList();
+        expect(responses, hasLength(2));
+        expect(responses[0].source, equals(ResponseSource.cache));
+        expect(responses[0].loading, isTrue);
+        expect(responses[1].source, equals(ResponseSource.network));
+        expect(networkCalls, equals(1));
+      },
+    );
 
-    test('cache miss always fetches from network regardless of staleTime',
-        () async {
-      var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req = _TestReq(const _TestVars('1'),
+    test(
+      'cache miss always fetches from network regardless of staleTime',
+      () async {
+        var networkCalls = 0;
+        final client = GraphQLClient.fromLink(
+          _CountingLink(() {
+            networkCalls++;
+          }),
+        );
+        final req = _TestReq(
+          const _TestVars('1'),
           fetchPolicy: FetchPolicy.cacheFirst,
-          staleTime: const Duration(minutes: 5));
+          staleTime: const Duration(minutes: 5),
+        );
 
-      final responses = await client.request(req).toList();
-      expect(responses, hasLength(1));
-      expect(responses.single.source, equals(ResponseSource.network));
-      expect(networkCalls, equals(1));
-    });
+        final responses = await client.request(req).toList();
+        expect(responses, hasLength(1));
+        expect(responses.single.source, equals(ResponseSource.network));
+        expect(networkCalls, equals(1));
+      },
+    );
   });
 
   group('watchQuery: staleness, GC, refetchInterval', () {
-    test('watchQuery triggers a background refetch on attach when stale',
-        () async {
-      var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req = _TestReq(const _TestVars('1'));
-      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
-
-      final sub = client.watchQuery(req).listen((_) {});
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
-      expect(networkCalls, equals(1),
-          reason: 'default staleTime is zero, so attaching a watcher to '
-              'already-cached data must background-refetch it');
-      await sub.cancel();
-    });
-
     test(
-        'watchQuery does not refetch on attach when staleTime keeps the '
+      'watchQuery triggers a background refetch on attach when stale',
+      () async {
+        var networkCalls = 0;
+        final client = GraphQLClient.fromLink(
+          _CountingLink(() {
+            networkCalls++;
+          }),
+        );
+        final req = _TestReq(const _TestVars('1'));
+        client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
+
+        final sub = client.watchQuery(req).listen((_) {});
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(
+          networkCalls,
+          equals(1),
+          reason:
+              'default staleTime is zero, so attaching a watcher to '
+              'already-cached data must background-refetch it',
+        );
+        await sub.cancel();
+      },
+    );
+
+    test('watchQuery does not refetch on attach when staleTime keeps the '
         'cached value fresh', () async {
       var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req =
-          _TestReq(const _TestVars('1'), staleTime: const Duration(minutes: 5));
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {
+          networkCalls++;
+        }),
+      );
+      final req = _TestReq(
+        const _TestVars('1'),
+        staleTime: const Duration(minutes: 5),
+      );
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Fresh'));
 
       final sub = client.watchQuery(req).listen((_) {});
@@ -2403,96 +2675,126 @@ void main() {
       await sub.cancel();
     });
 
-    test(
-        'cacheTime evicts the cache entry after the last watcher cancels, '
+    test('cacheTime evicts the cache entry after the last watcher cancels, '
         'once the timer elapses', () async {
       final client = GraphQLClient.fromLink(_CountingLink(() {}));
-      final req = _TestReq(const _TestVars('1'),
-          staleTime: const Duration(minutes: 5),
-          cacheTime: const Duration(milliseconds: 20));
+      final req = _TestReq(
+        const _TestVars('1'),
+        staleTime: const Duration(minutes: 5),
+        cacheTime: const Duration(milliseconds: 20),
+      );
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
 
       final sub = client.watchQuery(req).listen((_) {});
       await Future<void>.delayed(const Duration(milliseconds: 5));
       await sub.cancel();
 
-      expect(client.cache.readQuery(req), isNotNull,
-          reason: 'not evicted yet — cacheTime has not elapsed');
+      expect(
+        client.cache.readQuery(req),
+        isNotNull,
+        reason: 'not evicted yet — cacheTime has not elapsed',
+      );
 
       await Future<void>.delayed(const Duration(milliseconds: 40));
       expect(client.cache.readQuery(req), isNull);
     });
 
-    test('a resubscribe before cacheTime elapses cancels the pending GC',
-        () async {
-      final client = GraphQLClient.fromLink(_CountingLink(() {}));
-      final req = _TestReq(const _TestVars('1'),
+    test(
+      'a resubscribe before cacheTime elapses cancels the pending GC',
+      () async {
+        final client = GraphQLClient.fromLink(_CountingLink(() {}));
+        final req = _TestReq(
+          const _TestVars('1'),
           staleTime: const Duration(minutes: 5),
-          cacheTime: const Duration(milliseconds: 20));
-      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+          cacheTime: const Duration(milliseconds: 20),
+        );
+        client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
 
-      final sub1 = client.watchQuery(req).listen((_) {});
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-      await sub1.cancel();
+        final sub1 = client.watchQuery(req).listen((_) {});
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        await sub1.cancel();
 
-      final sub2 = client.watchQuery(req).listen((_) {});
-      await Future<void>.delayed(const Duration(milliseconds: 40));
+        final sub2 = client.watchQuery(req).listen((_) {});
+        await Future<void>.delayed(const Duration(milliseconds: 40));
 
-      expect(client.cache.readQuery(req), isNotNull,
-          reason: 'resubscribing before the GC timer fired must cancel it');
-      await sub2.cancel();
-    });
-
-    test('refetchInterval refetches on schedule and stops after cancel',
-        () async {
-      var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req = _TestReq(const _TestVars('1'),
-          staleTime: const Duration(minutes: 5),
-          refetchInterval: const Duration(milliseconds: 15));
-      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
-
-      final sub = client.watchQuery(req).listen((_) {});
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      await sub.cancel();
-      final callsAtCancel = networkCalls;
-
-      expect(callsAtCancel, greaterThanOrEqualTo(2));
-
-      await Future<void>.delayed(const Duration(milliseconds: 40));
-      expect(networkCalls, equals(callsAtCancel),
-          reason: 'the interval timer must stop once the watcher cancels');
-    });
+        expect(
+          client.cache.readQuery(req),
+          isNotNull,
+          reason: 'resubscribing before the GC timer fired must cancel it',
+        );
+        await sub2.cancel();
+      },
+    );
 
     test(
-        'two concurrent watchQuery subscriptions on the same key each poll '
+      'refetchInterval refetches on schedule and stops after cancel',
+      () async {
+        var networkCalls = 0;
+        final client = GraphQLClient.fromLink(
+          _CountingLink(() {
+            networkCalls++;
+          }),
+        );
+        final req = _TestReq(
+          const _TestVars('1'),
+          staleTime: const Duration(minutes: 5),
+          refetchInterval: const Duration(milliseconds: 15),
+        );
+        client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
+
+        final sub = client.watchQuery(req).listen((_) {});
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await sub.cancel();
+        final callsAtCancel = networkCalls;
+
+        expect(callsAtCancel, greaterThanOrEqualTo(2));
+
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        expect(
+          networkCalls,
+          equals(callsAtCancel),
+          reason: 'the interval timer must stop once the watcher cancels',
+        );
+      },
+    );
+
+    test('two concurrent watchQuery subscriptions on the same key each poll '
         'refetchInterval independently', () async {
       var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req = _TestReq(const _TestVars('1'),
-          staleTime: const Duration(minutes: 5),
-          refetchInterval: const Duration(milliseconds: 15));
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {
+          networkCalls++;
+        }),
+      );
+      final req = _TestReq(
+        const _TestVars('1'),
+        staleTime: const Duration(minutes: 5),
+        refetchInterval: const Duration(milliseconds: 15),
+      );
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
 
       final sub1 = client.watchQuery(req).listen((_) {});
       final sub2 = client.watchQuery(req).listen((_) {});
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(networkCalls, greaterThanOrEqualTo(2),
-          reason: 'both watchers are polling');
+      expect(
+        networkCalls,
+        greaterThanOrEqualTo(2),
+        reason: 'both watchers are polling',
+      );
 
       // Cancel the first watcher only — the second must keep polling on
       // its own, independent timer.
       await sub1.cancel();
       final callsAfterFirstCancel = networkCalls;
       await Future<void>.delayed(const Duration(milliseconds: 40));
-      expect(networkCalls, greaterThan(callsAfterFirstCancel),
-          reason: 'the second watcher must still be polling after the '
-              'first cancels');
+      expect(
+        networkCalls,
+        greaterThan(callsAfterFirstCancel),
+        reason:
+            'the second watcher must still be polling after the '
+            'first cancels',
+      );
 
       // Cancel the second (last) watcher — all polling must stop. Give any
       // already-in-flight background refetch (fired just before cancel) a
@@ -2503,20 +2805,28 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
       final callsAfterBothCancel = networkCalls;
       await Future<void>.delayed(const Duration(milliseconds: 40));
-      expect(networkCalls, equals(callsAfterBothCancel),
-          reason: 'no polling may continue once every watcher has '
-              'cancelled');
+      expect(
+        networkCalls,
+        equals(callsAfterBothCancel),
+        reason:
+            'no polling may continue once every watcher has '
+            'cancelled',
+      );
     });
 
     test('dispose() cancels pending GC and refetchInterval timers', () async {
       var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req = _TestReq(const _TestVars('1'),
-          staleTime: const Duration(minutes: 5),
-          cacheTime: const Duration(milliseconds: 20),
-          refetchInterval: const Duration(milliseconds: 10));
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {
+          networkCalls++;
+        }),
+      );
+      final req = _TestReq(
+        const _TestVars('1'),
+        staleTime: const Duration(minutes: 5),
+        cacheTime: const Duration(milliseconds: 20),
+        refetchInterval: const Duration(milliseconds: 10),
+      );
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Cached'));
 
       final sub = client.watchQuery(req).listen((_) {});
@@ -2527,42 +2837,63 @@ void main() {
       await client.dispose();
 
       await Future<void>.delayed(const Duration(milliseconds: 40));
-      expect(networkCalls, equals(callsAtDispose),
-          reason: 'no refetchInterval/GC timer should fire after dispose()');
+      expect(
+        networkCalls,
+        equals(callsAtDispose),
+        reason: 'no refetchInterval/GC timer should fire after dispose()',
+      );
     });
   });
 
   group('notifyReconnected / notifyAppResumed', () {
-    test('notifyReconnected refetches only currently active watched queries',
-        () async {
-      var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final watchedReq = _TestReq(const _TestVars('watched'),
-          staleTime: const Duration(minutes: 5));
-      final unwatchedReq = _TestReq(const _TestVars('unwatched'),
-          staleTime: const Duration(minutes: 5));
-      client.cache.writeQuery(watchedReq, const _TestData(id: '1', name: 'A'));
-      client.cache
-          .writeQuery(unwatchedReq, const _TestData(id: '2', name: 'B'));
-
-      final sub = client.watchQuery(watchedReq).listen((_) {});
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      final callsAfterAttach = networkCalls;
-      expect(callsAfterAttach, equals(0),
-          reason: 'fresh staleTime, no reconnect yet — no refetch');
-
-      await client.notifyReconnected();
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-
-      expect(networkCalls, equals(1),
-          reason: 'only the watched query refetches on reconnect');
-      await sub.cancel();
-    });
-
     test(
-        'maxConcurrentBackgroundRefetches caps how many background '
+      'notifyReconnected refetches only currently active watched queries',
+      () async {
+        var networkCalls = 0;
+        final client = GraphQLClient.fromLink(
+          _CountingLink(() {
+            networkCalls++;
+          }),
+        );
+        final watchedReq = _TestReq(
+          const _TestVars('watched'),
+          staleTime: const Duration(minutes: 5),
+        );
+        final unwatchedReq = _TestReq(
+          const _TestVars('unwatched'),
+          staleTime: const Duration(minutes: 5),
+        );
+        client.cache.writeQuery(
+          watchedReq,
+          const _TestData(id: '1', name: 'A'),
+        );
+        client.cache.writeQuery(
+          unwatchedReq,
+          const _TestData(id: '2', name: 'B'),
+        );
+
+        final sub = client.watchQuery(watchedReq).listen((_) {});
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        final callsAfterAttach = networkCalls;
+        expect(
+          callsAfterAttach,
+          equals(0),
+          reason: 'fresh staleTime, no reconnect yet — no refetch',
+        );
+
+        await client.notifyReconnected();
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(
+          networkCalls,
+          equals(1),
+          reason: 'only the watched query refetches on reconnect',
+        );
+        await sub.cancel();
+      },
+    );
+
+    test('maxConcurrentBackgroundRefetches caps how many background '
         'refetches run at once', () async {
       final link = _ConcurrencyTrackingLink();
       final client = GraphQLClient.fromLink(
@@ -2572,8 +2903,10 @@ void main() {
 
       final subs = <StreamSubscription>[];
       for (var i = 0; i < 6; i++) {
-        final req =
-            _TestReq(_TestVars('$i'), staleTime: const Duration(minutes: 5));
+        final req = _TestReq(
+          _TestVars('$i'),
+          staleTime: const Duration(minutes: 5),
+        );
         client.cache.writeQuery(req, _TestData(id: '$i', name: 'v$i'));
         subs.add(client.watchQuery(req).listen((_) {}));
       }
@@ -2581,24 +2914,29 @@ void main() {
 
       await client.notifyReconnected();
 
-      expect(link.peakConcurrency, lessThanOrEqualTo(2),
-          reason: 'no more than maxConcurrentBackgroundRefetches requests '
-              'should ever be in flight at once');
+      expect(
+        link.peakConcurrency,
+        lessThanOrEqualTo(2),
+        reason:
+            'no more than maxConcurrentBackgroundRefetches requests '
+            'should ever be in flight at once',
+      );
       for (final sub in subs) {
         await sub.cancel();
       }
     });
 
-    test(
-        'without maxConcurrentBackgroundRefetches, background refetches all '
+    test('without maxConcurrentBackgroundRefetches, background refetches all '
         'run at once (default, unbounded)', () async {
       final link = _ConcurrencyTrackingLink();
       final client = GraphQLClient.fromLink(link);
 
       final subs = <StreamSubscription>[];
       for (var i = 0; i < 6; i++) {
-        final req =
-            _TestReq(_TestVars('$i'), staleTime: const Duration(minutes: 5));
+        final req = _TestReq(
+          _TestVars('$i'),
+          staleTime: const Duration(minutes: 5),
+        );
         client.cache.writeQuery(req, _TestData(id: '$i', name: 'v$i'));
         subs.add(client.watchQuery(req).listen((_) {}));
       }
@@ -2606,9 +2944,13 @@ void main() {
 
       await client.notifyReconnected();
 
-      expect(link.peakConcurrency, equals(6),
-          reason: 'the default preserves prior behavior: every active '
-              'watched query refetches concurrently, uncapped');
+      expect(
+        link.peakConcurrency,
+        equals(6),
+        reason:
+            'the default preserves prior behavior: every active '
+            'watched query refetches concurrently, uncapped',
+      );
       for (final sub in subs) {
         await sub.cancel();
       }
@@ -2616,11 +2958,15 @@ void main() {
 
     test('notifyAppResumed behaves the same as notifyReconnected', () async {
       var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req =
-          _TestReq(const _TestVars('1'), staleTime: const Duration(minutes: 5));
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {
+          networkCalls++;
+        }),
+      );
+      final req = _TestReq(
+        const _TestVars('1'),
+        staleTime: const Duration(minutes: 5),
+      );
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'A'));
 
       final sub = client.watchQuery(req).listen((_) {});
@@ -2635,14 +2981,15 @@ void main() {
   });
 
   group('notifyAppPaused', () {
-    test(
-        'suppresses staleness-on-attach, notifyReconnected, and '
+    test('suppresses staleness-on-attach, notifyReconnected, and '
         'invalidateQueries background refetches; notifyAppResumed catches '
         'up in one shot', () async {
       var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {
+          networkCalls++;
+        }),
+      );
       final req = _TestReq(const _TestVars('1'), staleTime: Duration.zero);
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
 
@@ -2652,21 +2999,34 @@ void main() {
       // refetch immediately.
       final sub = client.watchQuery(req).listen((_) {});
       await Future<void>.delayed(const Duration(milliseconds: 10));
-      expect(networkCalls, equals(0),
-          reason: 'staleness-on-attach must be suppressed while paused');
+      expect(
+        networkCalls,
+        equals(0),
+        reason: 'staleness-on-attach must be suppressed while paused',
+      );
 
       await client.notifyReconnected();
       await Future<void>.delayed(const Duration(milliseconds: 10));
-      expect(networkCalls, equals(0),
-          reason: 'notifyReconnected must also be suppressed while paused');
+      expect(
+        networkCalls,
+        equals(0),
+        reason: 'notifyReconnected must also be suppressed while paused',
+      );
 
       await client.invalidateQueries(operationNames: ['Test']);
       await Future<void>.delayed(const Duration(milliseconds: 10));
-      expect(networkCalls, equals(0),
-          reason: 'invalidateQueries still evicts but must not refetch '
-              'while paused');
-      expect(client.cache.readQuery(req), isNull,
-          reason: 'eviction itself is never skipped, only the refetch');
+      expect(
+        networkCalls,
+        equals(0),
+        reason:
+            'invalidateQueries still evicts but must not refetch '
+            'while paused',
+      );
+      expect(
+        client.cache.readQuery(req),
+        isNull,
+        reason: 'eviction itself is never skipped, only the refetch',
+      );
 
       // Restore the entry so notifyAppResumed's catch-up refetch has an
       // active watcher to target (invalidateQueries above evicted it).
@@ -2674,22 +3034,28 @@ void main() {
 
       await client.notifyAppResumed();
       await Future<void>.delayed(const Duration(milliseconds: 10));
-      expect(networkCalls, equals(1),
-          reason: 'notifyAppResumed clears the pause and refetches once');
+      expect(
+        networkCalls,
+        equals(1),
+        reason: 'notifyAppResumed clears the pause and refetches once',
+      );
 
       await sub.cancel();
     });
 
-    test(
-        'refetchInterval keeps ticking but skips its network call while '
+    test('refetchInterval keeps ticking but skips its network call while '
         'paused', () async {
       var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req = _TestReq(const _TestVars('1'),
-          staleTime: const Duration(minutes: 5),
-          refetchInterval: const Duration(milliseconds: 15));
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {
+          networkCalls++;
+        }),
+      );
+      final req = _TestReq(
+        const _TestVars('1'),
+        staleTime: const Duration(minutes: 5),
+        refetchInterval: const Duration(milliseconds: 15),
+      );
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
 
       client.notifyAppPaused();
@@ -2697,67 +3063,89 @@ void main() {
 
       // Several ticks' worth of time, all of which must be no-ops.
       await Future<void>.delayed(const Duration(milliseconds: 70));
-      expect(networkCalls, equals(0),
-          reason: 'every refetchInterval tick must skip its network call '
-              'while paused');
+      expect(
+        networkCalls,
+        equals(0),
+        reason:
+            'every refetchInterval tick must skip its network call '
+            'while paused',
+      );
 
       await sub.cancel();
     });
   });
 
   group('invalidateQueries', () {
-    test('invalidates by operationNames: active watcher gets refetched data',
-        () async {
-      var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
-      final req =
-          _TestReq(const _TestVars('1'), staleTime: const Duration(minutes: 5));
-      client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
-
-      final emissions = <_TestData?>[];
-      final sub = client.watchQuery(req).listen(emissions.add);
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      expect(emissions.single?.name, equals('Old'));
-
-      await client.invalidateQueries(operationNames: ['Test']);
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-
-      expect(networkCalls, equals(1));
-      expect(emissions.last?.name, equals('Dedup'),
-          reason: '_CountingLink always returns name "Dedup"');
-      await sub.cancel();
-    });
-
     test(
-        'invalidates by types: matches only queries whose cached result '
+      'invalidates by operationNames: active watcher gets refetched data',
+      () async {
+        var networkCalls = 0;
+        final client = GraphQLClient.fromLink(
+          _CountingLink(() {
+            networkCalls++;
+          }),
+        );
+        final req = _TestReq(
+          const _TestVars('1'),
+          staleTime: const Duration(minutes: 5),
+        );
+        client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
+
+        final emissions = <_TestData?>[];
+        final sub = client.watchQuery(req).listen(emissions.add);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(emissions.single?.name, equals('Old'));
+
+        await client.invalidateQueries(operationNames: ['Test']);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(networkCalls, equals(1));
+        expect(
+          emissions.last?.name,
+          equals('Dedup'),
+          reason: '_CountingLink always returns name "Dedup"',
+        );
+        await sub.cancel();
+      },
+    );
+
+    test('invalidates by types: matches only queries whose cached result '
         'touched that typename', () async {
       final client = GraphQLClient.fromLink(_CountingLink(() {}));
 
       final untypedReq = _TestReq(const _TestVars('1'));
-      client.cache
-          .writeQuery(untypedReq, const _TestData(id: '1', name: 'Alice'));
+      client.cache.writeQuery(
+        untypedReq,
+        const _TestData(id: '1', name: 'Alice'),
+      );
 
       final typedReq = _TypedTestReq(const _TestVars('2'));
       client.cache.writeQuery(typedReq, const _TypedData(id: '2', name: 'Bob'));
 
       await client.invalidateQueries(types: ['User'], refetchActive: false);
 
-      expect(client.cache.readQuery(typedReq), isNull,
-          reason: 'evicted because its cached JSON included __typename: User');
-      expect(client.cache.readQuery(untypedReq), isNotNull,
-          reason: '_TestData.toJson() carries no __typename, so it must '
-              'not match a type-based invalidation');
+      expect(
+        client.cache.readQuery(typedReq),
+        isNull,
+        reason: 'evicted because its cached JSON included __typename: User',
+      );
+      expect(
+        client.cache.readQuery(untypedReq),
+        isNotNull,
+        reason:
+            '_TestData.toJson() carries no __typename, so it must '
+            'not match a type-based invalidation',
+      );
     });
 
-    test(
-        'an inactive (unwatched) match is evicted but not refetched — no '
+    test('an inactive (unwatched) match is evicted but not refetched — no '
         'network call', () async {
       var networkCalls = 0;
-      final client = GraphQLClient.fromLink(_CountingLink(() {
-        networkCalls++;
-      }));
+      final client = GraphQLClient.fromLink(
+        _CountingLink(() {
+          networkCalls++;
+        }),
+      );
       final req = _TestReq(const _TestVars('1'));
       client.cache.writeQuery(req, const _TestData(id: '1', name: 'Old'));
 
@@ -2806,12 +3194,11 @@ class _CustomVarsReq extends GraphQLRequest<_TestData, Map<String, dynamic>> {
     Map<String, String>? headers,
     dio.CancelToken? cancelToken,
     _TestData? optimisticResponse,
-  }) =>
-      _CustomVarsReq(
-        variables ?? this.variables,
-        fetchPolicy: fetchPolicy ?? this.fetchPolicy,
-        errorPolicy: errorPolicy ?? this.errorPolicy,
-      );
+  }) => _CustomVarsReq(
+    variables ?? this.variables,
+    fetchPolicy: fetchPolicy ?? this.fetchPolicy,
+    errorPolicy: errorPolicy ?? this.errorPolicy,
+  );
 }
 
 class _MockUploadAdapter implements dio.HttpClientAdapter {

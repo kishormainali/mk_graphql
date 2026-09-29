@@ -66,6 +66,7 @@ class RetryOptions {
       multiplier *= backoffMultiplier;
     }
     return Duration(
-        milliseconds: (initialDelay.inMilliseconds * multiplier).round());
+      milliseconds: (initialDelay.inMilliseconds * multiplier).round(),
+    );
   }
 }

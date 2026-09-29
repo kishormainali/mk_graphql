@@ -10,16 +10,16 @@ import '../../core/graphql_error_mapper.dart';
 /// Callback that builds the auth headers (e.g. `Authorization`) for a given
 /// token, read from [TokenStorage.i] by the caller — only invoked when a
 /// token is actually stored, so [token] is always non-null.
-typedef TokenHeaderCallback = FutureOr<Map<String, String>> Function(
-    String token);
+typedef TokenHeaderCallback =
+    FutureOr<Map<String, String>> Function(String token);
 
 /// Callback invoked when the access token is expired.
 /// Receives a plain [GraphQLClient] (no auth link attached) that can be used
 /// to perform the refresh request via its normal typed API (e.g. `refreshClient.future(...)`).
 /// Should return new headers to use (e.g. `{'Authorization': 'Bearer <newToken>'}`),
 /// or return null / throw to trigger token revocation.
-typedef OnRefreshCallback = FutureOr<Map<String, String>?> Function(
-    GraphQLClient refreshClient);
+typedef OnRefreshCallback =
+    FutureOr<Map<String, String>?> Function(GraphQLClient refreshClient);
 
 /// Optional callback that returns whether the current token is expired.
 /// If omitted, expiry is not checked proactively — only unauthorized responses trigger refresh.
@@ -91,8 +91,8 @@ class UnauthorizedContext {
 /// relying on the built-in default, which maps `extensions.code`/HTTP status
 /// of `UNAUTHORIZED`/`UNAUTHENTICATED`/401 to [AuthFailure.refresh] and
 /// `FORBIDDEN`/403 to [AuthFailure.revoke] (no refresh attempted).
-typedef IsUnauthorizedCallback = AuthFailure Function(
-    UnauthorizedContext context);
+typedef IsUnauthorizedCallback =
+    AuthFailure Function(UnauthorizedContext context);
 
 /// Performs token refresh given the currently stored refresh token — always
 /// non-null, since `GraphQLClient` only calls this when one is actually
@@ -104,8 +104,11 @@ typedef IsUnauthorizedCallback = AuthFailure Function(
 /// Pass this to `GraphQLClient(refreshCallback: ...)` — the sole source of
 /// truth for refresh — to let the client manage token storage and the
 /// `Authorization` header itself — see [TokenStorage].
-typedef RefreshCallback = FutureOr<TokenPair?> Function(
-    GraphQLClient refreshClient, String refreshToken);
+typedef RefreshCallback =
+    FutureOr<TokenPair?> Function(
+      GraphQLClient refreshClient,
+      String refreshToken,
+    );
 
 /// Callback invoked when the token is revoked (refresh failed or server returned
 /// unauthorized and refresh is not possible).

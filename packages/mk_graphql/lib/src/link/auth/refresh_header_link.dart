@@ -31,6 +31,7 @@ class RefreshHeaderLink extends Link {
     final mergedHeaders = Map<String, String>.from(contextHeaders)
       ..addAll(headers);
     yield* forward!(
-        req.withContextEntry(HttpLinkHeaders(headers: mergedHeaders)));
+      req.withContextEntry(HttpLinkHeaders(headers: mergedHeaders)),
+    );
   }
 }

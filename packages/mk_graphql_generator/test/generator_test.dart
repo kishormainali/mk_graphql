@@ -211,7 +211,8 @@ void main() {
       );
 
       final enumContent = bundle.files['generated/enums/enums.dart']!;
-      expect(enumContent, contains('static UserRole? fromString(String? value)'));
+      expect(
+          enumContent, contains('static UserRole? fromString(String? value)'));
       expect(enumContent, contains("'ADMIN_USER' => UserRole.adminUser"));
       expect(enumContent, contains("'STANDARD_USER' => UserRole.standardUser"));
       expect(enumContent, contains('_ => null'));

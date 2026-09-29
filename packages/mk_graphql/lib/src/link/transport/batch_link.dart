@@ -35,9 +35,9 @@ class BatchLink extends Link {
     this.defaultHeaders = const {},
     this.batchTimeout = const Duration(milliseconds: 10),
     this.maxBatchSize = 10,
-  })  : uri = Uri.parse(url),
-        _client = client ?? dio.Dio(),
-        _ownsClient = client == null;
+  }) : uri = Uri.parse(url),
+       _client = client ?? dio.Dio(),
+       _ownsClient = client == null;
 
   /// Cancels any pending batch timer, fails queued-but-undispatched requests
   /// so their `future`/`stream` callers don't hang forever, and closes the
@@ -49,7 +49,8 @@ class BatchLink extends Link {
     for (final item in _queue) {
       item.completer.completeError(
         const ServerException(
-          originalException: 'BatchLink was disposed before this request '
+          originalException:
+              'BatchLink was disposed before this request '
               'could be dispatched.',
         ),
       );
@@ -76,10 +77,7 @@ class BatchLink extends Link {
       // detection and GraphQLExceptionExtension both key off it.
       yield const ResponseParser().parseResponse(bodyJson);
     } catch (e, stack) {
-      throw ServerException(
-        originalException: e,
-        originalStackTrace: stack,
-      );
+      throw ServerException(originalException: e, originalStackTrace: stack);
     }
   }
 
@@ -136,8 +134,10 @@ class BatchLink extends Link {
         }
       }
     } catch (e, stack) {
-      final ex =
-          ServerException(originalException: e, originalStackTrace: stack);
+      final ex = ServerException(
+        originalException: e,
+        originalStackTrace: stack,
+      );
       for (final item in batch) {
         item.completer.completeError(ex);
       }

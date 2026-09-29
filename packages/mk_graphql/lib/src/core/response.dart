@@ -59,14 +59,13 @@ class GraphQLResponse<TData> {
     GraphQLException? linkException,
     ResponseSource? source,
     bool? loading,
-  }) =>
-      GraphQLResponse<TData>(
-        data: data ?? this.data,
-        errors: errors ?? this.errors,
-        linkException: linkException ?? this.linkException,
-        source: source ?? this.source,
-        loading: loading ?? this.loading,
-      );
+  }) => GraphQLResponse<TData>(
+    data: data ?? this.data,
+    errors: errors ?? this.errors,
+    linkException: linkException ?? this.linkException,
+    source: source ?? this.source,
+    loading: loading ?? this.loading,
+  );
 
   @override
   String toString() =>

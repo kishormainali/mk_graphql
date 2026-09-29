@@ -36,8 +36,7 @@ void main() {
       );
     });
 
-    test(
-        'clamps at maxDelay so a long outage settles into a bounded retry '
+    test('clamps at maxDelay so a long outage settles into a bounded retry '
         'cadence instead of growing forever', () {
       final delay = cappedBackoffDelay(
         attempt: 50,
@@ -48,16 +47,18 @@ void main() {
       expect(delay, const Duration(seconds: 30));
     });
 
-    test('initialDelay already above maxDelay is clamped even at attempt 0',
-        () {
-      final delay = cappedBackoffDelay(
-        attempt: 0,
-        initialDelay: const Duration(seconds: 60),
-        maxDelay: const Duration(seconds: 30),
-        multiplier: 1.5,
-      );
-      expect(delay, const Duration(seconds: 30));
-    });
+    test(
+      'initialDelay already above maxDelay is clamped even at attempt 0',
+      () {
+        final delay = cappedBackoffDelay(
+          attempt: 0,
+          initialDelay: const Duration(seconds: 60),
+          maxDelay: const Duration(seconds: 30),
+          multiplier: 1.5,
+        );
+        expect(delay, const Duration(seconds: 30));
+      },
+    );
   });
 
   group('RetryOptions jitter', () {
@@ -71,8 +72,7 @@ void main() {
       expect(options.delayForAttempt(3), const Duration(milliseconds: 800));
     });
 
-    test(
-        'a positive jitter keeps every sampled delay within the spread '
+    test('a positive jitter keeps every sampled delay within the spread '
         'around the base delay, never negative', () {
       const options = RetryOptions(
         initialDelay: Duration(milliseconds: 200),
@@ -94,11 +94,15 @@ void main() {
         jitter: 0.3,
       );
       final samples = {
-        for (var i = 0; i < 50; i++) options.delayForAttempt(2).inMilliseconds
+        for (var i = 0; i < 50; i++) options.delayForAttempt(2).inMilliseconds,
       };
-      expect(samples.length, greaterThan(1),
-          reason: '50 samples should not all land on the exact same '
-              'millisecond if jitter is actually randomizing anything');
+      expect(
+        samples.length,
+        greaterThan(1),
+        reason:
+            '50 samples should not all land on the exact same '
+            'millisecond if jitter is actually randomizing anything',
+      );
     });
   });
 }

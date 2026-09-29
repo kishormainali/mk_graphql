@@ -48,8 +48,8 @@ class SseLink extends Link {
     this.tokenHeader,
     this.useGetForQueries = false,
     this.parser = const ResponseParser(),
-  })  : client = client ?? dio.Dio(),
-        _ownsClient = client == null;
+  }) : client = client ?? dio.Dio(),
+       _ownsClient = client == null;
 
   /// Closes [client] only if this [SseLink] created it itself.
   @override
@@ -61,8 +61,9 @@ class SseLink extends Link {
   Stream<Response> request(Request req, [NextLink? forward]) async* {
     final contextHeaders =
         req.context.entry<HttpLinkHeaders>()?.headers ?? const {};
-    final cancelToken =
-        req.context.entry<DioLinkCancelTokenContextEntry>()?.token;
+    final cancelToken = req.context
+        .entry<DioLinkCancelTokenContextEntry>()
+        ?.token;
 
     Map<String, String> authHeaders = const {};
     if (tokenHeader != null) {
@@ -112,10 +113,7 @@ class SseLink extends Link {
           },
           options: dio.Options(
             responseType: dio.ResponseType.stream,
-            headers: {
-              ...headers,
-              'Content-Type': 'application/json',
-            },
+            headers: {...headers, 'Content-Type': 'application/json'},
           ),
           cancelToken: cancelToken,
         );
@@ -141,10 +139,11 @@ class SseLink extends Link {
     final dataBuffer = StringBuffer();
 
     try {
-      await for (final line in stream
-          .cast<List<int>>()
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())) {
+      await for (final line
+          in stream
+              .cast<List<int>>()
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())) {
         final trimmed = line.trim();
         if (trimmed.isEmpty) {
           if (dataBuffer.isNotEmpty) {
@@ -172,8 +171,10 @@ class SseLink extends Link {
       }
 
       if (dataBuffer.isNotEmpty && currentEvent != 'complete') {
-        final parsed =
-            _parseEventData(dataBuffer.toString().trim(), currentEvent);
+        final parsed = _parseEventData(
+          dataBuffer.toString().trim(),
+          currentEvent,
+        );
         if (parsed != null) {
           yield parsed;
         }
@@ -191,17 +192,15 @@ class SseLink extends Link {
         return null;
       }
 
-      final Map<String, dynamic> payload = decoded.containsKey('payload') &&
+      final Map<String, dynamic> payload =
+          decoded.containsKey('payload') &&
               decoded['payload'] is Map<String, dynamic>
           ? decoded['payload'] as Map<String, dynamic>
           : decoded;
 
       return parser.parseResponse(payload);
     } catch (e, st) {
-      throw ServerException(
-        originalException: e,
-        originalStackTrace: st,
-      );
+      throw ServerException(originalException: e, originalStackTrace: st);
     }
   }
 }

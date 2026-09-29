@@ -95,14 +95,10 @@ class HiveCache implements Cache {
   Map<String, dynamic>? readFragment({
     required String id,
     required String fragmentName,
-  }) =>
-      _delegate.readFragment(id: id, fragmentName: fragmentName);
+  }) => _delegate.readFragment(id: id, fragmentName: fragmentName);
 
   @override
-  void writeFragment({
-    required String id,
-    required Map<String, dynamic> data,
-  }) {
+  void writeFragment({required String id, required Map<String, dynamic> data}) {
     _delegate.writeFragment(id: id, data: data);
     _schedulePersist();
   }
@@ -127,15 +123,14 @@ class HiveCache implements Cache {
 
   @override
   Stream<TData?> watchQuery<TData, TVars>(
-          GraphQLRequest<TData, TVars> request) =>
-      _delegate.watchQuery(request);
+    GraphQLRequest<TData, TVars> request,
+  ) => _delegate.watchQuery(request);
 
   @override
   void recordOptimistic<TData, TVars>(
     GraphQLRequest<TData, TVars> request,
     TData data,
-  ) =>
-      _delegate.recordOptimistic(request, data);
+  ) => _delegate.recordOptimistic(request, data);
 
   @override
   void removeOptimistic(String requestId) =>
@@ -150,10 +145,7 @@ class HiveCache implements Cache {
     List<String>? operationNames,
     List<String>? types,
   }) =>
-      _delegate.matchingQueryKeys(
-        operationNames: operationNames,
-        types: types,
-      );
+      _delegate.matchingQueryKeys(operationNames: operationNames, types: types);
 
   /// Closes the underlying Hive box. Call when the [GraphQLClient] that
   /// owns this cache is disposed.

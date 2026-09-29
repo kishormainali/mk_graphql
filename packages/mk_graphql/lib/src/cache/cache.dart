@@ -17,10 +17,7 @@ abstract class Cache {
     required String fragmentName,
   });
 
-  void writeFragment({
-    required String id,
-    required Map<String, dynamic> data,
-  });
+  void writeFragment({required String id, required Map<String, dynamic> data});
 
   void evict(String key);
 

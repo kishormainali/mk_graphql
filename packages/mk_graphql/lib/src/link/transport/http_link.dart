@@ -45,13 +45,10 @@ class HttpLink extends Link {
   /// client stays theirs to close.
   final bool _ownsClient;
 
-  HttpLink(
-    String url, {
-    dio.Dio? client,
-    this.defaultHeaders = const {},
-  })  : uri = Uri.parse(url),
-        _client = client ?? dio.Dio(),
-        _ownsClient = client == null;
+  HttpLink(String url, {dio.Dio? client, this.defaultHeaders = const {}})
+    : uri = Uri.parse(url),
+      _client = client ?? dio.Dio(),
+      _ownsClient = client == null;
 
   /// Closes the underlying [dio.Dio] client only if this [HttpLink] created
   /// it itself.
@@ -62,8 +59,9 @@ class HttpLink extends Link {
 
   @override
   Stream<Response> request(Request req, [NextLink? forward]) async* {
-    final cancelToken =
-        req.context.entry<DioLinkCancelTokenContextEntry>()?.token;
+    final cancelToken = req.context
+        .entry<DioLinkCancelTokenContextEntry>()
+        ?.token;
 
     final variablesMap = req.variables;
 
@@ -133,7 +131,9 @@ class HttpLink extends Link {
     } on dio.DioException catch (e, stack) {
       if (e.type == dio.DioExceptionType.connectionError) {
         throw HttpLinkConnectionException(
-            originalException: e, originalStackTrace: stack);
+          originalException: e,
+          originalStackTrace: stack,
+        );
       }
       throw ServerException(originalException: e, originalStackTrace: stack);
     } catch (e, stack) {
@@ -153,7 +153,9 @@ class HttpLink extends Link {
       bodyJson = jsonDecode(responseBody) as Map<String, dynamic>;
     } catch (e, stack) {
       throw ResponseFormatException(
-          originalException: e, originalStackTrace: stack);
+        originalException: e,
+        originalStackTrace: stack,
+      );
     }
 
     // Uses the same ResponseParser as DioLink/SseLink/WebSocketLink so
@@ -172,7 +174,9 @@ class HttpLink extends Link {
   /// response; the underlying request itself keeps running in the
   /// background and its result is discarded.
   Future<T> _sendCancellable<T>(
-      Future<T> future, dio.CancelToken? cancelToken) {
+    Future<T> future,
+    dio.CancelToken? cancelToken,
+  ) {
     if (cancelToken == null) return future;
     if (cancelToken.isCancelled) {
       throw HttpLinkCanceledException(
@@ -203,8 +207,11 @@ class HttpLink extends Link {
       final newMap = <String, dynamic>{};
       value.forEach((key, val) {
         final currentPath = path.isEmpty ? '$key' : '$path.$key';
-        newMap[key as String] =
-            _extractMultipartFiles(val, currentPath, uploads);
+        newMap[key as String] = _extractMultipartFiles(
+          val,
+          currentPath,
+          uploads,
+        );
       });
       return newMap;
     } else if (value is List) {

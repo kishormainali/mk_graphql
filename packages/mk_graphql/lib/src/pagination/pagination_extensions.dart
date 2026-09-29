@@ -27,7 +27,7 @@ extension GraphQLClientPaginationExtension on GraphQLClient {
     required GraphQLRequest<TData, TVars> initialRequest,
     required ItemExtractor<TData, TItem> getItems,
     required TVars Function(TVars currentVars, int offset, int limit)
-        updateOffset,
+    updateOffset,
     int limit = 20,
     ItemMerger<TItem>? mergeItems,
   }) {
@@ -90,17 +90,11 @@ extension GraphQLClientPaginationExtension on GraphQLClient {
 extension GraphQLRequestExecutionExtension<TData, TVars>
     on GraphQLRequest<TData, TVars> {
   /// Executes this request on [client] and returns a [Future] of [TData].
-  Future<TData> execute(
-    GraphQLClient client, {
-    CancelToken? cancelToken,
-  }) =>
+  Future<TData> execute(GraphQLClient client, {CancelToken? cancelToken}) =>
       client.future(this, cancelToken: cancelToken);
 
   /// Refetches this request on [client] with [FetchPolicy.networkOnly].
-  Future<TData> refetch(
-    GraphQLClient client, {
-    CancelToken? cancelToken,
-  }) =>
+  Future<TData> refetch(GraphQLClient client, {CancelToken? cancelToken}) =>
       client.refetch(this, cancelToken: cancelToken);
 
   /// Fetches the next page of results for this request, automatically merging
@@ -111,20 +105,16 @@ extension GraphQLRequestExecutionExtension<TData, TVars>
     TData? previousData,
     TData Function(TData previousData, TData incomingData)? updateQuery,
     CancelToken? cancelToken,
-  }) =>
-      client.fetchMore(
-        originalRequest: this,
-        nextRequest: nextRequest,
-        previousData: previousData,
-        updateQuery: updateQuery,
-        cancelToken: cancelToken,
-      );
+  }) => client.fetchMore(
+    originalRequest: this,
+    nextRequest: nextRequest,
+    previousData: previousData,
+    updateQuery: updateQuery,
+    cancelToken: cancelToken,
+  );
 
   /// Streams this request's responses on [client].
-  Stream<TData> stream(
-    GraphQLClient client, {
-    CancelToken? cancelToken,
-  }) =>
+  Stream<TData> stream(GraphQLClient client, {CancelToken? cancelToken}) =>
       client.stream(this, cancelToken: cancelToken);
 
   /// Watches this request in the client's cache.
@@ -136,30 +126,28 @@ extension GraphQLRequestExecutionExtension<TData, TVars>
     required ItemExtractor<TData, TItem> getItems,
     required NextVariablesCallback<TData, TVars> nextVariables,
     ItemMerger<TItem>? mergeItems,
-  }) =>
-      client.paginate(
-        initialRequest: this,
-        getItems: getItems,
-        nextVariables: nextVariables,
-        mergeItems: mergeItems,
-      );
+  }) => client.paginate(
+    initialRequest: this,
+    getItems: getItems,
+    nextVariables: nextVariables,
+    mergeItems: mergeItems,
+  );
 
   /// Creates an offset/limit paginator for this request.
   GraphQLPaginator<TData, TVars, TItem> paginateOffset<TItem>({
     required GraphQLClient client,
     required ItemExtractor<TData, TItem> getItems,
     required TVars Function(TVars currentVars, int offset, int limit)
-        updateOffset,
+    updateOffset,
     int limit = 20,
     ItemMerger<TItem>? mergeItems,
-  }) =>
-      client.paginateOffset(
-        initialRequest: this,
-        getItems: getItems,
-        updateOffset: updateOffset,
-        limit: limit,
-        mergeItems: mergeItems,
-      );
+  }) => client.paginateOffset(
+    initialRequest: this,
+    getItems: getItems,
+    updateOffset: updateOffset,
+    limit: limit,
+    mergeItems: mergeItems,
+  );
 
   /// Creates a page-number paginator for this request.
   GraphQLPaginator<TData, TVars, TItem> paginatePage<TItem>({
@@ -171,17 +159,16 @@ extension GraphQLRequestExecutionExtension<TData, TVars>
     int? Function(TData data)? getPage,
     bool Function(TData data)? hasNextPage,
     ItemMerger<TItem>? mergeItems,
-  }) =>
-      client.paginatePage(
-        initialRequest: this,
-        getItems: getItems,
-        updatePage: updatePage,
-        initialPage: initialPage,
-        pageSize: pageSize,
-        getPage: getPage,
-        hasNextPage: hasNextPage,
-        mergeItems: mergeItems,
-      );
+  }) => client.paginatePage(
+    initialRequest: this,
+    getItems: getItems,
+    updatePage: updatePage,
+    initialPage: initialPage,
+    pageSize: pageSize,
+    getPage: getPage,
+    hasNextPage: hasNextPage,
+    mergeItems: mergeItems,
+  );
 
   /// Creates a Relay cursor paginator for this request.
   GraphQLPaginator<TData, TVars, TItem> paginateCursor<TItem>({
@@ -191,13 +178,12 @@ extension GraphQLRequestExecutionExtension<TData, TVars>
     required bool Function(TData data) getHasNextPage,
     required TVars Function(TVars currentVars, String cursor) updateCursor,
     ItemMerger<TItem>? mergeItems,
-  }) =>
-      client.paginateCursor(
-        initialRequest: this,
-        getItems: getItems,
-        getEndCursor: getEndCursor,
-        getHasNextPage: getHasNextPage,
-        updateCursor: updateCursor,
-        mergeItems: mergeItems,
-      );
+  }) => client.paginateCursor(
+    initialRequest: this,
+    getItems: getItems,
+    getEndCursor: getEndCursor,
+    getHasNextPage: getHasNextPage,
+    updateCursor: updateCursor,
+    mergeItems: mergeItems,
+  );
 }

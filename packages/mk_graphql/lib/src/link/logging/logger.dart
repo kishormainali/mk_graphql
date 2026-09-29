@@ -60,9 +60,13 @@ class Logger {
     Object? error,
     StackTrace? stackTrace,
     String? tag,
-  }) =>
-      _log(_LogLevel.error, message,
-          error: error, stackTrace: stackTrace, tag: tag);
+  }) => _log(
+    _LogLevel.error,
+    message,
+    error: error,
+    stackTrace: stackTrace,
+    tag: tag,
+  );
 
   /// Whether ANSI terminal color codes should be included.
   /// Defaults to `false` to ensure clean output in Flutter console and IDEs.
@@ -72,22 +76,14 @@ class Logger {
       useAnsiColors ? level.colorCode : '';
   static String get _resetCodeStr => useAnsiColors ? _resetCode : '';
 
-  static void boxed(
-    List<String> messages, {
-    String? tag,
-    bool redact = false,
-  }) {
+  static void boxed(List<String> messages, {String? tag, bool redact = false}) {
     if (kReleaseMode) return;
 
     final formattedTag = tag != null ? '[$tag]' : '';
     final timeStr = _formatTime(DateTime.now());
     final tagLine = '$_leftLine[INFO 💡] [$timeStr] $formattedTag';
 
-    final outputLines = <String>[
-      _topLine,
-      tagLine,
-      _divider,
-    ];
+    final outputLines = <String>[_topLine, tagLine, _divider];
 
     for (var i = 0; i < messages.length; i++) {
       final msg = redact ? _redactString(messages[i]) : messages[i];
@@ -130,11 +126,11 @@ class Logger {
     final errorLines = error?.toString().split('\n');
     final stackLines = stackTrace != null
         ? stackTrace
-            .toString()
-            .split('\n')
-            .where((l) => l.trim().isNotEmpty)
-            .take(5)
-            .toList()
+              .toString()
+              .split('\n')
+              .where((l) => l.trim().isNotEmpty)
+              .take(5)
+              .toList()
         : null;
 
     final msgStr = message.toString();
@@ -180,8 +176,10 @@ class Logger {
     final offset = time.timeZoneOffset;
     final offsetSign = offset.isNegative ? '-' : '+';
     final offsetHours = offset.inHours.abs().toString().padLeft(2, '0');
-    final offsetMinutes =
-        (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+    final offsetMinutes = (offset.inMinutes.abs() % 60).toString().padLeft(
+      2,
+      '0',
+    );
 
     return '$year-$month-$day ${hour12.toString().padLeft(2, '0')}:$minute:$second $period $offsetSign$offsetHours:$offsetMinutes';
   }

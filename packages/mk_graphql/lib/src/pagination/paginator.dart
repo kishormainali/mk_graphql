@@ -9,20 +9,19 @@ import 'pagination_state.dart';
 
 /// Callback computing the next page's typed variables.
 /// Return `null` when there are no more pages.
-typedef NextVariablesCallback<TData, TVars> = TVars? Function({
-  required TData lastData,
-  required TVars currentVars,
-  required int totalLoaded,
-});
+typedef NextVariablesCallback<TData, TVars> =
+    TVars? Function({
+      required TData lastData,
+      required TVars currentVars,
+      required int totalLoaded,
+    });
 
 /// Extracts the list of items from a query response.
 typedef ItemExtractor<TData, TItem> = List<TItem> Function(TData data);
 
 /// Merges existing items with newly fetched items. Defaults to appending.
-typedef ItemMerger<TItem> = List<TItem> Function(
-  List<TItem> current,
-  List<TItem> incoming,
-);
+typedef ItemMerger<TItem> =
+    List<TItem> Function(List<TItem> current, List<TItem> incoming);
 
 /// A reactive pagination manager that executes GraphQL queries and accumulates items.
 ///
@@ -49,9 +48,9 @@ class GraphQLPaginator<TData, TVars, TItem> {
     required this.getItems,
     required this.nextVariables,
     ItemMerger<TItem>? mergeItems,
-  })  : _baseRequest = initialRequest,
-        mergeItems =
-            mergeItems ?? ((current, incoming) => [...current, ...incoming]);
+  }) : _baseRequest = initialRequest,
+       mergeItems =
+           mergeItems ?? ((current, incoming) => [...current, ...incoming]);
 
   /// The active base request currently in use by the paginator.
   GraphQLRequest<TData, TVars> get baseRequest => _baseRequest;
@@ -65,7 +64,7 @@ class GraphQLPaginator<TData, TVars, TItem> {
     required GraphQLRequest<TData, TVars> initialRequest,
     required ItemExtractor<TData, TItem> getItems,
     required TVars Function(TVars currentVars, int offset, int limit)
-        updateOffset,
+    updateOffset,
     int limit = 20,
     ItemMerger<TItem>? mergeItems,
   }) {
@@ -73,15 +72,12 @@ class GraphQLPaginator<TData, TVars, TItem> {
       client: client,
       initialRequest: initialRequest,
       getItems: getItems,
-      nextVariables: ({
-        required lastData,
-        required currentVars,
-        required totalLoaded,
-      }) {
-        final items = getItems(lastData);
-        if (items.length < limit) return null;
-        return updateOffset(currentVars, totalLoaded, limit);
-      },
+      nextVariables:
+          ({required lastData, required currentVars, required totalLoaded}) {
+            final items = getItems(lastData);
+            if (items.length < limit) return null;
+            return updateOffset(currentVars, totalLoaded, limit);
+          },
       mergeItems: mergeItems,
     );
   }
@@ -102,24 +98,21 @@ class GraphQLPaginator<TData, TVars, TItem> {
       client: client,
       initialRequest: initialRequest,
       getItems: getItems,
-      nextVariables: ({
-        required lastData,
-        required currentVars,
-        required totalLoaded,
-      }) {
-        if (hasNextPage != null) {
-          if (!hasNextPage(lastData)) return null;
-        } else {
-          final items = getItems(lastData);
-          if (items.length < pageSize) return null;
-        }
-        final currentPage = getPage?.call(lastData);
-        final nextPage = currentPage != null
-            ? currentPage + 1
-            : initialPage +
-                (totalLoaded <= 0 ? 1 : (totalLoaded / pageSize).ceil());
-        return updatePage(currentVars, nextPage);
-      },
+      nextVariables:
+          ({required lastData, required currentVars, required totalLoaded}) {
+            if (hasNextPage != null) {
+              if (!hasNextPage(lastData)) return null;
+            } else {
+              final items = getItems(lastData);
+              if (items.length < pageSize) return null;
+            }
+            final currentPage = getPage?.call(lastData);
+            final nextPage = currentPage != null
+                ? currentPage + 1
+                : initialPage +
+                      (totalLoaded <= 0 ? 1 : (totalLoaded / pageSize).ceil());
+            return updatePage(currentVars, nextPage);
+          },
       mergeItems: mergeItems,
     );
   }
@@ -138,16 +131,13 @@ class GraphQLPaginator<TData, TVars, TItem> {
       client: client,
       initialRequest: initialRequest,
       getItems: getItems,
-      nextVariables: ({
-        required lastData,
-        required currentVars,
-        required totalLoaded,
-      }) {
-        if (!getHasNextPage(lastData)) return null;
-        final cursor = getEndCursor(lastData);
-        if (cursor == null || cursor.isEmpty) return null;
-        return updateCursor(currentVars, cursor);
-      },
+      nextVariables:
+          ({required lastData, required currentVars, required totalLoaded}) {
+            if (!getHasNextPage(lastData)) return null;
+            final cursor = getEndCursor(lastData);
+            if (cursor == null || cursor.isEmpty) return null;
+            return updateCursor(currentVars, cursor);
+          },
       mergeItems: mergeItems,
     );
   }
@@ -159,10 +149,9 @@ class GraphQLPaginator<TData, TVars, TItem> {
   Stream<PaginationState<TItem>> get stream => _stateController.stream;
 
   /// Stream emitting only the accumulated items list whenever it changes.
-  Stream<List<TItem>> get itemsStream =>
-      _stateController.stream.map((s) => s.items).distinct(
-            const ListEquality<dynamic>().equals,
-          );
+  Stream<List<TItem>> get itemsStream => _stateController.stream
+      .map((s) => s.items)
+      .distinct(const ListEquality<dynamic>().equals);
 
   /// Current list of loaded items.
   List<TItem> get items => _state.items;
@@ -197,20 +186,23 @@ class GraphQLPaginator<TData, TVars, TItem> {
       _lastData = data;
       _accumulatedData = data;
       final newItems = getItems(data);
-      final hasMoreNext = nextVariables(
+      final hasMoreNext =
+          nextVariables(
             lastData: data,
             currentVars: _baseRequest.variables,
             totalLoaded: newItems.length,
           ) !=
           null;
 
-      _emit(PaginationState<TItem>(
-        items: newItems,
-        isLoading: false,
-        isLoadingMore: false,
-        hasMore: hasMoreNext,
-        error: null,
-      ));
+      _emit(
+        PaginationState<TItem>(
+          items: newItems,
+          isLoading: false,
+          isLoadingMore: false,
+          hasMore: hasMoreNext,
+          error: null,
+        ),
+      );
       return newItems;
     } catch (e) {
       _emit(_state.copyWith(isLoading: false, error: e));
@@ -264,7 +256,8 @@ class GraphQLPaginator<TData, TVars, TItem> {
 
       final incoming = getItems(data);
       final merged = mergeItems(_state.items, incoming);
-      final hasMoreNext = incoming.isNotEmpty &&
+      final hasMoreNext =
+          incoming.isNotEmpty &&
           nextVariables(
                 lastData: data,
                 currentVars: nextVars,
@@ -272,13 +265,15 @@ class GraphQLPaginator<TData, TVars, TItem> {
               ) !=
               null;
 
-      _emit(PaginationState<TItem>(
-        items: merged,
-        isLoading: false,
-        isLoadingMore: false,
-        hasMore: hasMoreNext,
-        error: null,
-      ));
+      _emit(
+        PaginationState<TItem>(
+          items: merged,
+          isLoading: false,
+          isLoadingMore: false,
+          hasMore: hasMoreNext,
+          error: null,
+        ),
+      );
       return merged;
     } catch (e) {
       _emit(_state.copyWith(isLoadingMore: false, error: e));
@@ -292,8 +287,9 @@ class GraphQLPaginator<TData, TVars, TItem> {
     if (_state.isLoading) return _state.items;
     _emit(_state.copyWith(isLoading: true, error: null));
 
-    final refreshReq =
-        initialRequest.copyWithFetchPolicy(FetchPolicy.networkOnly);
+    final refreshReq = initialRequest.copyWithFetchPolicy(
+      FetchPolicy.networkOnly,
+    );
     _baseRequest = initialRequest;
     _currentRequest = refreshReq;
 
@@ -302,20 +298,23 @@ class GraphQLPaginator<TData, TVars, TItem> {
       _lastData = data;
       _accumulatedData = data;
       final newItems = getItems(data);
-      final hasMoreNext = nextVariables(
+      final hasMoreNext =
+          nextVariables(
             lastData: data,
             currentVars: refreshReq.variables,
             totalLoaded: newItems.length,
           ) !=
           null;
 
-      _emit(PaginationState<TItem>(
-        items: newItems,
-        isLoading: false,
-        isLoadingMore: false,
-        hasMore: hasMoreNext,
-        error: null,
-      ));
+      _emit(
+        PaginationState<TItem>(
+          items: newItems,
+          isLoading: false,
+          isLoadingMore: false,
+          hasMore: hasMoreNext,
+          error: null,
+        ),
+      );
       return newItems;
     } catch (e) {
       _emit(_state.copyWith(isLoading: false, error: e));
@@ -338,33 +337,38 @@ class GraphQLPaginator<TData, TVars, TItem> {
     _lastData = null;
     _accumulatedData = null;
 
-    _emit(PaginationState<TItem>(
-      items: clearItems ? [] : _state.items,
-      isLoading: true,
-      isLoadingMore: false,
-      hasMore: false,
-      error: null,
-    ));
+    _emit(
+      PaginationState<TItem>(
+        items: clearItems ? [] : _state.items,
+        isLoading: true,
+        isLoadingMore: false,
+        hasMore: false,
+        error: null,
+      ),
+    );
 
     try {
       final data = await client.future(newRequest, cancelToken: cancelToken);
       _lastData = data;
       _accumulatedData = data;
       final newItems = getItems(data);
-      final hasMoreNext = nextVariables(
+      final hasMoreNext =
+          nextVariables(
             lastData: data,
             currentVars: newRequest.variables,
             totalLoaded: newItems.length,
           ) !=
           null;
 
-      _emit(PaginationState<TItem>(
-        items: newItems,
-        isLoading: false,
-        isLoadingMore: false,
-        hasMore: hasMoreNext,
-        error: null,
-      ));
+      _emit(
+        PaginationState<TItem>(
+          items: newItems,
+          isLoading: false,
+          isLoadingMore: false,
+          hasMore: hasMoreNext,
+          error: null,
+        ),
+      );
       return newItems;
     } catch (e) {
       _emit(_state.copyWith(isLoading: false, error: e));
@@ -385,8 +389,11 @@ class GraphQLPaginator<TData, TVars, TItem> {
       variables: newVars,
       fetchPolicy: fetchPolicy ?? _baseRequest.fetchPolicy,
     );
-    return updateRequest(newReq,
-        clearItems: clearItems, cancelToken: cancelToken);
+    return updateRequest(
+      newReq,
+      clearItems: clearItems,
+      cancelToken: cancelToken,
+    );
   }
 
   /// Sets new variables on the base request and fetches page 1 with the new variables.
@@ -400,8 +407,11 @@ class GraphQLPaginator<TData, TVars, TItem> {
       variables: newVariables,
       fetchPolicy: fetchPolicy ?? _baseRequest.fetchPolicy,
     );
-    return updateRequest(newReq,
-        clearItems: clearItems, cancelToken: cancelToken);
+    return updateRequest(
+      newReq,
+      clearItems: clearItems,
+      cancelToken: cancelToken,
+    );
   }
 
   /// Fetches all remaining pages until [hasMore] is false or [maxPages] is reached.

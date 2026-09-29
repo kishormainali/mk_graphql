@@ -22,15 +22,15 @@ class CompositeGraphQLRequest
     RetryOptions? retry,
     Duration? refetchInterval,
   }) : super(
-          fetchPolicy: fetchPolicy,
-          errorPolicy: errorPolicy,
-          headers: headers,
-          staleTime: staleTime,
-          cacheTime: cacheTime,
-          retry: retry,
-          refetchInterval: refetchInterval,
-          requestId: requests.map((r) => r.requestId).join('_'),
-        );
+         fetchPolicy: fetchPolicy,
+         errorPolicy: errorPolicy,
+         headers: headers,
+         staleTime: staleTime,
+         cacheTime: cacheTime,
+         retry: retry,
+         refetchInterval: refetchInterval,
+         requestId: requests.map((r) => r.requestId).join('_'),
+       );
 
   @override
   String get document => requests.map((r) => r.document).join('\n');
@@ -40,21 +40,21 @@ class CompositeGraphQLRequest
 
   @override
   Map<String, dynamic> get variables => {
-        for (final r in requests) r.operationName: r.toJsonVars(r.variables),
-      };
+    for (final r in requests) r.operationName: r.toJsonVars(r.variables),
+  };
 
   @override
   Map<String, dynamic> toJsonVars(Map<String, dynamic> vars) => vars;
 
   @override
   Map<String, dynamic> parseData(Map<String, dynamic> json) => {
-        for (final r in requests)
-          r.operationName: r.parseData(
-            json.containsKey(r.operationName)
-                ? json[r.operationName] as Map<String, dynamic>
-                : json,
-          ),
-      };
+    for (final r in requests)
+      r.operationName: r.parseData(
+        json.containsKey(r.operationName)
+            ? json[r.operationName] as Map<String, dynamic>
+            : json,
+      ),
+  };
 
   @override
   CompositeGraphQLRequest copyWithRequest({

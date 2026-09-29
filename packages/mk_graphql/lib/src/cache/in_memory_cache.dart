@@ -41,7 +41,7 @@ class InMemoryCache implements Cache {
   final Map<String, _ReadCacheEntry> _readCache = {};
 
   InMemoryCache({KeyGetter? keyGetter})
-      : _keyGetter = keyGetter ?? defaultKeyGetter;
+    : _keyGetter = keyGetter ?? defaultKeyGetter;
 
   static String? defaultKeyGetter(Map<String, dynamic> data) {
     if (data.containsKey('__typename')) {
@@ -119,10 +119,7 @@ class InMemoryCache implements Cache {
   }
 
   @override
-  void writeFragment({
-    required String id,
-    required Map<String, dynamic> data,
-  }) {
+  void writeFragment({required String id, required Map<String, dynamic> data}) {
     final normalized = _normalize(data);
     _store.set(id, normalized);
     _version++;
@@ -159,7 +156,8 @@ class InMemoryCache implements Cache {
 
   @override
   Stream<TData?> watchQuery<TData, TVars>(
-      GraphQLRequest<TData, TVars> request) {
+    GraphQLRequest<TData, TVars> request,
+  ) {
     final key = computeRequestKey(request);
     final controller = StreamController<TData?>.broadcast();
 
@@ -226,7 +224,8 @@ class InMemoryCache implements Cache {
   }) {
     if (operationNames == null && types == null) return const [];
     return _writtenAt.keys.where((key) {
-      final opMatch = operationNames != null &&
+      final opMatch =
+          operationNames != null &&
           operationNames.any((name) => key.startsWith('$name:'));
       final typeMatch =
           types != null && (_queryTypenames[key]?.any(types.contains) ?? false);

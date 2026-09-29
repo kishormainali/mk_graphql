@@ -146,8 +146,9 @@ class AuthLink extends Link {
       final expired = await isTokenExpired!();
       if (expired) {
         Logger.d(
-            'Access token expired before request — attempting proactive refresh.',
-            tag: 'AuthLink');
+          'Access token expired before request — attempting proactive refresh.',
+          tag: 'AuthLink',
+        );
         try {
           final newHeaders = await _refreshToken();
           if (newHeaders != null) currentHeaders.addAll(newHeaders);
@@ -186,8 +187,12 @@ class AuthLink extends Link {
         if (onTokenRefresh != null) {
           switch (_classify(response: response)) {
             case AuthFailure.refresh:
-              yield* _refreshAndRetry(req, contextHeaders, forward,
-                  originalResponse: response);
+              yield* _refreshAndRetry(
+                req,
+                contextHeaders,
+                forward,
+                originalResponse: response,
+              );
               return;
             case AuthFailure.revoke:
               _handleRevokeToken();
@@ -203,8 +208,12 @@ class AuthLink extends Link {
       if (onTokenRefresh != null) {
         switch (_classify(response: e.parsedResponse, exception: e)) {
           case AuthFailure.refresh:
-            yield* _refreshAndRetry(req, contextHeaders, forward,
-                originalException: e);
+            yield* _refreshAndRetry(
+              req,
+              contextHeaders,
+              forward,
+              originalException: e,
+            );
             return;
           case AuthFailure.revoke:
             _handleRevokeToken();
@@ -229,15 +238,17 @@ class AuthLink extends Link {
     ServerException? originalException,
   }) async* {
     Logger.w(
-        'Unauthorized response received — attempting token refresh and retry.',
-        tag: 'AuthLink');
+      'Unauthorized response received — attempting token refresh and retry.',
+      tag: 'AuthLink',
+    );
     try {
       final newHeaders = await _refreshToken();
       if (newHeaders != null && newHeaders.isNotEmpty) {
         final retryHeaders = Map<String, String>.from(contextHeaders)
           ..addAll(newHeaders);
-        final retryReq =
-            req.withContextEntry(HttpLinkHeaders(headers: retryHeaders));
+        final retryReq = req.withContextEntry(
+          HttpLinkHeaders(headers: retryHeaders),
+        );
         yield* forward(retryReq);
       } else {
         _handleRevokeToken();
@@ -267,8 +278,10 @@ class AuthLink extends Link {
 
   Future<Map<String, String>?> _refreshToken() {
     if (_ongoingRefresh != null) {
-      Logger.d('Token refresh already in progress — joining existing request.',
-          tag: 'AuthLink');
+      Logger.d(
+        'Token refresh already in progress — joining existing request.',
+        tag: 'AuthLink',
+      );
       return _ongoingRefresh!;
     }
     Logger.d('Refreshing access token…', tag: 'AuthLink');
@@ -294,8 +307,12 @@ class AuthLink extends Link {
       Logger.s('Access token refreshed successfully.', tag: 'AuthLink');
       completer.complete(newHeaders);
     } catch (exception, stackTrace) {
-      Logger.e('Failed to refresh access token — revoking.',
-          error: exception, stackTrace: stackTrace, tag: 'AuthLink');
+      Logger.e(
+        'Failed to refresh access token — revoking.',
+        error: exception,
+        stackTrace: stackTrace,
+        tag: 'AuthLink',
+      );
       completer.completeError(
         exception is RevokeTokenException
             ? exception

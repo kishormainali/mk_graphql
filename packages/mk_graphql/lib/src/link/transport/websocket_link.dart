@@ -83,8 +83,10 @@ class WebSocketLink extends Link {
     this.reconnectJitter = 0.2,
     this.autoReconnect = true,
     this.parser = const ResponseParser(),
-  }) : assert(reconnectJitter >= 0.0 && reconnectJitter <= 1.0,
-            'reconnectJitter must be within 0.0–1.0');
+  }) : assert(
+         reconnectJitter >= 0.0 && reconnectJitter <= 1.0,
+         'reconnectJitter must be within 0.0–1.0',
+       );
 
   Duration _reconnectDelay() {
     final capped = cappedBackoffDelay(
@@ -111,8 +113,9 @@ class WebSocketLink extends Link {
 
   Future<void> _connect() {
     if (_connected || _isDisposed) return Future.value();
-    return _connectFuture ??=
-        _doConnect().whenComplete(() => _connectFuture = null);
+    return _connectFuture ??= _doConnect().whenComplete(
+      () => _connectFuture = null,
+    );
   }
 
   Future<void> _doConnect() async {
@@ -127,10 +130,12 @@ class WebSocketLink extends Link {
         payload = await payload();
       }
 
-      _channel!.sink.add(jsonEncode({
-        'type': 'connection_init',
-        if (payload != null) 'payload': payload,
-      }));
+      _channel!.sink.add(
+        jsonEncode({
+          'type': 'connection_init',
+          if (payload != null) 'payload': payload,
+        }),
+      );
 
       _connected = true;
 
@@ -191,9 +196,7 @@ class WebSocketLink extends Link {
                 .toList();
             controller.add(Response(errors: errors, response: message));
           } else {
-            controller.addError(
-              ServerException(originalException: payload),
-            );
+            controller.addError(ServerException(originalException: payload));
           }
         } else if (type == 'complete') {
           controller.close();
@@ -259,16 +262,18 @@ class WebSocketLink extends Link {
 
   void _sendSubscribeMessage(String id, Request req) {
     final docString = printDocumentCached(req.operation.document);
-    _channel?.sink.add(jsonEncode({
-      'id': id,
-      'type': 'subscribe',
-      'payload': {
-        'query': docString,
-        if (req.operation.operationName != null)
-          'operationName': req.operation.operationName,
-        if (req.variables.isNotEmpty) 'variables': req.variables,
-      },
-    }));
+    _channel?.sink.add(
+      jsonEncode({
+        'id': id,
+        'type': 'subscribe',
+        'payload': {
+          'query': docString,
+          if (req.operation.operationName != null)
+            'operationName': req.operation.operationName,
+          if (req.variables.isNotEmpty) 'variables': req.variables,
+        },
+      }),
+    );
   }
 
   void _sendComplete(String id) {

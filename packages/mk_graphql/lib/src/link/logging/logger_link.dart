@@ -81,9 +81,7 @@ class LoggerLink extends Link {
       if (headers != null && headers.isNotEmpty && options.requestHeader) {
         final copy = Map<String, String>.from(headers);
         if (!options.authHeader) {
-          copy.removeWhere(
-            (key, _) => key.toLowerCase() == 'authorization',
-          );
+          copy.removeWhere((key, _) => key.toLowerCase() == 'authorization');
         }
         messages.add(_encoder.convert(copy));
       }
@@ -114,7 +112,10 @@ class LoggerLink extends Link {
   }
 
   void _logResponse(
-      Response response, String operationName, Duration duration) {
+    Response response,
+    String operationName,
+    Duration duration,
+  ) {
     try {
       final messages = <String>[
         'GraphQL Request $operationName succeeded in ${duration.inMilliseconds}ms',
@@ -148,8 +149,9 @@ class LoggerLink extends Link {
 
   void _addResponseHeaders(Response response, List<String> messages) {
     try {
-      final headers =
-          response.context.entry<HttpLinkResponseContext>()?.rawHeaders;
+      final headers = response.context
+          .entry<HttpLinkResponseContext>()
+          ?.rawHeaders;
       if (headers != null && headers.isNotEmpty) {
         messages.add(_encoder.convert(headers));
       }
@@ -159,7 +161,10 @@ class LoggerLink extends Link {
   }
 
   void _logGraphQLError(
-      Response response, String operationName, Duration duration) {
+    Response response,
+    String operationName,
+    Duration duration,
+  ) {
     try {
       final errors = response.errors!;
       final errorMessages = errors.map((e) => e.message).join('; ');
@@ -171,15 +176,17 @@ class LoggerLink extends Link {
       if (options.error) {
         try {
           final errorData = errors
-              .map((e) => {
-                    'message': e.message,
-                    if (e.locations != null)
-                      'locations': e.locations!
-                          .map((l) => {'line': l.line, 'column': l.column})
-                          .toList(),
-                    if (e.path != null) 'path': e.path,
-                    if (e.extensions != null) 'extensions': e.extensions,
-                  })
+              .map(
+                (e) => {
+                  'message': e.message,
+                  if (e.locations != null)
+                    'locations': e.locations!
+                        .map((l) => {'line': l.line, 'column': l.column})
+                        .toList(),
+                  if (e.path != null) 'path': e.path,
+                  if (e.extensions != null) 'extensions': e.extensions,
+                },
+              )
               .toList();
           messages.add(_encoder.convert(errorData));
         } catch (_) {
@@ -202,8 +209,12 @@ class LoggerLink extends Link {
     }
   }
 
-  void _logLinkException(LinkException exception, String operationName,
-      Duration duration, StackTrace stackTrace) {
+  void _logLinkException(
+    LinkException exception,
+    String operationName,
+    Duration duration,
+    StackTrace stackTrace,
+  ) {
     Logger.e(
       'GraphQL Request $operationName failed at link level in ${duration.inMilliseconds}ms',
       error: exception,
@@ -212,8 +223,13 @@ class LoggerLink extends Link {
     );
   }
 
-  void _logException(String type, Object exception, String operationName,
-      Duration duration, StackTrace stackTrace) {
+  void _logException(
+    String type,
+    Object exception,
+    String operationName,
+    Duration duration,
+    StackTrace stackTrace,
+  ) {
     Logger.e(
       'GraphQL Request $operationName failed with $type in ${duration.inMilliseconds}ms',
       error: exception,

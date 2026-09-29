@@ -25,24 +25,30 @@ class _Item {
   final String description;
   const _Item(this.id, this.name, this.description);
   Map<String, dynamic> toJson() => {
-        '__typename': 'Item',
-        'id': id,
-        'name': name,
-        'description': description,
-      };
+    '__typename': 'Item',
+    'id': id,
+    'name': name,
+    'description': description,
+  };
 }
 
 class _PageData {
   final List<_Item> items;
   const _PageData(this.items);
   factory _PageData.fromJson(Map<String, dynamic> json) => _PageData(
-        (json['items'] as List)
-            .map((e) => _Item(e['id'] as String, e['name'] as String,
-                e['description'] as String))
-            .toList(),
-      );
-  Map<String, dynamic> toJson() =>
-      {'items': items.map((e) => e.toJson()).toList()};
+    (json['items'] as List)
+        .map(
+          (e) => _Item(
+            e['id'] as String,
+            e['name'] as String,
+            e['description'] as String,
+          ),
+        )
+        .toList(),
+  );
+  Map<String, dynamic> toJson() => {
+    'items': items.map((e) => e.toJson()).toList(),
+  };
 }
 
 class _Req extends GraphQLRequest<_PageData, _Vars> {
@@ -66,20 +72,21 @@ class _Req extends GraphQLRequest<_PageData, _Vars> {
     Map<String, String>? headers,
     CancelToken? cancelToken,
     _PageData? optimisticResponse,
-  }) =>
-      _Req(variables ?? this.variables);
+  }) => _Req(variables ?? this.variables);
 }
 
 _PageData _syntheticPage(int itemCount) => _PageData([
-      for (var i = 0; i < itemCount; i++)
-        _Item('item_$i', 'Name $i', 'A description for item number $i'),
-    ]);
+  for (var i = 0; i < itemCount; i++)
+    _Item('item_$i', 'Name $i', 'A description for item number $i'),
+]);
 
 void _report(String label, Stopwatch sw, int iterations) {
   final usPerOp = sw.elapsedMicroseconds / iterations;
   // ignore: avoid_print
-  print('$label: ${sw.elapsedMilliseconds}ms total, '
-      '${usPerOp.toStringAsFixed(1)}us/op ($iterations iterations)');
+  print(
+    '$label: ${sw.elapsedMilliseconds}ms total, '
+    '${usPerOp.toStringAsFixed(1)}us/op ($iterations iterations)',
+  );
 }
 
 void main() {
@@ -99,8 +106,7 @@ void main() {
     _report('writeQuery', sw, writeIterations);
   });
 
-  test(
-      'InMemoryCache.readQuery, repeated reads of one key with no writes '
+  test('InMemoryCache.readQuery, repeated reads of one key with no writes '
       'in between ($itemCount items)', () async {
     final cache = InMemoryCache();
     final req = _Req(const _Vars('1'));
@@ -114,27 +120,29 @@ void main() {
     _report('readQuery (memoized after 1st)', sw, readIterations);
   });
 
-  test('HiveCache incremental persist across distinct queries (50 items each)',
-      () async {
-    final tempDir = await Directory.systemTemp.createTemp('hive_bench_');
-    Hive.init(tempDir.path);
-    final cache = await HiveCache.open(boxName: 'bench_box');
+  test(
+    'HiveCache incremental persist across distinct queries (50 items each)',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp('hive_bench_');
+      Hive.init(tempDir.path);
+      final cache = await HiveCache.open(boxName: 'bench_box');
 
-    const hiveIterations = 100;
-    final sw = Stopwatch()..start();
-    for (var i = 0; i < hiveIterations; i++) {
-      cache.writeQuery(_Req(_Vars('$i')), _syntheticPage(50));
-      // Let this write's debounced persist actually run before the next
-      // one, so each write gets its own persist cycle — matching the
-      // realistic incremental pattern (queries spread over time), not one
-      // big batched persist covering everything.
-      await pumpEventQueue();
-    }
-    sw.stop();
-    await cache.close();
-    await Hive.deleteFromDisk();
-    if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      const hiveIterations = 100;
+      final sw = Stopwatch()..start();
+      for (var i = 0; i < hiveIterations; i++) {
+        cache.writeQuery(_Req(_Vars('$i')), _syntheticPage(50));
+        // Let this write's debounced persist actually run before the next
+        // one, so each write gets its own persist cycle — matching the
+        // realistic incremental pattern (queries spread over time), not one
+        // big batched persist covering everything.
+        await pumpEventQueue();
+      }
+      sw.stop();
+      await cache.close();
+      await Hive.deleteFromDisk();
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
 
-    _report('HiveCache persist cycle', sw, hiveIterations);
-  });
+      _report('HiveCache persist cycle', sw, hiveIterations);
+    },
+  );
 }

@@ -56,15 +56,17 @@ class _AddTypenameVisitor extends TransformingVisitor {
 
   @override
   OperationDefinitionNode visitOperationDefinitionNode(
-      OperationDefinitionNode node) {
+    OperationDefinitionNode node,
+  ) {
     return OperationDefinitionNode(
       type: node.type,
       name: node.name,
       variableDefinitions: node.variableDefinitions
           .map((v) => v.accept(this) as VariableDefinitionNode)
           .toList(),
-      directives:
-          node.directives.map((d) => d.accept(this) as DirectiveNode).toList(),
+      directives: node.directives
+          .map((d) => d.accept(this) as DirectiveNode)
+          .toList(),
       selectionSet: node.selectionSet.accept(this) as SelectionSetNode,
     );
   }
@@ -75,8 +77,9 @@ class _AddTypenameVisitor extends TransformingVisitor {
       (s) => s is FieldNode && s.name.value == '__typename',
     );
 
-    final updatedSelections =
-        node.selections.map((s) => s.accept(this) as SelectionNode).toList();
+    final updatedSelections = node.selections
+        .map((s) => s.accept(this) as SelectionNode)
+        .toList();
 
     if (!hasTypename) {
       updatedSelections.add(
@@ -93,10 +96,12 @@ class _AddTypenameVisitor extends TransformingVisitor {
     return FieldNode(
       name: node.name,
       alias: node.alias,
-      arguments:
-          node.arguments.map((a) => a.accept(this) as ArgumentNode).toList(),
-      directives:
-          node.directives.map((d) => d.accept(this) as DirectiveNode).toList(),
+      arguments: node.arguments
+          .map((a) => a.accept(this) as ArgumentNode)
+          .toList(),
+      directives: node.directives
+          .map((d) => d.accept(this) as DirectiveNode)
+          .toList(),
       selectionSet: selectionSet != null
           ? selectionSet.accept(this) as SelectionSetNode
           : null,
@@ -107,20 +112,23 @@ class _AddTypenameVisitor extends TransformingVisitor {
   InlineFragmentNode visitInlineFragmentNode(InlineFragmentNode node) {
     return InlineFragmentNode(
       typeCondition: node.typeCondition,
-      directives:
-          node.directives.map((d) => d.accept(this) as DirectiveNode).toList(),
+      directives: node.directives
+          .map((d) => d.accept(this) as DirectiveNode)
+          .toList(),
       selectionSet: node.selectionSet.accept(this) as SelectionSetNode,
     );
   }
 
   @override
   FragmentDefinitionNode visitFragmentDefinitionNode(
-      FragmentDefinitionNode node) {
+    FragmentDefinitionNode node,
+  ) {
     return FragmentDefinitionNode(
       name: node.name,
       typeCondition: node.typeCondition,
-      directives:
-          node.directives.map((d) => d.accept(this) as DirectiveNode).toList(),
+      directives: node.directives
+          .map((d) => d.accept(this) as DirectiveNode)
+          .toList(),
       selectionSet: node.selectionSet.accept(this) as SelectionSetNode,
     );
   }

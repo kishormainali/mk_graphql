@@ -261,7 +261,8 @@ Enum jsonEnum({
       ..type = MethodType.getter
       ..returns = refer('String')
       ..lambda = true
-      ..body = Code('switch (this) { ${values.entries.map((e) => "$name.${e.value} => '${e.key}',").join()} }')))
+      ..body = Code(
+          'switch (this) { ${values.entries.map((e) => "$name.${e.value} => '${e.key}',").join()} }')))
     ..methods.add(Method((m) => m
       ..name = 'fromString'
       ..static = true

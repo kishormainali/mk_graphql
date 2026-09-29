@@ -16,13 +16,13 @@ String? extractErrorCode(Map<String, dynamic>? extensions) =>
 /// [GraphQLError] (the typed, public-facing error shape returned from
 /// `GraphQLResponse`/thrown `GraphQLException`s).
 GraphQLError mapGraphQLError(gql_exec.GraphQLError error) => GraphQLError(
-      message: error.message,
-      locations: error.locations
-          ?.map((l) => GraphQLErrorLocation(line: l.line, column: l.column))
-          .toList(),
-      path: error.path?.cast<Object>(),
-      extensions: error.extensions,
-    );
+  message: error.message,
+  locations: error.locations
+      ?.map((l) => GraphQLErrorLocation(line: l.line, column: l.column))
+      .toList(),
+  path: error.path?.cast<Object>(),
+  extensions: error.extensions,
+);
 
 /// Maps a list of `gql_exec` errors to this package's [GraphQLError]s,
 /// preserving `null`.

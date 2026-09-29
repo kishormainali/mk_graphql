@@ -381,8 +381,8 @@ class GraphQLClient {
     this.maxConcurrentBackgroundRefetches,
     required Dio? ownedDio,
     required Link pipeline,
-  })  : _ownedDio = ownedDio,
-        _pipeline = pipeline;
+  }) : _ownedDio = ownedDio,
+       _pipeline = pipeline;
 
   /// Creates a [GraphQLClient] using a custom [Link] pipeline directly.
   GraphQLClient.fromLink(
@@ -395,9 +395,9 @@ class GraphQLClient {
     this.defaultCacheTime,
     this.defaultRetry,
     this.maxConcurrentBackgroundRefetches,
-  })  : cache = cache ?? InMemoryCache(),
-        _ownedDio = null,
-        _pipeline = link;
+  }) : cache = cache ?? InMemoryCache(),
+       _ownedDio = null,
+       _pipeline = link;
 
   /// Derives [accessTokenHeader]/`onTokenRefresh`/[onRevokeToken] from
   /// [refreshCallback] so [GraphQLClient] can manage its own auth session via
@@ -415,7 +415,8 @@ class GraphQLClient {
     TokenHeaderCallback? refreshTokenHeader,
     OnRefreshCallback? onTokenRefresh,
     OnRevokeTokenCallback? onRevokeToken,
-  }) _resolveAuthCallbacks({
+  })
+  _resolveAuthCallbacks({
     required TokenHeaderCallback? accessTokenHeader,
     required TokenHeaderCallback? refreshTokenHeader,
     required OnRevokeTokenCallback? onRevokeToken,
@@ -431,7 +432,8 @@ class GraphQLClient {
     }
 
     return (
-      accessTokenHeader: accessTokenHeader ??
+      accessTokenHeader:
+          accessTokenHeader ??
           (token) async => {'Authorization': 'Bearer $token'},
       // No default: refreshCallback already receives the refresh token
       // directly as a parameter (for a body/variable), so a header is only
@@ -442,19 +444,23 @@ class GraphQLClient {
         // No refresh token to call the API with — revoke straight away
         // instead of calling refreshCallback with one.
         if (currentRefreshToken == null) return null;
-        final newToken =
-            await refreshCallback(refreshClient, currentRefreshToken);
+        final newToken = await refreshCallback(
+          refreshClient,
+          currentRefreshToken,
+        );
         if (newToken == null) return null;
         // Silent: a refresh must not fire TokenStorage listeners (they drive
         // app routing). The next request reads the new token from storage.
         // createdAt is the session's login time, so keep the stored one.
         final stored = await TokenStorage.i.token;
-        await TokenStorage.i.updateToken(TokenPair(
-          accessToken: newToken.accessToken,
-          refreshToken: newToken.refreshToken,
-          createdAt: stored?.createdAt ?? newToken.createdAt,
-          updatedAt: DateTime.now(),
-        ));
+        await TokenStorage.i.updateToken(
+          TokenPair(
+            accessToken: newToken.accessToken,
+            refreshToken: newToken.refreshToken,
+            createdAt: stored?.createdAt ?? newToken.createdAt,
+            updatedAt: DateTime.now(),
+          ),
+        );
         return {'Authorization': 'Bearer ${newToken.accessToken}'};
       },
       onRevokeToken: () {
@@ -487,18 +493,20 @@ class GraphQLClient {
     // 1. AuthLink at the top of the chain (handles auth context & 401 refresh/retry)
     final hasAuth = accessTokenHeader != null || onTokenRefresh != null;
     if (hasAuth) {
-      links.add(AuthLink(
-        url: url,
-        dio: dioInstance,
-        defaultHeaders: defaultHeaders ?? const {},
-        accessTokenHeader: accessTokenHeader,
-        refreshTokenHeader: refreshTokenHeader,
-        isTokenExpired: isTokenExpired,
-        isUnauthorized: isUnauthorized,
-        onTokenRefresh: onTokenRefresh,
-        onRevokeToken: onRevokeToken,
-        refreshTimeout: refreshTimeout,
-      ));
+      links.add(
+        AuthLink(
+          url: url,
+          dio: dioInstance,
+          defaultHeaders: defaultHeaders ?? const {},
+          accessTokenHeader: accessTokenHeader,
+          refreshTokenHeader: refreshTokenHeader,
+          isTokenExpired: isTokenExpired,
+          isUnauthorized: isUnauthorized,
+          onTokenRefresh: onTokenRefresh,
+          onRevokeToken: onRevokeToken,
+          refreshTimeout: refreshTimeout,
+        ),
+      );
     }
 
     // 2. TypenameLink (injects __typename into query/mutation/subscription AST)
@@ -519,7 +527,8 @@ class GraphQLClient {
       defaultHeaders: defaultHeaders ?? const {},
     );
 
-    final subLink = subscriptionLink ??
+    final subLink =
+        subscriptionLink ??
         (wsUrl != null
             ? WebSocketLink(
                 wsUrl,
@@ -533,13 +542,13 @@ class GraphQLClient {
                     : null,
               )
             : sseUrl != null
-                ? SseLink(
-                    sseUrl,
-                    client: dioInstance,
-                    defaultHeaders: defaultHeaders ?? const {},
-                    tokenHeader: accessTokenHeader,
-                  )
-                : null);
+            ? SseLink(
+                sseUrl,
+                client: dioInstance,
+                defaultHeaders: defaultHeaders ?? const {},
+                tokenHeader: accessTokenHeader,
+              )
+            : null);
 
     if (subLink != null) {
       links.add(Link.split(_isSubscription, subLink, dioLink));
@@ -551,16 +560,16 @@ class GraphQLClient {
   }
 
   static bool _isSubscription(gql.Request req) => _operationIs(
-        req.operation.document,
-        req.operation.operationName,
-        OperationType.subscription,
-      );
+    req.operation.document,
+    req.operation.operationName,
+    OperationType.subscription,
+  );
 
   static bool _isMutation(gql.Request req) => _operationIs(
-        req.operation.document,
-        req.operation.operationName,
-        OperationType.mutation,
-      );
+    req.operation.document,
+    req.operation.operationName,
+    OperationType.mutation,
+  );
 
   /// Whether the operation named [operationName] in [document] (or, absent a
   /// name, any operation in it) is of [type] — shared by [_isMutation]/
@@ -593,13 +602,22 @@ class GraphQLClient {
   /// how mutations opt into optimistic UI updates, and stays available no
   /// matter the resolved policy.
   static FetchPolicy _resolveFetchPolicy(
-      GraphQLRequest req, FetchPolicy fallback) {
+    GraphQLRequest req,
+    FetchPolicy fallback,
+  ) {
     final policy = req.fetchPolicy ?? fallback;
     if (policy == FetchPolicy.noCache) return policy;
-    final isMutationOrSubscription = _operationIs(
-            req.documentNode, req.operationName, OperationType.mutation) ||
+    final isMutationOrSubscription =
         _operationIs(
-            req.documentNode, req.operationName, OperationType.subscription);
+          req.documentNode,
+          req.operationName,
+          OperationType.mutation,
+        ) ||
+        _operationIs(
+          req.documentNode,
+          req.operationName,
+          OperationType.subscription,
+        );
     return isMutationOrSubscription ? FetchPolicy.noCache : policy;
   }
 
@@ -667,7 +685,8 @@ class GraphQLClient {
       final response = await request(req, cancelToken: cancelToken).firstWhere(
         (r) => !r.loading || r.data != null || r.hasErrors,
         orElse: () => throw const AppServerException(
-            message: 'No response received from GraphQL server.'),
+          message: 'No response received from GraphQL server.',
+        ),
       );
       if (response.data == null ||
           (response.hasErrors && effectiveErrorPolicy == ErrorPolicy.none)) {
@@ -689,16 +708,19 @@ class GraphQLClient {
     CancelToken? cancelToken,
   }) {
     final effectiveErrorPolicy = req.errorPolicy ?? defaultErrorPolicy;
-    return request(req, cancelToken: cancelToken).map((response) {
-      if (response.data == null ||
-          (response.hasErrors && effectiveErrorPolicy == ErrorPolicy.none)) {
-        _throwFromResponse(response);
-      }
-      return response.data!;
-    }).handleError((Object e, StackTrace st) {
-      if (e is GraphQLException) throw e;
-      throw GraphQLExceptionExtension.fromException(e, st);
-    });
+    return request(req, cancelToken: cancelToken)
+        .map((response) {
+          if (response.data == null ||
+              (response.hasErrors &&
+                  effectiveErrorPolicy == ErrorPolicy.none)) {
+            _throwFromResponse(response);
+          }
+          return response.data!;
+        })
+        .handleError((Object e, StackTrace st) {
+          if (e is GraphQLException) throw e;
+          throw GraphQLExceptionExtension.fromException(e, st);
+        });
   }
 
   /// Refetches [req] bypassing cache with [FetchPolicy.networkOnly],
@@ -786,7 +808,8 @@ class GraphQLClient {
         }
         final staleTime = req.staleTime ?? defaultStaleTime;
         final writtenAt = cache.writtenAt(req);
-        final isFresh = writtenAt != null &&
+        final isFresh =
+            writtenAt != null &&
             DateTime.now().difference(writtenAt) < staleTime;
         yield GraphQLResponse<TData>(
           data: cached,
@@ -801,7 +824,10 @@ class GraphQLClient {
         final cached = cache.readQuery(req);
         if (cached != null) {
           yield GraphQLResponse<TData>(
-              data: cached, source: ResponseSource.cache, loading: true);
+            data: cached,
+            source: ResponseSource.cache,
+            loading: true,
+          );
         }
         yield* _fetchFromNetwork(req, cancelToken: cancelToken);
         break;
@@ -855,7 +881,8 @@ class GraphQLClient {
 
         final staleTime = req.staleTime ?? defaultStaleTime;
         final writtenAt = cache.writtenAt(req);
-        final isStale = writtenAt == null ||
+        final isStale =
+            writtenAt == null ||
             DateTime.now().difference(writtenAt) >= staleTime;
         if (isStale) {
           unawaited(_backgroundRefetch(req));
@@ -864,7 +891,9 @@ class GraphQLClient {
         final interval = req.refetchInterval;
         if (interval != null) {
           myIntervalTimer = Timer.periodic(
-              interval, (_) => unawaited(_backgroundRefetch(req)));
+            interval,
+            (_) => unawaited(_backgroundRefetch(req)),
+          );
           active.refetchIntervalTimers.add(myIntervalTimer!);
         }
       },
@@ -969,9 +998,9 @@ class GraphQLClient {
   }
 
   Future<void> _refetchActiveQueries() => _backgroundRefetchAll([
-        for (final active in _activeQueries.values)
-          if (active.refCount > 0) active.latestRequest,
-      ]);
+    for (final active in _activeQueries.values)
+      if (active.refCount > 0) active.latestRequest,
+  ]);
 
   /// Runs [_backgroundRefetch] for every request in [requests], honoring
   /// [maxConcurrentBackgroundRefetches] when set. Each request only starts
@@ -1061,15 +1090,18 @@ class GraphQLClient {
     }
     if (response.linkException != null) throw response.linkException!;
     throw const AppServerException(
-        message: 'Something went wrong, please try again later.');
+      message: 'Something went wrong, please try again later.',
+    );
   }
 
   Stream<GraphQLResponse<TData>> _fetchFromNetwork<TData, TVars>(
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
   }) async* {
-    await for (final response
-        in _executeNetworkRequest(req, cancelToken: cancelToken)) {
+    await for (final response in _executeNetworkRequest(
+      req,
+      cancelToken: cancelToken,
+    )) {
       if (response.data != null && !response.hasErrors) {
         cache.writeQuery(req, response.data as TData);
       }
@@ -1098,15 +1130,17 @@ class GraphQLClient {
         document: req.documentNode,
         operationName: req.operationName,
       ),
-      variables:
-          req.variables != null ? req.toJsonVars(req.variables) : const {},
+      variables: req.variables != null
+          ? req.toJsonVars(req.variables)
+          : const {},
       context: context,
     );
 
     // defaultRetry applies to queries only. Mutations (not idempotent) and
     // subscriptions (long-lived; they reconnect via their own transport link)
     // opt out of the default and retry only when the request sets its own.
-    final retryOptions = req.retry ??
+    final retryOptions =
+        req.retry ??
         (_isMutation(gqlReq) || _isSubscription(gqlReq) ? null : defaultRetry);
 
     var attempt = 1;
@@ -1126,7 +1160,8 @@ class GraphQLClient {
         return;
       } catch (e) {
         final mapped = GraphQLExceptionExtension.fromLinkException(e);
-        final canRetry = retryOptions != null &&
+        final canRetry =
+            retryOptions != null &&
             attempt < retryOptions.maxAttempts &&
             retryOptions.shouldRetry(mapped);
         if (!canRetry) {

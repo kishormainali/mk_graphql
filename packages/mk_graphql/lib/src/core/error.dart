@@ -30,12 +30,12 @@ class GraphQLError {
   }
 
   Map<String, dynamic> toJson() => {
-        'message': message,
-        if (locations != null)
-          'locations': locations!.map((e) => e.toJson()).toList(),
-        if (path != null) 'path': path,
-        if (extensions != null) 'extensions': extensions,
-      };
+    'message': message,
+    if (locations != null)
+      'locations': locations!.map((e) => e.toJson()).toList(),
+    if (path != null) 'path': path,
+    if (extensions != null) 'extensions': extensions,
+  };
 
   @override
   String toString() => 'GraphQLError(message: $message, path: $path)';
@@ -393,7 +393,8 @@ extension GraphQLExceptionExtension on GraphQLException {
       if (validationErrors is List) {
         for (final item in validationErrors) {
           if (item is Map) {
-            final field = item['field'] ??
+            final field =
+                item['field'] ??
                 item['property'] ??
                 (item['path'] is List
                     ? (item['path'] as List).join('.')
@@ -402,13 +403,15 @@ extension GraphQLExceptionExtension on GraphQLException {
 
             final itemMessages = <String>[];
             if (item['messages'] is List) {
-              itemMessages
-                  .addAll((item['messages'] as List).map((e) => e.toString()));
+              itemMessages.addAll(
+                (item['messages'] as List).map((e) => e.toString()),
+              );
             } else if (item['message'] != null) {
               itemMessages.add(item['message'].toString());
             } else if (item['constraints'] is Map) {
               itemMessages.addAll(
-                  (item['constraints'] as Map).values.map((e) => e.toString()));
+                (item['constraints'] as Map).values.map((e) => e.toString()),
+              );
             }
 
             if (fieldName != null && itemMessages.isNotEmpty) {
@@ -484,7 +487,9 @@ extension GraphQLExceptionExtension on GraphQLException {
   }
 
   static String _resolveValidationMessage(
-      List<GraphQLError> errors, List<String> allMessages) {
+    List<GraphQLError> errors,
+    List<String> allMessages,
+  ) {
     if (errors.length == 1) {
       return errors.first.message;
     }
@@ -513,7 +518,8 @@ extension GraphQLExceptionExtension on GraphQLException {
         return GraphQLExceptionExtension.fromGraphQLErrors(gErrors);
       }
       return AppServerException(
-        message: exception.response.statusMessage ??
+        message:
+            exception.response.statusMessage ??
             'Something went wrong, please try again later.',
         code: exception.response.statusCode,
         originalStackTrace: exception.originalStackTrace,
@@ -587,7 +593,8 @@ extension GraphQLExceptionExtension on GraphQLException {
         );
       }
       return AppServerException(
-        message: exception.message ??
+        message:
+            exception.message ??
             'Something went wrong, please try again later.',
         originalException: exception,
       );
@@ -603,7 +610,9 @@ extension GraphQLExceptionExtension on GraphQLException {
   }
 
   static GraphQLException fromException(
-      Object exception, StackTrace stackTrace) {
+    Object exception,
+    StackTrace stackTrace,
+  ) {
     if (exception is GraphQLException) return exception;
     if (exception is FormatException ||
         exception.toString().contains('is not a subtype of')) {

@@ -94,10 +94,10 @@ void main() {
             'validation': {
               'email': [
                 'The email must be a valid email address.',
-                'The email has already been taken.'
+                'The email has already been taken.',
               ],
-              'password': ['The password must be at least 8 characters.']
-            }
+              'password': ['The password must be at least 8 characters.'],
+            },
           },
         ),
       ];
@@ -108,10 +108,14 @@ void main() {
 
       expect(valEx.fields, containsAll(['email', 'password']));
       expect(valEx.getErrors('email').length, 2);
-      expect(valEx.getFirstError('email'),
-          'The email must be a valid email address.');
-      expect(valEx.getFirstError('password'),
-          'The password must be at least 8 characters.');
+      expect(
+        valEx.getFirstError('email'),
+        'The email must be a valid email address.',
+      );
+      expect(
+        valEx.getFirstError('password'),
+        'The password must be at least 8 characters.',
+      );
       expect(valEx.hasError('unknown'), isFalse);
       expect(valEx.getErrors('unknown'), isEmpty);
       expect(valEx.getFirstError('unknown'), isNull);
@@ -126,17 +130,13 @@ void main() {
             'validationErrors': [
               {
                 'property': 'email',
-                'constraints': {
-                  'isEmail': 'email must be an email',
-                }
+                'constraints': {'isEmail': 'email must be an email'},
               },
               {
                 'property': 'age',
-                'constraints': {
-                  'min': 'age must not be less than 18',
-                }
-              }
-            ]
+                'constraints': {'min': 'age must not be less than 18'},
+              },
+            ],
           },
         ),
       ];
@@ -201,7 +201,7 @@ void main() {
               'code': 'BAD_USER_INPUT',
               'fieldErrors': {
                 'username': ['Username is required'],
-              }
+              },
             },
           ),
         ],
@@ -210,8 +210,10 @@ void main() {
       expect(responseWithErrors.hasErrors, isTrue);
       expect(responseWithErrors.hasValidationErrors, isTrue);
       expect(responseWithErrors.validationException, isNotNull);
-      expect(responseWithErrors.validationErrors?['username']?.first,
-          'Username is required');
+      expect(
+        responseWithErrors.validationErrors?['username']?.first,
+        'Username is required',
+      );
 
       const cleanResponse = GraphQLResponse<_TestData>(
         source: ResponseSource.network,
@@ -224,32 +226,36 @@ void main() {
     });
 
     test(
-        'GraphQLClient.future throws ValidationException on validation failure',
-        () async {
-      final client = GraphQLClient.fromLink(
-        const _MockErrorLink([
-          gql.GraphQLError(
-            message: 'Invalid email format',
-            extensions: {
-              'code': 'BAD_USER_INPUT',
-              'field': 'email',
-            },
-          ),
-        ]),
-      );
+      'GraphQLClient.future throws ValidationException on validation failure',
+      () async {
+        final client = GraphQLClient.fromLink(
+          const _MockErrorLink([
+            gql.GraphQLError(
+              message: 'Invalid email format',
+              extensions: {'code': 'BAD_USER_INPUT', 'field': 'email'},
+            ),
+          ]),
+        );
 
-      expect(
-        () => client.future(_TestReq(const _TestVars('invalid-email'))),
-        throwsA(
-          isA<ValidationException>()
-              .having((e) => e.hasError('email'), 'hasError email', isTrue)
-              .having((e) => e.getFirstError('email'), 'getFirstError email',
-                  'Invalid email format')
-              .having((e) => e.graphqlErrors?.first.message, 'graphqlErrors',
-                  'Invalid email format'),
-        ),
-      );
-    });
+        expect(
+          () => client.future(_TestReq(const _TestVars('invalid-email'))),
+          throwsA(
+            isA<ValidationException>()
+                .having((e) => e.hasError('email'), 'hasError email', isTrue)
+                .having(
+                  (e) => e.getFirstError('email'),
+                  'getFirstError email',
+                  'Invalid email format',
+                )
+                .having(
+                  (e) => e.graphqlErrors?.first.message,
+                  'graphqlErrors',
+                  'Invalid email format',
+                ),
+          ),
+        );
+      },
+    );
 
     test('GraphQLClient.stream emits ValidationException on error', () async {
       final client = GraphQLClient.fromLink(
@@ -259,8 +265,8 @@ void main() {
             extensions: {
               'code': 'VALIDATION_FAILED',
               'validation': {
-                'email': ['Email already taken']
-              }
+                'email': ['Email already taken'],
+              },
             },
           ),
         ]),
@@ -268,11 +274,13 @@ void main() {
 
       expect(
         client.stream(_TestReq(const _TestVars('test@test.com'))),
-        emitsError(isA<ValidationException>().having(
-          (e) => e.getFirstError('email'),
-          'email error',
-          'Email already taken',
-        )),
+        emitsError(
+          isA<ValidationException>().having(
+            (e) => e.getFirstError('email'),
+            'email error',
+            'Email already taken',
+          ),
+        ),
       );
     });
   });

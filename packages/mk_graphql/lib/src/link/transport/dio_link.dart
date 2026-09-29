@@ -33,9 +33,9 @@ class DioLinkParserException extends ResponseFormatException {
     required StackTrace? originalStackTrace,
     required this.response,
   }) : super(
-          originalException: originalException,
-          originalStackTrace: originalStackTrace,
-        );
+         originalException: originalException,
+         originalStackTrace: originalStackTrace,
+       );
 }
 
 /// Exception thrown when a server error occurs in [DioLink].
@@ -50,19 +50,20 @@ class DioLinkServerException extends ServerException {
     StackTrace? originalStackTrace,
     int? statusCode,
   }) : super(
-          parsedResponse: parsedResponse,
-          statusCode: statusCode,
-          originalException: originalException,
-          originalStackTrace: originalStackTrace,
-        );
+         parsedResponse: parsedResponse,
+         statusCode: statusCode,
+         originalException: originalException,
+         originalStackTrace: originalStackTrace,
+       );
 
   @override
   String toString() {
     final dynamic data = response.data;
     String plain = '...';
     if (data is String) {
-      plain =
-          data.length > 80 ? data.replaceRange(80, data.length, '...') : data;
+      plain = data.length > 80
+          ? data.replaceRange(80, data.length, '...')
+          : data;
     }
     return 'DioLinkServerException(status: ${response.statusCode}, response: ${parsedResponse ?? plain})';
   }
@@ -158,7 +159,8 @@ LinkException classifyDioException(dio.DioException e, StackTrace stackTrace) {
       );
     case dio.DioExceptionType.badResponse:
       return DioLinkServerException(
-        response: e.response ??
+        response:
+            e.response ??
             dio.Response(
               requestOptions: e.requestOptions,
               statusCode: e.response?.statusCode,
@@ -244,16 +246,16 @@ class DioLink extends Link {
   Stream<Response> request(Request request, [NextLink? forward]) async* {
     final dio.Response<Map<String, dynamic>> dioResponse =
         await _executeDioRequest(
-      request: request,
-      headers: <String, String>{
-        dio.Headers.acceptHeader:
-            'application/graphql-response+json, application/json, */*',
-        dio.Headers.contentTypeHeader: dio.Headers.jsonContentType,
-        ...defaultHeaders,
-        ..._getHttpLinkHeaders(request),
-      },
-      isQuery: _isQuery(request),
-    );
+          request: request,
+          headers: <String, String>{
+            dio.Headers.acceptHeader:
+                'application/graphql-response+json, application/json, */*',
+            dio.Headers.contentTypeHeader: dio.Headers.jsonContentType,
+            ...defaultHeaders,
+            ..._getHttpLinkHeaders(request),
+          },
+          isQuery: _isQuery(request),
+        );
 
     if ((dioResponse.statusCode ?? 200) >= 300 ||
         (dioResponse.data!['data'] == null &&
@@ -291,8 +293,9 @@ class DioLink extends Link {
     final defs = request.operation.document.definitions
         .whereType<OperationDefinitionNode>();
     if (request.operation.operationName != null) {
-      final matching = defs
-          .where((node) => node.name?.value == request.operation.operationName);
+      final matching = defs.where(
+        (node) => node.name?.value == request.operation.operationName,
+      );
       if (matching.isNotEmpty) {
         return matching.first.type == OperationType.query;
       }
@@ -301,10 +304,9 @@ class DioLink extends Link {
   }
 
   dynamic _prepareRequestBody(Request request) {
-    final body = _encodeAttempter(
+    final body = _encodeAttempter(request, serializer.serializeRequest)(
       request,
-      serializer.serializeRequest,
-    )(request);
+    );
 
     // A cheap existence check first: the overwhelmingly common request has
     // no `Upload` scalar at all, and without this, every single request
@@ -331,9 +333,8 @@ class DioLink extends Link {
     )(body);
 
     return dio.FormData.fromMap(
-      <String, dynamic>{
-        'operations': encodedBody,
-      }..addAll(_generateFileFormBody(fileMap)),
+      <String, dynamic>{'operations': encodedBody}
+        ..addAll(_generateFileFormBody(fileMap)),
     );
   }
 
@@ -345,23 +346,19 @@ class DioLink extends Link {
   T Function(V) _encodeAttempter<T, V>(
     Request request,
     T Function(V) encoder,
-  ) =>
-      (V input) {
-        try {
-          return encoder(input);
-        } catch (e, stackTrace) {
-          throw RequestFormatException(
-            originalException: e,
-            originalStackTrace: stackTrace,
-            request: request,
-          );
-        }
-      };
+  ) => (V input) {
+    try {
+      return encoder(input);
+    } catch (e, stackTrace) {
+      throw RequestFormatException(
+        originalException: e,
+        originalStackTrace: stackTrace,
+        request: request,
+      );
+    }
+  };
 
-  Context _updateResponseContext(
-    Response response,
-    dio.Response httpResponse,
-  ) {
+  Context _updateResponseContext(Response response, dio.Response httpResponse) {
     try {
       return response.context.withEntry(
         HttpLinkResponseContext(
@@ -385,18 +382,18 @@ class DioLink extends Link {
     try {
       final dynamic body = _prepareRequestBody(request);
       dio.Response<dynamic> res;
-      final dio.CancelToken? cancelToken =
-          request.context.entry<DioLinkCancelTokenContextEntry>()?.token;
+      final dio.CancelToken? cancelToken = request.context
+          .entry<DioLinkCancelTokenContextEntry>()
+          ?.token;
 
       final useGet =
           useGETForQueries && body is Map<String, dynamic> && isQuery;
       if (useGet) {
         res = await client.getUri<dynamic>(
           Uri.parse(endpoint).replace(
-            queryParameters: _encodeAttempter(
-              request,
-              _encodeAsUriParams,
-            )(body),
+            queryParameters: _encodeAttempter(request, _encodeAsUriParams)(
+              body,
+            ),
           ),
           cancelToken: cancelToken,
           options: dio.Options(
@@ -515,21 +512,25 @@ class DioLink extends Link {
     currentMap ??= <String, dio.MultipartFile>{};
     if (body is Map<String, dynamic>) {
       for (final element in body.entries) {
-        currentMap.addAll(_extractFlattenedFileMap(
-          element.value,
-          currentMap: currentMap,
-          currentPath: List<String>.from(currentPath)..add(element.key),
-        ));
+        currentMap.addAll(
+          _extractFlattenedFileMap(
+            element.value,
+            currentMap: currentMap,
+            currentPath: List<String>.from(currentPath)..add(element.key),
+          ),
+        );
       }
       return currentMap;
     }
     if (body is List<dynamic>) {
       for (int i = 0; i < body.length; i++) {
-        currentMap.addAll(_extractFlattenedFileMap(
-          body[i],
-          currentMap: currentMap,
-          currentPath: List<String>.from(currentPath)..add(i.toString()),
-        ));
+        currentMap.addAll(
+          _extractFlattenedFileMap(
+            body[i],
+            currentMap: currentMap,
+            currentPath: List<String>.from(currentPath)..add(i.toString()),
+          ),
+        );
       }
       return currentMap;
     }
@@ -540,7 +541,8 @@ class DioLink extends Link {
   }
 
   static Map<String, dynamic> _generateFileFormBody(
-      Map<String, dio.MultipartFile> fileMap) {
+    Map<String, dio.MultipartFile> fileMap,
+  ) {
     final Map<String, List<String>> fileMapping = {};
     final List<dio.MultipartFile> fileList = [];
     final entries = fileMap.entries.toList(growable: false);

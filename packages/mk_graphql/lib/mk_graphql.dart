@@ -12,8 +12,7 @@ export 'src/core/retry_options.dart';
 export 'package:dio/dio.dart' show CancelToken;
 export 'package:gql/ast.dart' show DocumentNode;
 
-export 'src/auth/token_pair.dart';
-export 'src/auth/token_storage.dart';
+export 'package:token_storage/token_storage.dart';
 export 'src/link/auth/auth_link.dart';
 export 'src/link/transport/batch_link.dart';
 export 'src/link/transport/dio_link.dart';

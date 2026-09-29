@@ -12,7 +12,7 @@ In your `pubspec.yaml`:
 dependencies:
   flutter:
     sdk: flutter
-  mk_graphql: ^1.1.0
+  mk_graphql: ^1.2.2
 ```
 
 
@@ -62,17 +62,18 @@ AuthLink?  →  TypenameLink?  →  LoggerLink  →  split(subscription?, WebSoc
 See [Link Pipeline](links.md) for details on customizing links or using `GraphQLClient.fromLink(...)`.
 
 `GraphQLClient` reads and writes tokens through the `TokenStorage.i` singleton
-— it never needs app-side storage plumbing when `refreshCallback` is
-configured. On explicit logout, call `TokenStorage.i.deleteToken()` and
+(from [`token_storage`](https://pub.dev/packages/token_storage), re-exported by
+`mk_graphql`; call `await TokenStorage.init()` once at startup) — it never needs app-side storage plumbing when `refreshCallback` is
+configured. On explicit logout, call `TokenStorage.i.clearToken()` and
 `AuthLink.notifyRevokeToken()` to drive app-wide auth state (e.g. navigate to
 the login screen) via `GraphQLClient.registerRevokeTokenListener(...)`.
 
 `TokenStorage.i.setTokenListener(...)` fires when a session is saved
-(`saveToken`, e.g. on login) and when it is cleared (`deleteToken`, with
+(`saveToken`, e.g. on login) and when it is cleared (`clearToken`, with
 `null`) — but **not** when `refreshCallback` refreshes the tokens. A refresh is
 written silently via `TokenStorage.i.updateToken(...)`, so app routing driven by
 the listener isn't rebuilt; the next request just picks up the new tokens from
-storage. `TokenPair.createdAt`/`updatedAt` (from `TokenStorage.i.getToken()`)
+storage. `TokenPair.createdAt`/`updatedAt` (from `TokenStorage.i.token`)
 record when the session started and when it was last refreshed. See
 [Authentication & Token Storage](authentication.md) for the full picture.
 

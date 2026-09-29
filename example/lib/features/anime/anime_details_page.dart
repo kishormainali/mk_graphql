@@ -79,7 +79,7 @@ class _AnimeDetailsView extends StatelessWidget {
                   media.coverImage?.extraLarge ?? media.coverImage?.large;
               final titleEnglish = media.title?.english;
               final titleRomaji = media.title?.romaji ?? 'Unknown Title';
-              final titleNative = media.title?.gNative;
+              final titleNative = media.title?.native;
               final description = _cleanHtml(media.description);
               final genres = media.genres?.whereType<String>().toList() ?? [];
 

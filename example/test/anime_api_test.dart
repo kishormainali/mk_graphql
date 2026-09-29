@@ -283,7 +283,7 @@ void main() {
       expect(anime!.id, equals(16498));
       expect(anime.title!.english, equals('Attack on Titan'));
       expect(anime.title!.romaji, equals('Shingeki no Kyojin'));
-      expect(anime.title!.gNative, equals('進撃の巨人'));
+      expect(anime.title!.native, equals('進撃の巨人'));
       expect(anime.averageScore, equals(85));
       expect(anime.episodes, equals(25));
       expect(anime.status, equals(MediaStatus.finished));

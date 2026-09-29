@@ -240,16 +240,37 @@ Class freezedRequestClass({
 /// `@JsonEnum() enum Name { @JsonValue("WIRE_VALUE") dartName, ... }` — every
 /// schema enum this generator emits. [values] maps each wire value (e.g.
 /// `ADMIN_USER`) to its Dart identifier (e.g. `adminUser`).
+///
+/// Each enum also gets `static Name? fromString(String? value)`, which maps a
+/// wire value back to its constant — `null` for `null` or an unknown value —
+/// and a `String get value` returning the constant's wire value, so the two
+/// round-trip.
 Enum jsonEnum({
   required String name,
   required Map<String, String> values,
 }) {
+  final cases = values.entries.map((e) => "'${e.key}' => $name.${e.value},");
   return Enum((b) => b
     ..name = name
     ..annotations.add(CodeExpression(Code('JsonEnum()')))
     ..values.addAll(values.entries.map((e) => EnumValue((v) => v
       ..name = e.value
-      ..annotations.add(CodeExpression(Code('JsonValue("${e.key}")')))))));
+      ..annotations.add(CodeExpression(Code('JsonValue("${e.key}")'))))))
+    ..methods.add(Method((m) => m
+      ..name = 'value'
+      ..type = MethodType.getter
+      ..returns = refer('String')
+      ..lambda = true
+      ..body = Code('switch (this) { ${values.entries.map((e) => "$name.${e.value} => '${e.key}',").join()} }')))
+    ..methods.add(Method((m) => m
+      ..name = 'fromString'
+      ..static = true
+      ..returns = refer('$name?')
+      ..requiredParameters.add(Parameter((p) => p
+        ..name = 'value'
+        ..type = refer('String?')))
+      ..lambda = true
+      ..body = Code('switch (value) { ${cases.join()} _ => null }'))));
 }
 
 Parameter _operationParam(String rawName, FieldTypeInfo info) {

@@ -4,7 +4,7 @@ A modern, streamlined, high-performance GraphQL ecosystem for Dart & Flutter.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Dart](https://img.shields.io/badge/Dart-3.6+-0175C2.svg?logo=dart)](https://dart.dev)
-[![Flutter](https://img.shields.io/badge/Flutter-3.27+-02569B.svg?logo=flutter)](https://flutter.dev)
+[![Flutter](https://img.shields.io/badge/Flutter-3.35+-02569B.svg?logo=flutter)](https://flutter.dev)
 
 `mk_graphql` provides a complete GraphQL toolchain:
 - **`mk_graphql`**: Lightweight runtime client with normalized caching, composable links (HTTP, SSE, WebSockets, Uploads, Auth), robust error handling (with field-level validation errors), refetch, and automatic pagination.
@@ -33,14 +33,14 @@ Add the runtime packages to `dependencies` and the generator tools to `dev_depen
 dependencies:
   flutter:
     sdk: flutter
-  mk_graphql: ^1.0.1
+  mk_graphql: ^1.2.2
   freezed_annotation: ^3.1.0
   json_annotation: ^4.12.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  mk_graphql_generator: ^1.0.1
+  mk_graphql_generator: ^1.2.2
   build_runner: ^2.16.0
   freezed: ^4.0.1
   json_serializable: ^6.14.1
@@ -167,7 +167,7 @@ dart run build_runner watch --delete-conflicting-outputs
 This generates:
 - **Shared Models**: `lib/shared/generated/models/` containing schema models.
 - **Partial Models**: Named `${Type}PartialModel` (e.g. `CountryPartialModel`) when a query requests a specific subset of schema fields.
-- **Enums & Inputs**: Strongly typed `@JsonValue` enums and `@freezed` input classes.
+- **Enums & Inputs**: Strongly typed `@JsonValue` enums (each with `value` and `fromString` for wire-value conversion) and `@freezed` input classes.
 - **Operation Requests**: `GetCountriesReq`, `GetUserReq` with serialization and parsing built-in.
 - **Client Extensions**: Strongly typed methods directly on `GraphQLClient` (e.g. `client.getCountries(...)`, `client.getUser(...)`).
 

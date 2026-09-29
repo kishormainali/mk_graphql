@@ -192,6 +192,46 @@ void main() {
       expect(enumContent, isNot(contains('STANDARD_USER,')));
     });
 
+    test('enums get a static fromString mapping wire values back to constants',
+        () async {
+      const graphqlContent = '''
+        enum UserRole {
+          ADMIN_USER
+          STANDARD_USER
+        }
+
+        type Query {
+          role: UserRole
+        }
+      ''';
+
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
+        content: graphqlContent,
+        inputPath: 'schema.graphql',
+      );
+
+      final enumContent = bundle.files['generated/enums/enums.dart']!;
+      expect(enumContent, contains('static UserRole? fromString(String? value)'));
+      expect(enumContent, contains("'ADMIN_USER' => UserRole.adminUser"));
+      expect(enumContent, contains("'STANDARD_USER' => UserRole.standardUser"));
+      expect(enumContent, contains('_ => null'));
+      expect(enumContent, contains('String get value'));
+      expect(enumContent, contains("UserRole.adminUser => 'ADMIN_USER'"));
+      expect(enumContent, contains("UserRole.standardUser => 'STANDARD_USER'"));
+    });
+
+    test('enum values named value/fromString are escaped to avoid clashing',
+        () async {
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
+        content: 'enum Kind { VALUE FROM_STRING OTHER } type Query { k: Kind }',
+        inputPath: 'schema.graphql',
+      );
+      final enumContent = bundle.files['generated/enums/enums.dart']!;
+      expect(enumContent, contains('gValue,'));
+      expect(enumContent, contains('gFromString,'));
+      expect(enumContent, contains("Kind.gValue => 'VALUE'"));
+    });
+
     test('.gql schema file produces the same structured output as .graphql',
         () async {
       const graphqlContent = '''

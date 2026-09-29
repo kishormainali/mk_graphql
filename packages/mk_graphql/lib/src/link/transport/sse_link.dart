@@ -7,7 +7,7 @@ import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 import 'dio_link.dart';
 import '../auth/auth_link.dart';
-import '../../auth/token_storage.dart';
+import 'package:token_storage/token_storage.dart';
 import '../../core/document_print_cache.dart';
 
 /// Terminating [Link] for GraphQL over Server-Sent Events (SSE).

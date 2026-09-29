@@ -1,7 +1,7 @@
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 
-import '../../auth/token_storage.dart';
+import 'package:token_storage/token_storage.dart';
 import 'auth_types.dart';
 
 /// Attaches a refresh-token header callback's headers (e.g. `Authorization:

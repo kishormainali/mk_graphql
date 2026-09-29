@@ -1,3 +1,13 @@
+## 1.2.2
+
+- **Breaking**: the built-in `TokenStorage` and `TokenPair` are removed in favour of the [`token_storage`](https://pub.dev/packages/token_storage) package, which `mk_graphql` now depends on and re-exports (`import 'package:mk_graphql/mk_graphql.dart'` still gives you both). `mk_graphql` no longer depends on `flutter_secure_storage`, `shared_preferences` or `equatable` directly.
+  - Call `await TokenStorage.init()` once at startup (replaces `clearOnInstall()`, which also handled the fresh-install wipe).
+  - `TokenPair` is no longer `const` (its `createdAt`/`updatedAt` default to `DateTime.now()` when omitted). On a refresh the client still keeps the stored `createdAt` and stamps `updatedAt` itself.
+  - API renames: `getToken()` → `token`, `deleteToken()` → `clearToken()`. `setTokenListener` now takes a `void Function(TokenPair?)` (was the access token string) and holds a single listener (a second call replaces the first instead of adding one).
+  - Storage layout changed (a single namespaced JSON entry instead of four keys), so existing sessions are not migrated: users are logged out once after upgrading.
+  - New from the package: `TokenPair.isExpired`, `TokenStorage.hasToken`/`isTokenExpired`, and generic secure key-value storage (`put`/`get`/`putObject`/`getObject`/`remove`/`watchKey`).
+  - Minimum SDK raised to Dart 3.9 / Flutter 3.35 to match `token_storage`.
+
 ## 1.2.1
 
 - **New**: mutations and subscriptions now force `FetchPolicy.noCache` unconditionally — enforced centrally in `GraphQLClient.request()`, regardless of the client's `defaultFetchPolicy` or a per-request `fetchPolicy` override (a hand-built request, or a future generator default, can no longer make a mutation/subscription read or write the normalized cache under its own operation key). `GraphQLRequest.optimisticResponse` is unaffected — it still writes to the optimistic layer other *queries* read from, which is how a mutation drives an optimistic UI update elsewhere in the cache.

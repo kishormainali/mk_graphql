@@ -15,12 +15,12 @@ Companion package (optional, recommended): `mk_graphql_generator` — a `build_r
 dependencies:
   flutter:
     sdk: flutter
-  mk_graphql: ^1.2.1
+  mk_graphql: ^1.2.2
 
 # Optional but recommended: generates GraphQLRequest classes from .graphql files
 dev_dependencies:
   build_runner: ^2.4.0
-  mk_graphql_generator: ^1.2.1
+  mk_graphql_generator: ^1.2.2
 ```
 
 ```bash
@@ -265,60 +265,71 @@ Header names are case-insensitive. A `Dio` instance passed via `dio:` is never m
 
 ## 4. Authentication & Token Storage
 
-`GraphQLClient` can manage a login session end-to-end: attach the access token to every request, refresh it on a 401, retry the failed requests, and revoke the session when refresh isn't possible. The session lives in `TokenStorage.i`, a secure, app-wide singleton (`flutter_secure_storage`-backed).
+`GraphQLClient` can manage a login session end-to-end: attach the access token to every request, refresh it on a 401, retry the failed requests, and revoke the session when refresh isn't possible. The session lives in `TokenStorage.i`, the secure, app-wide singleton from the `token_storage` package (re-exported by `mk_graphql`). Call `await TokenStorage.init()` once at startup, before creating the client.
 
 ### `TokenPair`
 
+From `token_storage`, re-exported by `mk_graphql`:
+
 ```dart
-const TokenPair({
+TokenPair({
   required String accessToken,
   String? refreshToken,
-  DateTime? createdAt,   // when the session's tokens were first issued (preserved across refreshes)
-  DateTime? updatedAt,   // when the tokens were last written — login, then every refresh
+  DateTime? createdAt,   // defaults to now; when the session's tokens were first issued
+  DateTime? updatedAt,   // defaults to now; when the tokens were last written — login, then every refresh
 });
+// also: bool get isExpired (expired JWT), toJson(), TokenPair.fromJson(...)
 ```
 
-Leave `createdAt`/`updatedAt` `null` when constructing one yourself — `TokenStorage` stamps them (login: both = now; refresh: `updatedAt` = now, `createdAt` kept).
+Both timestamps default to now — normally omit them. `TokenPair` is not `const`. On refresh the client keeps the stored `createdAt` and stamps `updatedAt` itself.
 
 ### `TokenStorage.i`
 
 | Member | Description |
 |---|---|
-| `saveToken(TokenPair)` | Persists a new session (**login**). Notifies listeners with the access token. |
-| `updateToken(TokenPair)` | Persists a **refreshed** pair. Keeps `createdAt`, sets `updatedAt` to now. **Does not notify listeners.** |
-| `deleteToken()` | Clears tokens and both timestamps (**logout/revoke**). Notifies listeners with `null`. |
-| `getToken()` | The stored `TokenPair?` — `null` when logged out. |
+| `TokenStorage.init()` | Static; call once at startup, before anything else. Also wipes stale credentials on the first launch after a reinstall. |
+| `saveToken(TokenPair)` | Persists a new session (**login**). Notifies the listener with the pair. |
+| `updateToken(TokenPair)` | Persists a **refreshed** pair. **Does not notify the listener.** |
+| `clearToken()` | Clears the stored pair (**logout/revoke**). Notifies the listener with `null`. |
+| `token` | The stored `TokenPair?` — `null` when logged out. |
 | `accessToken` / `refreshToken` | Convenience getters for the two token strings (`null` when absent). |
-| `setTokenListener(listener)` | Adds a `void Function(String?)` — the new access token on `saveToken`, `null` on `deleteToken`. **Not called on refresh.** |
-| `removeTokenListener()` | Removes every listener added with `setTokenListener`. |
-| `clearOnInstall()` | Call once at startup: wipes credentials on the first launch after a reinstall. |
+| `hasToken` / `isTokenExpired` | Whether a pair is stored / whether its access token is an expired JWT. |
+| `setTokenListener(listener)` | Sets a `void Function(TokenPair?)` — the new pair on `saveToken`, `null` on `clearToken`. Replaces any previous listener. **Not called on refresh.** |
+| `removeTokenListener()` | Removes the listener. |
 
-**Critical for UI-driving code:** a token refresh is deliberately silent. If you rebuild your router (or any auth-dependent UI) from `setTokenListener`, do not expect it to fire on refresh — it only fires on login (`saveToken`) and logout/revoke (`deleteToken`). The client always uses `updateToken` for its own refreshes, so a refresh never triggers a route rebuild; the very next request already reads the new token from storage. If you need to react to a refresh specifically (e.g. reconnect a websocket with the new token), read `TokenStorage.i.getToken()` at the point you need it and compare `updatedAt` — there's no dedicated refresh notification.
+**Critical for UI-driving code:** a token refresh is deliberately silent. If you rebuild your router (or any auth-dependent UI) from `setTokenListener`, do not expect it to fire on refresh — it only fires on login (`saveToken`) and logout/revoke (`clearToken`). The client always uses `updateToken` for its own refreshes, so a refresh never triggers a route rebuild; the very next request already reads the new token from storage. If you need to react to a refresh specifically (e.g. reconnect a websocket with the new token), read `TokenStorage.i.token` at the point you need it and compare `updatedAt` — there's no dedicated refresh notification.
 
 ### Session lifecycle
 
 ```dart
+// 0. Once at startup, before creating the client.
+await TokenStorage.init();
+
 // 1. Configure once. The client reads/writes TokenStorage.i itself.
 final client = GraphQLClient(
   url: 'https://api.example.com/graphql',
   refreshCallback: (refreshClient, refreshToken) async {
     final res = await refreshClient.future(RefreshMutation(...));
-    return TokenPair(accessToken: res.accessToken, refreshToken: res.refreshToken);
+    return TokenPair(
+      accessToken: res.accessToken,
+      refreshToken: res.refreshToken,
+    );
   },
 );
 
 // 2. React to login/logout (e.g. drive the router).
-TokenStorage.i.setTokenListener((accessToken) {
-  router.replaceAll([accessToken == null ? const LoginRoute() : const HomeRoute()]);
+TokenStorage.i.setTokenListener((token) {
+  router.replaceAll([token == null ? const LoginRoute() : const HomeRoute()]);
 });
 
 // 3. Login: store the session from your login mutation.
-await TokenStorage.i.saveToken(
-  TokenPair(accessToken: data.accessToken, refreshToken: data.refreshToken),
-);
+await TokenStorage.i.saveToken(TokenPair(
+  accessToken: data.accessToken,
+  refreshToken: data.refreshToken,
+));
 
 // 4. Logout.
-await TokenStorage.i.deleteToken();
+await TokenStorage.i.clearToken();
 ```
 
 ### What happens on an unauthorized response
@@ -326,7 +337,7 @@ await TokenStorage.i.deleteToken();
 1. `AuthLink` classifies the failure (default: `UNAUTHORIZED`/`UNAUTHENTICATED`/401 → refresh; `FORBIDDEN`/403 → revoke immediately, no refresh attempted; override with `isUnauthorized`).
 2. On **refresh**, the client reads the stored refresh token and calls `refreshCallback(refreshClient, refreshToken)` once — concurrent failures share the same in-flight refresh.
 3. On success, `TokenStorage.i.updateToken(...)` runs (silent) and the failed requests are retried once with the new access token.
-4. If it returns `null`/throws, or no refresh token is stored, or the failure classified as revoke: `TokenStorage.i.deleteToken()` runs (→ `setTokenListener` fires with `null`), `onRevokeToken` (if passed) is called, and every `GraphQLClient.registerRevokeTokenListener` listener fires. The real cause still reaches the caller as a thrown exception.
+4. If it returns `null`/throws, or no refresh token is stored, or the failure classified as revoke: `TokenStorage.i.clearToken()` runs (→ `setTokenListener` fires with `null`), `onRevokeToken` (if passed) is called, and every `GraphQLClient.registerRevokeTokenListener` listener fires. The real cause still reaches the caller as a thrown exception.
 
 `GraphQLClient(refreshTimeout: ...)` bounds how long a single `refreshCallback` call may take before it's treated as a failed refresh (same outcome as it throwing — the session is revoked). `null` (the default) waits indefinitely. Set this if your refresh endpoint can hang, so a stuck refresh doesn't block every request queued behind it forever.
 
@@ -334,10 +345,10 @@ await TokenStorage.i.deleteToken();
 
 | Listener | Fires on | Not on |
 |---|---|---|
-| `TokenStorage.i.setTokenListener` | login (`saveToken`), logout/revoke (`deleteToken`) | refresh |
-| `GraphQLClient.registerRevokeTokenListener` | revoke only (refresh failed, no refresh token, `AuthFailure.revoke`) | login, refresh, a manual `deleteToken()` |
+| `TokenStorage.i.setTokenListener` | login (`saveToken`), logout/revoke (`clearToken`) | refresh |
+| `GraphQLClient.registerRevokeTokenListener` | revoke only (refresh failed, no refresh token, `AuthFailure.revoke`) | login, refresh, a manual `clearToken()` |
 
-Use `setTokenListener` for "the auth state changed" and `registerRevokeTokenListener` for "the server ended my session". On an explicit logout, call `deleteToken()` directly.
+Use `setTokenListener` for "the auth state changed" and `registerRevokeTokenListener` for "the server ended my session". On an explicit logout, call `clearToken()` directly.
 
 ```dart
 GraphQLClient.registerRevokeTokenListener(() {

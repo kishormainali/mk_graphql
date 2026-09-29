@@ -5,8 +5,7 @@ import 'package:gql/ast.dart';
 import 'package:gql_exec/gql_exec.dart' as gql;
 import 'package:gql_link/gql_link.dart';
 
-import '../auth/token_pair.dart';
-import '../auth/token_storage.dart';
+import 'package:token_storage/token_storage.dart';
 import '../cache/cache.dart';
 import '../cache/in_memory_cache.dart';
 import '../core/document_cache.dart' as doc_cache;
@@ -41,7 +40,7 @@ import '../link/transport/websocket_link.dart';
 /// returned [TokenPair] with [TokenStorage.updateToken] — so
 /// [TokenStorage.setTokenListener] listeners are *not* notified — and retries
 /// the failed requests. If the refresh fails (or no refresh token is stored)
-/// the session is revoked: [TokenStorage.deleteToken] runs (notifying
+/// the session is revoked: [TokenStorage.clearToken] runs (notifying
 /// listeners with `null`), `onRevokeToken` is called, and every listener
 /// added with [registerRevokeTokenListener] fires. Log in with
 /// [TokenStorage.saveToken]; see also [isAuthenticated].
@@ -448,12 +447,19 @@ class GraphQLClient {
         if (newToken == null) return null;
         // Silent: a refresh must not fire TokenStorage listeners (they drive
         // app routing). The next request reads the new token from storage.
-        await TokenStorage.i.updateToken(newToken);
+        // createdAt is the session's login time, so keep the stored one.
+        final stored = await TokenStorage.i.token;
+        await TokenStorage.i.updateToken(TokenPair(
+          accessToken: newToken.accessToken,
+          refreshToken: newToken.refreshToken,
+          createdAt: stored?.createdAt ?? newToken.createdAt,
+          updatedAt: DateTime.now(),
+        ));
         return {'Authorization': 'Bearer ${newToken.accessToken}'};
       },
       onRevokeToken: () {
         onRevokeToken?.call();
-        TokenStorage.i.deleteToken();
+        TokenStorage.i.clearToken();
       },
     );
   }

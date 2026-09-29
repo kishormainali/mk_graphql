@@ -115,6 +115,10 @@ void main() {
   SharedPreferencesAsyncPlatform.instance =
       InMemorySharedPreferencesAsync.empty();
 
+  setUpAll(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    await TokenStorage.init();
+  });
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
   /// Builds a client over [adapter] (on [callerDio] when given), runs [req]
@@ -206,7 +210,7 @@ void main() {
       expect(wire.seen.single.headers['Authorization'], equals('Basic static'));
 
       await TokenStorage.i
-          .saveToken(const TokenPair(accessToken: 'stored', refreshToken: 'r'));
+          .saveToken(TokenPair(accessToken: 'stored', refreshToken: 'r'));
       wire = await send({'Authorization': 'Basic static'},
           refreshCallback: await noRefresh());
       expect(
@@ -215,7 +219,7 @@ void main() {
 
     test('reach the token-refresh request and the retry after it', () async {
       await TokenStorage.i.saveToken(
-          const TokenPair(accessToken: 'old', refreshToken: 'old-r'));
+          TokenPair(accessToken: 'old', refreshToken: 'old-r'));
 
       final wire = _RecordingAdapter(
         respond: (n) => n == 1
@@ -228,7 +232,7 @@ void main() {
         refreshCallback: (refreshClient, refreshToken) async {
           await refreshClient
               .future(_Req(doc: 'mutation Refresh { r { id } }'));
-          return const TokenPair(accessToken: 'new', refreshToken: 'new-r');
+          return TokenPair(accessToken: 'new', refreshToken: 'new-r');
         },
       );
 
@@ -305,7 +309,7 @@ void main() {
 
       test('still reach the token-refresh request', () async {
         await TokenStorage.i.saveToken(
-            const TokenPair(accessToken: 'old', refreshToken: 'old-r'));
+            TokenPair(accessToken: 'old', refreshToken: 'old-r'));
         final callerDio = dio.Dio();
         final wire = _RecordingAdapter(
           respond: (n) => n == 1
@@ -320,7 +324,7 @@ void main() {
           refreshCallback: (refreshClient, _) async {
             await refreshClient
                 .future(_Req(doc: 'mutation Refresh { r { id } }'));
-            return const TokenPair(accessToken: 'new', refreshToken: 'new-r');
+            return TokenPair(accessToken: 'new', refreshToken: 'new-r');
           },
         );
 

@@ -3,8 +3,7 @@ import 'dart:async';
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 
-import '../../auth/token_pair.dart';
-import '../../auth/token_storage.dart';
+import 'package:token_storage/token_storage.dart';
 import '../../client/client.dart';
 import '../../core/graphql_error_mapper.dart';
 

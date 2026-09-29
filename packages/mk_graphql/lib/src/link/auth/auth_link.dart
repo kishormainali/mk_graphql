@@ -4,7 +4,7 @@ import 'package:dio/dio.dart' hide Response;
 import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_link/gql_link.dart';
 
-import '../../auth/token_storage.dart';
+import 'package:token_storage/token_storage.dart';
 import '../../client/client.dart';
 import '../../core/error.dart' hide GraphQLError;
 import '../logging/logger.dart';

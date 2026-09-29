@@ -29,7 +29,7 @@ A thin wrapper (`lib/src/parser/graphql_parser.dart`) around `package:gql`'s AST
 
 Static, stateless generation of:
 
-- **Enums** (`generateEnums`) — one `@JsonEnum()` Dart enum per schema enum, `@JsonValue` mapping the wire `SCREAMING_CASE` to a camelCase Dart identifier.
+- **Enums** (`generateEnums`) — one `@JsonEnum()` Dart enum per schema enum, `@JsonValue` mapping the wire `SCREAMING_CASE` to a camelCase Dart identifier, plus a `static Enum? fromString(String?)` that maps a wire value back to its constant (`null` for `null` or an unknown value) and a `String get value` returning the wire value.
 - **Inputs** (`generateInputs`) — one `@freezed` class per input type, with `@JsonKey(includeIfNull: false)` on optional fields (see below).
 - **Object types** (`generateObjectTypes`) — one `@freezed` `{Type}Model` class per non-root object type. Not used for operation response parsing (see [Generated Output](generated-output.md#what-modelsmodelsdart-is-for)); exists for schema-driven operations and hand-written code.
 - **Type resolution** (`parseFieldType`/`formatNamedType`/`unwrapTypeName`) — the shared logic that maps a GraphQL `TypeNode` to a Dart type string plus nullability, consulting the `enumNames`/`inputNames`/`scalarNames` sets so a bare type name like `Role` resolves to the actual `Role` enum rather than falling through to the `{Name}Model` default.

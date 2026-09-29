@@ -12,14 +12,14 @@ Add runtime dependencies and builder dev dependencies to your `pubspec.yaml`:
 dependencies:
   flutter:
     sdk: flutter
-  mk_graphql: ^1.0.1
+  mk_graphql: ^1.2.2
   freezed_annotation: ^3.1.0
   json_annotation: ^4.12.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  mk_graphql_generator: ^1.0.1
+  mk_graphql_generator: ^1.2.2
   build_runner: ^2.16.0
   freezed: ^4.0.1
   json_serializable: ^6.14.1

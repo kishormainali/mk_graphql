@@ -2,7 +2,7 @@ name: mk_graphql_workspace
 publish_to: none
 
 environment:
-  sdk: ^3.6.0
+  sdk: ^3.9.0
 
 workspace:
   - packages/mk_graphql

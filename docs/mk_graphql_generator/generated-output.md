@@ -93,3 +93,32 @@ Fragment spreads are resolved transitively (a fragment spreading another fragmen
 ### What `models/models.dart` is for
 
 The schema-wide `{Type}Model` classes are still generated — one per non-root object type in the schema, all declared together in `models/models.dart` — because [schema-driven operations](#schema-driven-operations) and any code you write by hand need a way to reference "the full shape of a `User`". They are simply never used to deserialize a hand-written operation's trimmed response.
+
+## Enums
+
+Every schema enum becomes a `@JsonEnum()` Dart enum in `enums/enums.dart`. Constants are camelCase Dart identifiers with `@JsonValue` preserving the wire name, and each enum gets two helpers for converting to and from the wire value:
+
+```dart
+@JsonEnum()
+enum UserRole {
+  @JsonValue("ADMIN_USER")
+  adminUser,
+  @JsonValue("STANDARD_USER")
+  standardUser;
+
+  String get value => switch (this) {
+    UserRole.adminUser => 'ADMIN_USER',
+    UserRole.standardUser => 'STANDARD_USER',
+  };
+
+  static UserRole? fromString(String? value) => switch (value) {
+    'ADMIN_USER' => UserRole.adminUser,
+    'STANDARD_USER' => UserRole.standardUser,
+    _ => null,
+  };
+}
+```
+
+- `role.value` is the wire string (`'ADMIN_USER'`); `toString()`/`name` are Dart's defaults (`UserRole.adminUser`/`adminUser`).
+- `UserRole.fromString(...)` matches the **wire** value and returns `null` for `null` or an unknown value (e.g. a value the server added after you generated), so `fromString(role.value) == role`.
+- A schema value that would clash with these members (`value`, `fromString`) is escaped with a `g` prefix — `gValue`, `gFromString` — like Dart keywords.

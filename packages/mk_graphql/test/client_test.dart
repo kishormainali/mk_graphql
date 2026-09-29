@@ -336,11 +336,14 @@ class _FlakyLink extends Link {
 // ---------------------------------------------------------------------------
 
 void main() {
-  // TokenStorage.i lazily constructs a SharedPreferencesAsync on first use
-  // (for clearOnInstall) — give it an in-memory platform so that doesn't
-  // throw, even though these tests never call clearOnInstall themselves.
+  // TokenStorage.init() uses SharedPreferencesAsync (fresh-install flag) and
+  // the secure-storage mock — give it in-memory platforms.
   SharedPreferencesAsyncPlatform.instance =
       InMemorySharedPreferencesAsync.empty();
+  setUpAll(() async {
+    FlutterSecureStorage.setMockInitialValues({});
+    await TokenStorage.init();
+  });
 
   group('InMemoryCache Tests', () {
     test('writeQuery and readQuery normalised caching', () {
@@ -829,7 +832,7 @@ void main() {
         addTypename: false,
         refreshCallback: (refreshClient, refreshToken) async {
           refreshTokenSeen = refreshToken;
-          return const TokenPair(
+          return TokenPair(
               accessToken: 'new-access', refreshToken: 'new-refresh');
         },
       );
@@ -853,7 +856,7 @@ void main() {
         accessToken: 'old-access',
         refreshToken: 'old-refresh',
       );
-      final seeded = (await TokenStorage.i.getToken())!;
+      final seeded = (await TokenStorage.i.token)!;
       await Future<void>.delayed(const Duration(milliseconds: 5));
 
       var callCount = 0;
@@ -880,7 +883,7 @@ void main() {
         );
       });
 
-      final notified = <String?>[];
+      final notified = <TokenPair?>[];
       TokenStorage.i.setTokenListener(notified.add);
       addTearDown(TokenStorage.i.removeTokenListener);
 
@@ -888,17 +891,17 @@ void main() {
         url: 'https://example.com/graphql',
         dio: dioInstance,
         addTypename: false,
-        refreshCallback: (_, __) async => const TokenPair(
+        refreshCallback: (_, __) async => TokenPair(
             accessToken: 'new-access', refreshToken: 'new-refresh'),
       );
 
       await client.future(_TestReq(const _TestVars('123')));
 
       expect(notified, isEmpty);
-      final stored = (await TokenStorage.i.getToken())!;
+      final stored = (await TokenStorage.i.token)!;
       expect(stored.accessToken, equals('new-access'));
       expect(stored.createdAt, equals(seeded.createdAt));
-      expect(stored.updatedAt!.isAfter(seeded.updatedAt!), isTrue);
+      expect(stored.updatedAt.isAfter(seeded.updatedAt), isTrue);
     });
 
     test(
@@ -949,7 +952,7 @@ void main() {
         defaultHeaders: {'X-Client-Id': 'test-client'},
         addTypename: false,
         refreshCallback: (refreshClient, refreshToken) async =>
-            const TokenPair(accessToken: 'new-access'),
+            TokenPair(accessToken: 'new-access'),
       );
 
       await client.future(_TestReq(const _TestVars('123')));
@@ -969,7 +972,7 @@ void main() {
       var refreshCalls = 0;
       var listenerCalled = false;
       GraphQLClient.registerRevokeTokenListener(() => listenerCalled = true);
-      final storageNotified = <String?>[];
+      final storageNotified = <TokenPair?>[];
       TokenStorage.i.setTokenListener(storageNotified.add);
       addTearDown(TokenStorage.i.removeTokenListener);
 
@@ -997,7 +1000,7 @@ void main() {
         addTypename: false,
         refreshCallback: (_, __) async {
           refreshCalls++;
-          return const TokenPair(accessToken: 'should-not-happen');
+          return TokenPair(accessToken: 'should-not-happen');
         },
       );
 
@@ -1063,7 +1066,7 @@ void main() {
           // Widen the window so all 5 concurrent 401s queue behind this
           // single refresh instead of each triggering their own.
           await Future<void>.delayed(const Duration(milliseconds: 30));
-          return const TokenPair(
+          return TokenPair(
               accessToken: 'new-access', refreshToken: 'new-refresh');
         },
       );
@@ -1132,7 +1135,7 @@ void main() {
           // Hits the mock Dio through the internal refresh client's own
           // pipeline, which is where refreshTokenHeader's headers apply.
           await refreshClient.future(_TestReq(const _TestVars('refresh')));
-          return const TokenPair(accessToken: 'new-access');
+          return TokenPair(accessToken: 'new-access');
         },
       );
 
@@ -1200,7 +1203,7 @@ void main() {
           // refreshClient must not inherit the outer AuthLink's
           // accessTokenHeader, nor default to any header of its own.
           await refreshClient.future(_TestReq(const _TestVars('refresh')));
-          return const TokenPair(accessToken: 'new-access');
+          return TokenPair(accessToken: 'new-access');
         },
       );
 

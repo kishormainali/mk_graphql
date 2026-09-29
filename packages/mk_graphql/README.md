@@ -38,7 +38,7 @@ Add `mk_graphql` to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  mk_graphql: ^1.1.0
+  mk_graphql: ^1.2.2
 ```
 
 Then run:
@@ -64,7 +64,8 @@ final client = GraphQLClient(
   // wsUrl: 'wss://api.example.com/graphql',
 
   // The client reads/writes tokens itself via the `TokenStorage.i` singleton
-  // (backed by flutter_secure_storage) and attaches the Authorization header
+  // (the `token_storage` package — call `await TokenStorage.init()` once at
+  // startup) and attaches the Authorization header
   // to every request automatically. Just tell it how to perform a refresh —
   // no header/storage plumbing needed.
   refreshCallback: (refreshClient, refreshToken) async {
@@ -90,7 +91,7 @@ final client = GraphQLClient(
 
 `refreshCallback` is the single source of truth for refresh — it receives the currently stored refresh token (always non-null: with nothing stored yet, the client revokes immediately without calling it) and a plain `GraphQLClient` (no auth link attached) to run the refresh request via its normal typed API. Return the new `TokenPair` to persist, or `null`/throw to revoke — `AuthLink.registerRevokeTokenListener(...)` fires either way so you can navigate to a login screen.
 
-A successful refresh is written with `TokenStorage.i.updateToken(...)`, which is **silent**: `TokenStorage.i.setTokenListener(...)` only fires on `saveToken` (login, with the access token) and `deleteToken` (logout/revoke, with `null`), so a refresh never rebuilds app routing. `TokenPair` carries `createdAt` (session start, kept across refreshes) and `updatedAt` (last refresh). Full details in [Authentication & Token Storage](../../docs/mk_graphql/authentication.md).
+A successful refresh is written with `TokenStorage.i.updateToken(...)`, which is **silent**: `TokenStorage.i.setTokenListener(...)` only fires on `saveToken` (login, with the new `TokenPair`) and `clearToken` (logout/revoke, with `null`), so a refresh never rebuilds app routing. `TokenPair` carries `createdAt` (session start, kept across refreshes) and `updatedAt` (last refresh). Full details in [Authentication & Token Storage](../../docs/mk_graphql/authentication.md).
 
 However many requests fail at once, only one `refreshCallback` call is made — `AuthLink` queues the rest behind the in-flight refresh and retries all of them once it resolves.
 

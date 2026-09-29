@@ -446,8 +446,11 @@ class SchemaGenerator {
 
   /// Converts a SCREAMING_SNAKE_CASE GraphQL enum value to a Dart camelCase identifier.
   /// e.g. `ADMIN_USER` → `adminUser`, `ADMIN` → `admin`.
+  /// Also escapes `value`/`fromString`, which would clash with the members
+  /// [codegen.jsonEnum] adds to every enum (`g` prefix, like keywords).
   static String _toDartEnumValue(String wireValue) {
-    return safeIdentifier(wireValue);
+    final id = safeIdentifier(wireValue);
+    return id == 'value' || id == 'fromString' ? 'g${id.pascalCase}' : id;
   }
 
   static String? formatDefaultValue(ValueNode? node, {String? dartType}) {
@@ -462,9 +465,9 @@ class SchemaGenerator {
         final cleanType = dartType.endsWith('?')
             ? dartType.substring(0, dartType.length - 1)
             : dartType;
-        return '$cleanType.${safeIdentifier(val)}';
+        return '$cleanType.${_toDartEnumValue(val)}';
       }
-      return safeIdentifier(val);
+      return _toDartEnumValue(val);
     }
     if (node is NullValueNode) return 'null';
     if (node is ListValueNode) {

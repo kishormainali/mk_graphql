@@ -1,3 +1,11 @@
+## 1.2.3
+
+- **Fix**: token refresh could fail with "refresh token already revoked" because the same session was refreshed more than once with servers that rotate refresh tokens. Fixed all the ways that happened:
+  - A 401 that arrives after a refresh has already completed (the request was sent with the pre-refresh access token) now retries with the refreshed token instead of starting another refresh and rotating the refresh token again.
+  - Refreshes are coordinated across every `GraphQLClient` that uses a `refreshCallback` (they all share `TokenStorage.i`), so two clients hitting a 401 at once, or one client's late 401 after the other refreshed, no longer each refresh with the same refresh token. `AuthLink` accepts an optional `RefreshCoordinator` to share refresh state between links that refresh the same session.
+  - A refresh that finishes after the session was revoked (e.g. after `refreshTimeout` fired) no longer writes its tokens back into storage and resurrects the session.
+  - Persisting a refreshed `TokenPair` is retried up to 3 times; if storage still rejects it, the new pair is kept in memory and used for requests and the next refresh (the stored refresh token is already revoked server-side), and is flushed to storage on the next refresh. It is dropped on revoke or if the stored token changes (new login/logout).
+
 ## 1.2.2
 
 - **Breaking**: the built-in `TokenStorage` and `TokenPair` are removed in favour of the [`token_storage`](https://pub.dev/packages/token_storage) package, which `mk_graphql` now depends on and re-exports (`import 'package:mk_graphql/mk_graphql.dart'` still gives you both). `mk_graphql` no longer depends on `flutter_secure_storage`, `shared_preferences` or `equatable` directly.

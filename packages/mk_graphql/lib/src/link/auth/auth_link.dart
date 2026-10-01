@@ -14,6 +14,28 @@ import 'refresh_header_link.dart';
 
 export 'auth_types.dart';
 
+/// Refresh state that [AuthLink]s coordinate through: the in-flight refresh,
+/// and the result of the last successful one.
+///
+/// Each [AuthLink] has its own by default. Links that refresh the *same*
+/// session (e.g. several clients sharing one token storage) must share one,
+/// otherwise each would refresh independently with the same refresh token.
+class RefreshCoordinator {
+  /// Concurrent-refresh lock.
+  Future<Map<String, String>?>? ongoing;
+
+  /// Incremented each time a refresh succeeds. A request remembers the value
+  /// from when it was sent, so a 401 that arrives after a refresh has since
+  /// completed (the request carried the pre-refresh token) can retry with
+  /// [lastHeaders] instead of rotating the refresh token again — a second
+  /// rotation with servers that revoke reused/superseded refresh tokens
+  /// surfaces as "refresh token already revoked".
+  int generation = 0;
+
+  /// Headers returned by the most recent successful refresh.
+  Map<String, String>? lastHeaders;
+}
+
 /// {@template auth_link}
 /// A [Link] that injects authentication headers into every request.
 ///
@@ -38,7 +60,9 @@ class AuthLink extends Link {
     this.onRevokeToken,
     this.defaultHeaders = const {},
     this.refreshTimeout,
-  }) : _ownedDio = dio == null ? Dio() : null {
+    RefreshCoordinator? refreshCoordinator,
+  }) : _coordinator = refreshCoordinator ?? RefreshCoordinator(),
+       _ownedDio = dio == null ? Dio() : null {
     final dioLink = DioLink(
       url,
       client: dio ?? _ownedDio!,
@@ -84,7 +108,7 @@ class AuthLink extends Link {
   /// is revoked). `null` (the default) waits indefinitely, preserving prior
   /// behavior — set this when your refresh endpoint can hang, so a stuck
   /// request doesn't block every request queued behind
-  /// [_ongoingRefresh] forever.
+  /// the in-flight refresh forever.
   final Duration? refreshTimeout;
 
   /// Called when the token is revoked.
@@ -98,8 +122,7 @@ class AuthLink extends Link {
   /// own [Dio], which stays theirs to close.
   final Dio? _ownedDio;
 
-  /// Concurrent-refresh lock.
-  Future<Map<String, String>?>? _ongoingRefresh;
+  final RefreshCoordinator _coordinator;
 
   // ---------------------------------------------------------------------------
   // Static revoke-token listener registry
@@ -133,6 +156,9 @@ class AuthLink extends Link {
     if (forward == null) {
       throw StateError('AuthLink cannot be a terminating link.');
     }
+
+    // Generation this request is sent under — see [RefreshCoordinator.generation].
+    final sentGeneration = _coordinator.generation;
 
     // 1. Build initial headers from the gql_exec context
     final contextHeaders =
@@ -191,6 +217,7 @@ class AuthLink extends Link {
                 req,
                 contextHeaders,
                 forward,
+                sentGeneration,
                 originalResponse: response,
               );
               return;
@@ -212,6 +239,7 @@ class AuthLink extends Link {
               req,
               contextHeaders,
               forward,
+              sentGeneration,
               originalException: e,
             );
             return;
@@ -233,7 +261,8 @@ class AuthLink extends Link {
   Stream<Response> _refreshAndRetry(
     Request req,
     Map<String, String> contextHeaders,
-    NextLink forward, {
+    NextLink forward,
+    int sentGeneration, {
     Response? originalResponse,
     ServerException? originalException,
   }) async* {
@@ -242,7 +271,12 @@ class AuthLink extends Link {
       tag: 'AuthLink',
     );
     try {
-      final newHeaders = await _refreshToken();
+      // A refresh already completed after this request was sent, so its 401
+      // is for the stale token — reuse that refresh's result.
+      final reusable = _coordinator.generation != sentGeneration
+          ? _coordinator.lastHeaders
+          : null;
+      final newHeaders = reusable ?? await _refreshToken();
       if (newHeaders != null && newHeaders.isNotEmpty) {
         final retryHeaders = Map<String, String>.from(contextHeaders)
           ..addAll(newHeaders);
@@ -277,16 +311,16 @@ class AuthLink extends Link {
   }
 
   Future<Map<String, String>?> _refreshToken() {
-    if (_ongoingRefresh != null) {
+    if (_coordinator.ongoing != null) {
       Logger.d(
         'Token refresh already in progress — joining existing request.',
         tag: 'AuthLink',
       );
-      return _ongoingRefresh!;
+      return _coordinator.ongoing!;
     }
     Logger.d('Refreshing access token…', tag: 'AuthLink');
     final completer = Completer<Map<String, String>?>();
-    _ongoingRefresh = completer.future;
+    _coordinator.ongoing = completer.future;
     _runRefresh(completer);
     return completer.future;
   }
@@ -305,6 +339,10 @@ class AuthLink extends Link {
           ? await refreshFuture.timeout(timeout)
           : await refreshFuture;
       Logger.s('Access token refreshed successfully.', tag: 'AuthLink');
+      if (newHeaders != null && newHeaders.isNotEmpty) {
+        _coordinator.lastHeaders = newHeaders;
+        _coordinator.generation++;
+      }
       completer.complete(newHeaders);
     } catch (exception, stackTrace) {
       Logger.e(
@@ -324,7 +362,7 @@ class AuthLink extends Link {
         stackTrace,
       );
     } finally {
-      _ongoingRefresh = null;
+      _coordinator.ongoing = null;
     }
   }
 

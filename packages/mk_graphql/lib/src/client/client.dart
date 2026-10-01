@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:gql/ast.dart';
+import 'package:meta/meta.dart';
 import 'package:gql_exec/gql_exec.dart' as gql;
 import 'package:gql_link/gql_link.dart';
 
@@ -18,6 +19,7 @@ import '../core/request_key.dart';
 import '../core/retry_options.dart';
 import '../core/response.dart';
 import '../link/auth/auth_link.dart';
+import '../link/logging/logger.dart';
 import '../link/logging/logger_link.dart';
 import '../link/logging/logger_options.dart';
 import '../link/transform/typename_link.dart';
@@ -310,6 +312,9 @@ class GraphQLClient {
         onTokenRefresh: resolvedCallbacks.onTokenRefresh,
         onRevokeToken: resolvedCallbacks.onRevokeToken,
         refreshTimeout: refreshTimeout,
+        refreshCoordinator: refreshCallback != null
+            ? _sessionCoordinator
+            : null,
         addTypename: addTypename,
       ),
     );
@@ -431,43 +436,144 @@ class GraphQLClient {
       );
     }
 
+    final defaultAccessHeader =
+        accessTokenHeader ??
+        (token) async => {'Authorization': 'Bearer $token'};
     return (
-      accessTokenHeader:
-          accessTokenHeader ??
-          (token) async => {'Authorization': 'Bearer $token'},
+      // Both header builders go through [_effectiveToken] so a refreshed pair
+      // that couldn't be persisted (see [_Unpersisted]) is still the one used.
+      accessTokenHeader: (token) =>
+          defaultAccessHeader(_effectiveAccess(token)),
       // No default: refreshCallback already receives the refresh token
       // directly as a parameter (for a body/variable), so a header is only
       // attached when the app explicitly opts in via refreshTokenHeader.
-      refreshTokenHeader: refreshTokenHeader,
-      onTokenRefresh: (refreshClient) async {
-        final currentRefreshToken = await TokenStorage.i.refreshToken;
-        // No refresh token to call the API with — revoke straight away
-        // instead of calling refreshCallback with one.
-        if (currentRefreshToken == null) return null;
-        final newToken = await refreshCallback(
-          refreshClient,
-          currentRefreshToken,
-        );
-        if (newToken == null) return null;
-        // Silent: a refresh must not fire TokenStorage listeners (they drive
-        // app routing). The next request reads the new token from storage.
-        // createdAt is the session's login time, so keep the stored one.
-        final stored = await TokenStorage.i.token;
-        await TokenStorage.i.updateToken(
-          TokenPair(
-            accessToken: newToken.accessToken,
-            refreshToken: newToken.refreshToken,
-            createdAt: stored?.createdAt ?? newToken.createdAt,
-            updatedAt: DateTime.now(),
-          ),
-        );
-        return {'Authorization': 'Bearer ${newToken.accessToken}'};
-      },
+      refreshTokenHeader: refreshTokenHeader == null
+          ? null
+          : (token) => refreshTokenHeader(_effectiveRefresh(token)),
+      // Every client built with a refreshCallback refreshes through the one
+      // shared [_sessionCoordinator], so concurrent 401s — even across
+      // clients, which all share TokenStorage.i — run a single refresh.
+      onTokenRefresh: (refreshClient) =>
+          _refreshStoredSession(refreshClient, refreshCallback),
       onRevokeToken: () {
+        _unpersisted = null;
+        _sessionCoordinator.lastHeaders = null;
+        _sessionEpoch++;
         onRevokeToken?.call();
         TokenStorage.i.clearToken();
       },
     );
+  }
+
+  /// Coordinates refreshes for every client managing its session through
+  /// [TokenStorage.i] (i.e. built with a `refreshCallback`).
+  static final RefreshCoordinator _sessionCoordinator = RefreshCoordinator();
+
+  /// Bumped on every revoke, so a refresh that finishes after the session was
+  /// revoked doesn't write its tokens back into storage.
+  static int _sessionEpoch = 0;
+
+  /// A refreshed pair that [TokenStorage.i] failed to persist. The server has
+  /// already rotated the refresh token, so this in-memory pair — not the stale
+  /// stored one — must be used until storage accepts it.
+  static _Unpersisted? _unpersisted;
+
+  /// Clears process-wide auth state (pending unpersisted pair, shared refresh
+  /// bookkeeping) — static state otherwise leaks between tests.
+  @visibleForTesting
+  static void resetAuthStateForTesting() {
+    _unpersisted = null;
+    _sessionEpoch++;
+    _sessionCoordinator
+      ..ongoing = null
+      ..lastHeaders = null;
+  }
+
+  /// The access token to use: the unpersisted refreshed one, unless storage
+  /// has since changed underneath it (new login, logout, ...), in which case
+  /// the override is dropped.
+  static String _effectiveAccess(String stored) {
+    final u = _unpersisted;
+    if (u == null) return stored;
+    if (stored != u.baseAccessToken && stored != u.pair.accessToken) {
+      _unpersisted = null;
+      return stored;
+    }
+    return u.pair.accessToken;
+  }
+
+  static String _effectiveRefresh(String stored) {
+    final u = _unpersisted;
+    if (u == null) return stored;
+    return u.pair.refreshToken ?? stored;
+  }
+
+  /// Tries to write [pair]; returns whether it succeeded.
+  static Future<bool> _tryPersist(TokenPair pair) async {
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await TokenStorage.i.updateToken(pair);
+        return true;
+      } catch (e, st) {
+        if (attempt == 3) {
+          Logger.e(
+            'Failed to persist refreshed tokens — keeping them in memory.',
+            error: e,
+            stackTrace: st,
+            tag: 'GraphQLClient',
+          );
+        } else {
+          await Future<void>.delayed(Duration(milliseconds: 50 * attempt));
+        }
+      }
+    }
+    return false;
+  }
+
+  static Future<Map<String, String>?> _refreshStoredSession(
+    GraphQLClient refreshClient,
+    RefreshCallback refreshCallback,
+  ) async {
+    final stored = await TokenStorage.i.token;
+    // A previous refresh's pair that never reached storage — flush it first,
+    // and refresh from it, since the stored refresh token is already revoked.
+    final pending = _unpersisted;
+    final stale =
+        pending != null &&
+        (stored?.accessToken == pending.baseAccessToken ||
+            stored?.accessToken == pending.pair.accessToken);
+    if (pending != null && !stale) _unpersisted = null;
+    if (stale && await _tryPersist(pending.pair)) _unpersisted = null;
+    final currentRefreshToken =
+        _unpersisted?.pair.refreshToken ??
+        (stale ? pending.pair.refreshToken : stored?.refreshToken);
+    // No refresh token to call the API with — revoke straight away
+    // instead of calling refreshCallback with one.
+    if (currentRefreshToken == null) return null;
+    final epoch = _sessionEpoch;
+    final newToken = await refreshCallback(refreshClient, currentRefreshToken);
+    if (newToken == null) return null;
+    // The session was revoked (e.g. refreshTimeout fired) while this refresh
+    // was running — don't resurrect it.
+    if (epoch != _sessionEpoch) return null;
+    // Silent: a refresh must not fire TokenStorage listeners (they drive
+    // app routing). The next request reads the new token from storage.
+    // createdAt is the session's login time, so keep the stored one.
+    final pair = TokenPair(
+      accessToken: newToken.accessToken,
+      refreshToken: newToken.refreshToken,
+      createdAt: stored?.createdAt ?? newToken.createdAt,
+      updatedAt: DateTime.now(),
+    );
+    if (await _tryPersist(pair)) {
+      _unpersisted = null;
+    } else {
+      _unpersisted = _Unpersisted(
+        baseAccessToken: stored?.accessToken ?? '',
+        pair: pair,
+      );
+    }
+    return {'Authorization': 'Bearer ${newToken.accessToken}'};
   }
 
   static Link _buildPipeline({
@@ -485,6 +591,7 @@ class GraphQLClient {
     OnRefreshCallback? onTokenRefresh,
     OnRevokeTokenCallback? onRevokeToken,
     Duration? refreshTimeout,
+    RefreshCoordinator? refreshCoordinator,
     bool addTypename = true,
   }) {
     final dioInstance = dio;
@@ -505,6 +612,7 @@ class GraphQLClient {
           onTokenRefresh: onTokenRefresh,
           onRevokeToken: onRevokeToken,
           refreshTimeout: refreshTimeout,
+          refreshCoordinator: refreshCoordinator,
         ),
       );
     }
@@ -1257,4 +1365,14 @@ class _ActiveQuery {
   /// concurrent watchers poll independently of one another. This set lets
   /// [GraphQLClient.dispose] still reach and cancel every live one.
   final Set<Timer> refetchIntervalTimers = {};
+}
+
+/// See `GraphQLClient._unpersisted`.
+class _Unpersisted {
+  const _Unpersisted({required this.baseAccessToken, required this.pair});
+
+  /// The stored access token this pair superseded — lets staleness be
+  /// detected if storage changes (new login, logout) while it's held.
+  final String baseAccessToken;
+  final TokenPair pair;
 }

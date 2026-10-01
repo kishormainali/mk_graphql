@@ -4,7 +4,10 @@ import 'dart:io' show HandshakeException, SocketException;
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart' as dio;
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
+import 'package:flutter_secure_storage_platform_interface/flutter_secure_storage_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart' as gql;
@@ -283,6 +286,7 @@ class _ErrorLink extends Link {
 /// its backing [FlutterSecureStorage] mock platform and go through
 /// [TokenStorage.saveToken] rather than poking storage keys directly.
 Future<void> _seedTokenStorage({String? accessToken, String? refreshToken}) {
+  GraphQLClient.resetAuthStateForTesting();
   FlutterSecureStorage.setMockInitialValues({});
   if (accessToken == null) return Future.value();
   return TokenStorage.i.saveToken(
@@ -1169,6 +1173,278 @@ void main() {
         results.map((d) => d.name),
         everyElement(equals('Refreshed User')),
       );
+    });
+
+    test('a 401 for a request sent with the pre-refresh access token, '
+        'arriving after the refresh finished, retries with the new token '
+        'instead of rotating the refresh token again', () async {
+      await _seedTokenStorage(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+      );
+      final refreshTokensSeen = <String>[];
+
+      final dioInstance = dio.Dio();
+      var requestCount = 0;
+      dioInstance.httpClientAdapter = _MockUploadAdapter((options) async {
+        if (options.headers['Authorization'] == 'Bearer old-access') {
+          // The 2nd request's 401 is held back until well after the first
+          // request's refresh (30ms) has completed.
+          final delay = requestCount++ == 0 ? 0 : 120;
+          await Future<void>.delayed(Duration(milliseconds: delay));
+          return dio.ResponseBody.fromString(
+            jsonEncode({
+              'errors': [
+                {
+                  'message': 'Unauthenticated',
+                  'extensions': {'code': 'UNAUTHENTICATED'},
+                },
+              ],
+            }),
+            401,
+            headers: {
+              'content-type': ['application/json'],
+            },
+          );
+        }
+        return dio.ResponseBody.fromString(
+          jsonEncode({
+            'data': {'id': '123', 'name': 'Refreshed User'},
+          }),
+          200,
+          headers: {
+            'content-type': ['application/json'],
+          },
+        );
+      });
+
+      final client = GraphQLClient(
+        url: 'https://example.com/graphql',
+        dio: dioInstance,
+        addTypename: false,
+        refreshCallback: (refreshClient, refreshToken) async {
+          refreshTokensSeen.add(refreshToken);
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+          return TokenPair(
+            accessToken: 'new-access',
+            refreshToken: 'new-refresh',
+          );
+        },
+      );
+
+      final results = await Future.wait([
+        client.future(_TestReq(const _TestVars('123'))),
+        client.future(_TestReq(const _TestVars('456'))),
+      ]);
+
+      expect(results.map((d) => d.name), everyElement('Refreshed User'));
+      expect(
+        refreshTokensSeen,
+        equals(['old-refresh']),
+        reason: 'the late 401 must reuse the already-refreshed token',
+      );
+    });
+
+    dio.Dio unauthorizedUntilNewAccess() {
+      final d = dio.Dio();
+      d.httpClientAdapter = _MockUploadAdapter((options) {
+        final unauthorized =
+            options.headers['Authorization'] == 'Bearer old-access';
+        return dio.ResponseBody.fromString(
+          jsonEncode(
+            unauthorized
+                ? {
+                    'errors': [
+                      {
+                        'message': 'Unauthenticated',
+                        'extensions': {'code': 'UNAUTHENTICATED'},
+                      },
+                    ],
+                  }
+                : {
+                    'data': {'id': '123', 'name': 'Refreshed User'},
+                  },
+          ),
+          unauthorized ? 401 : 200,
+          headers: {
+            'content-type': ['application/json'],
+          },
+        );
+      });
+      return d;
+    }
+
+    test(
+      'two clients sharing TokenStorage refresh once, not once each',
+      () async {
+        await _seedTokenStorage(
+          accessToken: 'old-access',
+          refreshToken: 'old-refresh',
+        );
+        final seen = <String>[];
+        Future<TokenPair?> refresh(dynamic _, String refreshToken) async {
+          seen.add(refreshToken);
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+          return TokenPair(
+            accessToken: 'new-access',
+            refreshToken: 'new-refresh',
+          );
+        }
+
+        final clients = [
+          for (var i = 0; i < 2; i++)
+            GraphQLClient(
+              url: 'https://example.com/graphql',
+              dio: unauthorizedUntilNewAccess(),
+              addTypename: false,
+              refreshCallback: refresh,
+            ),
+        ];
+        await Future.wait([
+          for (final c in clients) c.future(_TestReq(const _TestVars('123'))),
+        ]);
+        expect(seen, equals(['old-refresh']));
+      },
+    );
+
+    test('a refresh finishing after refreshTimeout revoked the session does '
+        'not write tokens back into storage', () async {
+      await _seedTokenStorage(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+      );
+      final client = GraphQLClient(
+        url: 'https://example.com/graphql',
+        dio: unauthorizedUntilNewAccess(),
+        addTypename: false,
+        refreshTimeout: const Duration(milliseconds: 20),
+        refreshCallback: (_, __) async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          return TokenPair(
+            accessToken: 'new-access',
+            refreshToken: 'new-refresh',
+          );
+        },
+      );
+      await expectLater(
+        client.future(_TestReq(const _TestVars('123'))),
+        throwsA(anything),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(await TokenStorage.i.token, isNull);
+    });
+
+    dio.Dio adapterUnauthorizedFor(
+      Set<String> staleAccess, {
+      Duration unauthorizedDelay = Duration.zero,
+    }) {
+      final d = dio.Dio();
+      d.httpClientAdapter = _MockUploadAdapter((options) async {
+        final unauthorized = staleAccess.contains(
+          (options.headers['Authorization'] as String?)?.substring(7),
+        );
+        if (unauthorized) await Future<void>.delayed(unauthorizedDelay);
+        return dio.ResponseBody.fromString(
+          jsonEncode(
+            unauthorized
+                ? {
+                    'errors': [
+                      {
+                        'message': 'Unauthenticated',
+                        'extensions': {'code': 'UNAUTHENTICATED'},
+                      },
+                    ],
+                  }
+                : {
+                    'data': {'id': '123', 'name': 'Refreshed User'},
+                  },
+          ),
+          unauthorized ? 401 : 200,
+          headers: {
+            'content-type': ['application/json'],
+          },
+        );
+      });
+      return d;
+    }
+
+    test('a late 401 on one client reuses a refresh another client already '
+        'did, instead of rotating the refresh token again', () async {
+      await _seedTokenStorage(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+      );
+      final seen = <String>[];
+      Future<TokenPair?> refresh(dynamic _, String refreshToken) async {
+        seen.add(refreshToken);
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        return TokenPair(
+          accessToken: 'new-access',
+          refreshToken: 'new-refresh',
+        );
+      }
+
+      GraphQLClient clientWith(Duration delay) => GraphQLClient(
+        url: 'https://example.com/graphql',
+        dio: adapterUnauthorizedFor({'old-access'}, unauthorizedDelay: delay),
+        addTypename: false,
+        refreshCallback: refresh,
+      );
+
+      final fast = clientWith(Duration.zero);
+      // Its 401 only arrives after the other client's refresh has finished.
+      final slow = clientWith(const Duration(milliseconds: 120));
+      final results = await Future.wait([
+        fast.future(_TestReq(const _TestVars('123'))),
+        slow.future(_TestReq(const _TestVars('456'))),
+      ]);
+      expect(results.map((d) => d.name), everyElement('Refreshed User'));
+      expect(seen, equals(['old-refresh']));
+    });
+
+    test('when persisting a refreshed pair fails, the in-memory pair is used '
+        'for the next refresh instead of the revoked stored one', () async {
+      await _seedTokenStorage(
+        accessToken: 'old-access',
+        refreshToken: 'old-refresh',
+      );
+      final storage = _FailingWriteStorage(
+        (FlutterSecureStoragePlatform.instance
+                as TestFlutterSecureStoragePlatform)
+            .data,
+      );
+      FlutterSecureStoragePlatform.instance = storage;
+      final seen = <String>[];
+      final staleAccess = {'old-access'};
+      var n = 0;
+      final client = GraphQLClient(
+        url: 'https://example.com/graphql',
+        dio: adapterUnauthorizedFor(staleAccess),
+        addTypename: false,
+        refreshCallback: (_, refreshToken) async {
+          seen.add(refreshToken);
+          n++;
+          return TokenPair(
+            accessToken: n == 1 ? 'a1' : 'a2',
+            refreshToken: 'r$n',
+          );
+        },
+      );
+
+      storage.failWrites = true;
+      expect(
+        (await client.future(_TestReq(const _TestVars('123')))).name,
+        'Refreshed User',
+      );
+      staleAccess.add('a1');
+      // a1 later expires server-side too; storage is still unwritable.
+      expect(
+        (await client.future(_TestReq(const _TestVars('456')))).name,
+        'Refreshed User',
+      );
+      expect(seen, equals(['old-refresh', 'r1']));
+
+      // Storage recovers: the next refresh flushes the pending pair first.
     });
 
     test('refreshTokenHeader attaches the refresh token to requests made '
@@ -3199,6 +3475,21 @@ class _CustomVarsReq extends GraphQLRequest<_TestData, Map<String, dynamic>> {
     fetchPolicy: fetchPolicy ?? this.fetchPolicy,
     errorPolicy: errorPolicy ?? this.errorPolicy,
   );
+}
+
+class _FailingWriteStorage extends TestFlutterSecureStoragePlatform {
+  _FailingWriteStorage(super.data);
+  bool failWrites = false;
+
+  @override
+  Future<void> write({
+    required String key,
+    required String value,
+    required Map<String, String> options,
+  }) {
+    if (failWrites) throw PlatformException(code: 'write-failed');
+    return super.write(key: key, value: value, options: options);
+  }
 }
 
 class _MockUploadAdapter implements dio.HttpClientAdapter {

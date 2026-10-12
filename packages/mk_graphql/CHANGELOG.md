@@ -1,3 +1,7 @@
+## 1.2.4
+
+- **Behavior change**: `DateTimeScalarConverter` now returns response dates in the device's local time zone (`fromJson`) and sends request dates as UTC ISO-8601 with a trailing `Z` (`toJson`). Dates that are already UTC are not converted again. Previously `toJson` sent local dates without an offset.
+
 ## 1.2.3
 
 - **Fix**: token refresh could fail with "refresh token already revoked" because the same session was refreshed more than once with servers that rotate refresh tokens. Fixed all the ways that happened:

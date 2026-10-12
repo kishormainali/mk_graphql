@@ -10,8 +10,11 @@ typedef Upload = dio.MultipartFile;
 class DateTimeScalarConverter {
   const DateTimeScalarConverter();
 
-  static DateTime fromJson(String json) => DateTime.parse(json);
-  static String toJson(DateTime object) => object.toIso8601String();
+  /// Parses a server date and returns it in the device's local time zone.
+  static DateTime fromJson(String json) => DateTime.parse(json).toLocal();
+
+  /// Serializes a date as a UTC ISO-8601 string (with trailing `Z`).
+  static String toJson(DateTime object) => object.toUtc().toIso8601String();
 }
 
 class JsonScalarConverter {

@@ -1,6 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show HandshakeException, SocketException;
+import 'dart:io'
+    show
+        HandshakeException,
+        HttpServer,
+        InternetAddress,
+        SocketException,
+        WebSocketTransformer;
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart' as dio;
@@ -85,6 +91,16 @@ class _TestReq extends GraphQLRequest<_TestData, _TestVars> {
     retry: retry,
     refetchInterval: refetchInterval,
   );
+}
+
+class _SubReq extends _TestReq {
+  _SubReq(super.variables);
+
+  @override
+  String get document => 'subscription Sub { user { id name } }';
+
+  @override
+  String get operationName => 'Sub';
 }
 
 class _TestMutationReq extends GraphQLRequest<_TestData, _TestVars> {
@@ -836,6 +852,73 @@ void main() {
             'not defaultRetry',
       );
     });
+  });
+
+  group('GraphQLClient subscription auth over WebSocket', () {
+    test(
+      'a 4401 close refreshes the token once and re-subscribes with it',
+      () async {
+        await _seedTokenStorage(
+          accessToken: 'old-access',
+          refreshToken: 'old-refresh',
+        );
+        final authSeen = <Object?>[];
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((request) async {
+          final socket = await WebSocketTransformer.upgrade(request);
+          var rejected = false;
+          socket.listen((raw) async {
+            final m = jsonDecode(raw as String) as Map<String, dynamic>;
+            if (rejected) return;
+            if (m['type'] == 'connection_init') {
+              final auth = (m['payload'] as Map?)?['Authorization'];
+              authSeen.add(auth);
+              if (auth != 'Bearer new-access') {
+                rejected = true;
+                await socket.close(4401, 'Unauthorized');
+              } else {
+                socket.add(jsonEncode({'type': 'connection_ack'}));
+              }
+            } else if (m['type'] == 'subscribe') {
+              socket.add(
+                jsonEncode({
+                  'id': m['id'],
+                  'type': 'next',
+                  'payload': {
+                    'data': {'id': '1', 'name': 'live'},
+                  },
+                }),
+              );
+            }
+          });
+        });
+
+        var refreshCalls = 0;
+        final client = GraphQLClient(
+          url: 'https://example.com/graphql',
+          wsUrl: 'ws://${server.address.host}:${server.port}',
+          addTypename: false,
+          refreshCallback: (_, __) async {
+            refreshCalls++;
+            return TokenPair(
+              accessToken: 'new-access',
+              refreshToken: 'new-refresh',
+            );
+          },
+        );
+
+        final data = await client
+            .stream(_SubReq(const _TestVars('1')))
+            .first
+            .timeout(const Duration(seconds: 5));
+
+        expect(data.name, 'live');
+        expect(refreshCalls, 1);
+        expect(authSeen, ['Bearer old-access', 'Bearer new-access']);
+        await client.dispose();
+      },
+    );
   });
 
   group('GraphQLClient refreshCallback / TokenStorage.i', () {

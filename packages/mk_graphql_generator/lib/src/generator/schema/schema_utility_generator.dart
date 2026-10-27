@@ -23,9 +23,15 @@ class SchemaUtilityGenerator {
         orElse: () => ObjectTypeDefinitionNode(
             name: NameNode(value: 'Mutation'), fields: []));
 
+    final subscriptionType = objectTypes.firstWhere(
+        (o) => o.name.value == 'Subscription',
+        orElse: () => ObjectTypeDefinitionNode(
+            name: NameNode(value: 'Subscription'), fields: []));
+
     final allFields = [
-      ...queryType.fields.map((f) => (field: f, isMutation: false)),
-      ...mutationType.fields.map((f) => (field: f, isMutation: true)),
+      ...queryType.fields.map((f) => (field: f, opType: 'query')),
+      ...mutationType.fields.map((f) => (field: f, opType: 'mutation')),
+      ...subscriptionType.fields.map((f) => (field: f, opType: 'subscription')),
     ];
 
     if (allFields.isEmpty) {
@@ -49,7 +55,7 @@ class SchemaUtilityGenerator {
     // 1. Generate Vars & Req classes for each schema operation field
     for (final item in allFields) {
       final field = item.field;
-      final isMutation = item.isMutation;
+      final opType = item.opType;
       final rawName = field.name.value;
       final name = rawName.pascalCase;
       final reqClassName = '${name}Req';
@@ -60,7 +66,6 @@ class SchemaUtilityGenerator {
           scalarNames: scalarNames,
           customScalars: customScalars);
       final modelClassName = returnTypeInfo.dartType;
-      final opType = isMutation ? 'mutation' : 'query';
 
       // 1a. Generate Vars Class
       final varFields = <String, FieldTypeInfo>{};
@@ -152,7 +157,10 @@ class SchemaUtilityGenerator {
               dartType: argTypeInfo.dartType),
         );
       }
-      buffer.writeln(codegen.emitOperationMethodTriple(
+      final emitMethods = item.opType == 'subscription'
+          ? codegen.emitSubscriptionMethod
+          : codegen.emitOperationMethodTriple;
+      buffer.writeln(emitMethods(
         methodName: methodName,
         modelClassName: returnTypeModel,
         reqClassName: reqClassName,

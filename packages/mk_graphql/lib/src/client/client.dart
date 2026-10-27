@@ -599,9 +599,10 @@ class GraphQLClient {
 
     // 1. AuthLink at the top of the chain (handles auth context & 401 refresh/retry)
     final hasAuth = accessTokenHeader != null || onTokenRefresh != null;
+    AuthLink? authLink;
     if (hasAuth) {
       links.add(
-        AuthLink(
+        authLink = AuthLink(
           url: url,
           dio: dioInstance,
           defaultHeaders: defaultHeaders ?? const {},
@@ -640,13 +641,11 @@ class GraphQLClient {
         (wsUrl != null
             ? WebSocketLink(
                 wsUrl,
+                // Same expiry check + single-flight refresh as HTTP requests,
+                // re-run on every (re)connect so a stale token isn't resent.
                 initialPayload: accessTokenHeader != null
-                    ? () async {
-                        final token = await TokenStorage.i.accessToken;
-                        return token != null
-                            ? await accessTokenHeader(token)
-                            : const {};
-                      }
+                    ? () async =>
+                          await authLink?.resolveAuthHeaders() ?? const {}
                     : null,
               )
             : sseUrl != null

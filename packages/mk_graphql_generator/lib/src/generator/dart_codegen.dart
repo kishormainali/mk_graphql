@@ -397,3 +397,24 @@ String emitOperationMethodTriple({
   }
   return buffer.toString();
 }
+
+/// The single execution method a subscription gets: `Stream<Model> methodName(...)`.
+/// A subscription is a long-lived stream, so it has no `future` form and
+/// nothing to `refetch`; the name carries no `Stream` suffix since a stream
+/// is the only thing it can be.
+String emitSubscriptionMethod({
+  required String methodName,
+  required String modelClassName,
+  required String reqClassName,
+  required String varsClassName,
+  required Map<String, FieldTypeInfo> args,
+}) =>
+    emitSpec(clientExtensionMethod(
+      kind: 'stream',
+      methodName: methodName,
+      modelClassName: modelClassName,
+      reqClassName: reqClassName,
+      varsClassName: varsClassName,
+      args: args,
+      docComment: 'Subscription stream for $methodName',
+    ));

@@ -455,8 +455,11 @@ class GeneratorOrchestrator {
         // {Type}Model. The only exception is a selection that is nothing
         // but a single fragment spread (`{ ...UserFields }`), which reuses
         // the shared `{Fragment}Fragment` class instead.
-        final isMutation = op.type == OperationType.mutation;
-        final schemaRootTypeName = isMutation ? 'Mutation' : 'Query';
+        final schemaRootTypeName = switch (op.type) {
+          OperationType.mutation => 'Mutation',
+          OperationType.subscription => 'Subscription',
+          _ => 'Query',
+        };
         final schemaRootType = ctx.schemaObjectTypesByName[schemaRootTypeName];
 
         // If an operation root field has no selection set but returns an object type,
@@ -680,7 +683,10 @@ class GeneratorOrchestrator {
             ),
           );
         }
-        fileOpExtensions.writeln(codegen.emitOperationMethodTriple(
+        final emitMethods = op.type == OperationType.subscription
+            ? codegen.emitSubscriptionMethod
+            : codegen.emitOperationMethodTriple;
+        fileOpExtensions.writeln(emitMethods(
           methodName: methodName,
           modelClassName: modelClassName,
           reqClassName: reqClassName,

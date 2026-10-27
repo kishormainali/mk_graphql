@@ -595,6 +595,48 @@ void main() {
       expect(reqFile, contains('CancelToken? cancelToken'));
     });
 
+    test('generates a stream-only helper for subscriptions', () async {
+      const schemaContent = '''
+        type Message {
+          id: ID!
+          text: String!
+        }
+
+        type Query {
+          messages: [Message!]!
+        }
+
+        type Subscription {
+          messageAdded(roomId: ID!): Message!
+        }
+
+        subscription OnMessage(\$roomId: ID!) {
+          messageAdded(roomId: \$roomId) {
+            id
+            text
+          }
+        }
+      ''';
+
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
+        content: schemaContent,
+        inputPath: 'schema.graphql',
+      );
+      final rootBarrel = bundle.files['generated/schema.gql.dart']!;
+
+      // .graphql operation: root field resolved on Subscription, stream only.
+      expect(rootBarrel, contains('Stream<OnMessageModel> onMessage('));
+      expect(rootBarrel, isNot(contains('Future<OnMessageModel>')));
+      expect(rootBarrel, isNot(contains('refetchOnMessage')));
+      expect(rootBarrel, isNot(contains('onMessageStream')));
+
+      // Schema-derived helper for the Subscription root field.
+      expect(rootBarrel, contains('class MessageAddedReq'));
+      expect(rootBarrel, contains('subscription MessageAdded('));
+      expect(rootBarrel, contains('Stream<MessageModel> messageAdded('));
+      expect(rootBarrel, isNot(contains('refetchMessageAdded')));
+    });
+
     test('respects custom schemaPath and sharedDir options', () async {
       const schemaContent = '''
         enum Status {

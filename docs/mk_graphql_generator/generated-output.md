@@ -30,6 +30,10 @@ lib/graphql/
 
 Every `.graphql`/`.gql` operations file gets its own `generated/{fileName}.gql.dart` barrel and `generated/{operationName}/` folders; the schema file gets the schema-wide `enums/enums.dart`, `inputs/inputs.dart`, `models/models.dart`, and `fragments/fragments.dart` output (location controlled by [`shared_dir`](configuration.md#shared_dir)). Each of `enums.dart`/`inputs.dart`/`models.dart` holds every type in its category, not one file per type — this keeps the generator's declared build outputs for the schema file fixed regardless of how many types the schema defines, which matters for `dart run build_runner watch`: growing an already-populated category (adding a type to a schema that already has other enums/inputs/objects) no longer requires restarting `watch`. A category's *first* type appearing while `watch` is already running still does. The same caveat applies to operation (`.graphql` query/mutation) files: adding a new operation to an existing file, or creating a brand-new `.graphql` file, while `watch` is running also isn't picked up without a restart.
 
+## Subscriptions
+
+A `subscription` operation (from a `.graphql` file, or a field of the schema's `Subscription` type) generates the same `Req`/`Vars`/model classes as a query, but its client extension has a single `Stream<Model> name({...})` method — no `Future` form, no `refetch`. Pass `wsUrl`/`sseUrl` to `GraphQLClient` to use it; see [authentication](../mk_graphql/authentication.md#subscriptions).
+
 ## Schema-driven operations
 
 Beyond whatever you write in `.graphql` operation files, **every field on `Query` and `Mutation` in the schema** gets a generated `{Field}Req`/`{Field}Vars` pair and three `GraphQLClient` extension methods (`client.{field}(...)`, `client.{field}Stream(...)`, `client.refetch{Field}(...)`) in `schema.gql.dart`, using the field's full return type (`{ReturnType}Model` from `models/`) with no field-level trimming. This is a convenience for ad-hoc calls; anything you actually hand-write a `.graphql` operation for gets the trimmed, operation-scoped model described below instead.

@@ -8,6 +8,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../core/backoff.dart';
 import '../../core/document_print_cache.dart';
+import '../../core/error.dart' show RevokeTokenException;
 
 typedef WebSocketPayloadCallback = FutureOr<dynamic> Function();
 
@@ -56,6 +57,23 @@ class WebSocketLink extends Link {
   /// once — resending here too would send a duplicate `subscribe` for the
   /// same id).
   bool _hasConnectedOnce = false;
+
+  /// Payload the current socket's `connection_init` was sent with. A later
+  /// subscribe that resolves a different one (the token was refreshed since)
+  /// replaces the socket, because GraphQL-over-WebSocket servers authenticate
+  /// the connection once, at `connection_init`.
+  dynamic _connectedPayload;
+
+  /// Ids whose `subscribe` was already sent on the current socket — stops a
+  /// reconnect's resend and a request's own send from both sending the same
+  /// id (servers close the socket on a duplicate id).
+  final _sentIds = <String>{};
+
+  /// Close codes servers use for a rejected `connection_init` (graphql-ws
+  /// `4401 Unauthorized` / `4403 Forbidden`). Both are surfaced as HTTP 401,
+  /// so `AuthLink` refreshes the token and re-subscribes (and revokes the
+  /// session if the refresh fails), same as for queries and mutations.
+  static const _unauthorizedCloseCodes = {4401, 4403};
 
   /// Consecutive failed reconnect attempts since the last successful
   /// `connection_ack` — drives the exponential backoff in
@@ -118,17 +136,22 @@ class WebSocketLink extends Link {
     );
   }
 
+  Future<dynamic> _resolvePayload() async {
+    final payload = initialPayload;
+    return payload is Function ? await payload() : payload;
+  }
+
   Future<void> _doConnect() async {
     try {
+      // Resolved before opening the socket: a failing payload (e.g. a
+      // revoked session) must not leave a half-open channel behind.
+      final payload = await _resolvePayload();
       _channel = WebSocketChannel.connect(
         Uri.parse(url),
         protocols: subprotocols,
       );
-
-      dynamic payload = initialPayload;
-      if (payload is Function) {
-        payload = await payload();
-      }
+      _connectedPayload = payload;
+      _sentIds.clear();
 
       _channel!.sink.add(
         jsonEncode({
@@ -149,9 +172,36 @@ class WebSocketLink extends Link {
         _resendActiveSubscriptions();
       }
       _hasConnectedOnce = true;
+    } on RevokeTokenException catch (e) {
+      _failAll(e); // reconnecting can't help; the session is gone
     } catch (e) {
       _onError(e);
     }
+  }
+
+  /// Errors and drops every active subscription — used when reconnecting
+  /// would just repeat the failure (revoked session, rejected credentials).
+  void _failAll(Object error) {
+    final controllers = _activeSubscriptions.values.toList();
+    _activeSubscriptions.clear();
+    _activeRequests.clear();
+    for (final controller in controllers) {
+      if (controller.isClosed) continue;
+      controller.addError(error);
+      controller.close();
+    }
+  }
+
+  /// Closes the current socket without triggering [_onDone]'s reconnect, so
+  /// the next [_connect] opens a fresh one (re-resolving the payload).
+  Future<void> _dropConnection() async {
+    final sub = _channelSubscription;
+    final channel = _channel;
+    _channelSubscription = null;
+    _channel = null;
+    _connected = false;
+    await sub?.cancel();
+    await channel?.sink.close();
   }
 
   /// Resends `subscribe` for every subscription still in [_activeRequests]
@@ -223,8 +273,18 @@ class WebSocketLink extends Link {
   }
 
   void _onDone() {
+    final closeCode = _channel?.closeCode;
     _connected = false;
     _channel = null;
+    if (_unauthorizedCloseCodes.contains(closeCode)) {
+      _failAll(
+        ServerException(
+          statusCode: 401,
+          originalException: 'WebSocket closed with code $closeCode',
+        ),
+      );
+      return;
+    }
     if (autoReconnect && !_isDisposed && _activeSubscriptions.isNotEmpty) {
       Timer(_reconnectDelay(), _reconnect);
       _reconnectAttempt++;
@@ -247,6 +307,7 @@ class WebSocketLink extends Link {
 
     controller.onCancel = () {
       _sendComplete(subId);
+      _sentIds.remove(subId);
       _activeSubscriptions.remove(subId);
       _activeRequests.remove(subId);
       controller.close();
@@ -256,13 +317,25 @@ class WebSocketLink extends Link {
   }
 
   Future<void> _sendSubscribe(String id, Request req) async {
-    await _connect();
+    try {
+      if (_connected &&
+          initialPayload is Function &&
+          jsonEncode(await _resolvePayload()) !=
+              jsonEncode(_connectedPayload)) {
+        await _dropConnection();
+      }
+      await _connect();
+    } on RevokeTokenException catch (e) {
+      _failAll(e);
+      return;
+    }
     _sendSubscribeMessage(id, req);
   }
 
   void _sendSubscribeMessage(String id, Request req) {
+    if (_channel == null || !_sentIds.add(id)) return;
     final docString = printDocumentCached(req.operation.document);
-    _channel?.sink.add(
+    _channel!.sink.add(
       jsonEncode({
         'id': id,
         'type': 'subscribe',

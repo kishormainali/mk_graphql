@@ -165,35 +165,9 @@ class AuthLink extends Link {
         req.context.entry<HttpLinkHeaders>()?.headers ?? const {};
     var currentHeaders = Map<String, String>.from(contextHeaders);
 
-    // 2. Proactive token-expiry check
-    if (accessTokenHeader != null &&
-        isTokenExpired != null &&
-        onTokenRefresh != null) {
-      final expired = await isTokenExpired!();
-      if (expired) {
-        Logger.d(
-          'Access token expired before request — attempting proactive refresh.',
-          tag: 'AuthLink',
-        );
-        try {
-          final newHeaders = await _refreshToken();
-          if (newHeaders != null) currentHeaders.addAll(newHeaders);
-        } on RevokeTokenException catch (e) {
-          _handleRevokeToken();
-          throw e; // surfaces the real refresh failure to the caller
-        }
-      } else {
-        final authHeaders = await _buildAccessHeaders();
-        if (authHeaders != null && authHeaders.isNotEmpty) {
-          currentHeaders.addAll(authHeaders);
-        }
-      }
-    } else if (accessTokenHeader != null) {
-      final authHeaders = await _buildAccessHeaders();
-      if (authHeaders != null && authHeaders.isNotEmpty) {
-        currentHeaders.addAll(authHeaders);
-      }
-    }
+    // 2. Current auth headers (proactively refreshing an expired token)
+    final authHeaders = await resolveAuthHeaders();
+    if (authHeaders != null) currentHeaders.addAll(authHeaders);
 
     if (currentHeaders.containsKey('Authorization')) {
       Logger.d('Auth header applied to request.', tag: 'AuthLink');
@@ -252,6 +226,35 @@ class AuthLink extends Link {
       }
       rethrow;
     }
+  }
+
+  /// The auth headers a request sent right now should carry: the stored
+  /// access token run through [accessTokenHeader], first refreshing it when
+  /// [isTokenExpired] says it has expired. A failed proactive refresh revokes
+  /// the session and rethrows the [RevokeTokenException].
+  ///
+  /// Shared by [request] and by long-lived transports that authenticate once
+  /// per connection rather than per request (e.g. [WebSocketLink]'s
+  /// `connection_init` payload) — so they get the same expiry check and
+  /// single-flight refresh as queries and mutations.
+  Future<Map<String, String>?> resolveAuthHeaders() async {
+    if (accessTokenHeader == null) return null;
+    if (isTokenExpired != null &&
+        onTokenRefresh != null &&
+        await isTokenExpired!()) {
+      Logger.d(
+        'Access token expired before request — attempting proactive refresh.',
+        tag: 'AuthLink',
+      );
+      try {
+        return await _refreshToken();
+      } on RevokeTokenException {
+        _handleRevokeToken();
+        rethrow; // surfaces the real refresh failure to the caller
+      }
+    }
+    final headers = await _buildAccessHeaders();
+    return headers != null && headers.isNotEmpty ? headers : null;
   }
 
   /// [originalResponse]/[originalException] is the unauthorized

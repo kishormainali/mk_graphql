@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart';
+import 'package:gql_link/gql_link.dart' show ServerException;
 import 'package:mk_graphql/mk_graphql.dart';
 
 void main() {
@@ -155,5 +156,81 @@ void main() {
         expect(responses.single.data, {'s': 'resumed'});
       },
     );
+  });
+
+  group('WebSocketLink authentication', () {
+    late HttpServer server;
+    late String url;
+
+    tearDown(() => server.close(force: true));
+
+    Request subRequest(String name) => Request(
+      operation: Operation(
+        document: parseString('subscription $name { s }'),
+        operationName: name,
+      ),
+    );
+
+    test(
+      '4401 close surfaces as a 401 ServerException, no reconnect',
+      () async {
+        var connections = 0;
+        server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        url = 'ws://${server.address.host}:${server.port}';
+        server.listen((request) async {
+          final socket = await WebSocketTransformer.upgrade(request);
+          connections++;
+          await socket.close(4401, 'Unauthorized');
+        });
+
+        final link = WebSocketLink(url, reconnectInterval: Duration.zero);
+        final error = await link
+            .request(subRequest('A'))
+            .first
+            .then<Object?>((_) => null, onError: (Object e) => e);
+        await Future.delayed(const Duration(milliseconds: 200));
+        await link.dispose();
+
+        expect(error, isA<ServerException>());
+        expect((error as ServerException).statusCode, 401);
+        expect(connections, 1);
+      },
+    );
+
+    test('a changed payload replaces the socket and resubscribes', () async {
+      final initPayloads = <Object?>[];
+      final subscribes = <int>[]; // socket index per subscribe message
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      url = 'ws://${server.address.host}:${server.port}';
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        final index = initPayloads.length;
+        initPayloads.add(null);
+        socket.listen((raw) {
+          final m = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (m['type'] == 'connection_init')
+            initPayloads[index] = m['payload'];
+          if (m['type'] == 'subscribe') subscribes.add(index);
+        });
+      });
+
+      var token = 'old';
+      final link = WebSocketLink(url, initialPayload: () => {'t': token});
+      final a = link.request(subRequest('A')).listen((_) {}, onError: (_) {});
+      await Future.delayed(const Duration(milliseconds: 200));
+      token = 'new';
+      final b = link.request(subRequest('B')).listen((_) {}, onError: (_) {});
+      await Future.delayed(const Duration(milliseconds: 300));
+      await a.cancel();
+      await b.cancel();
+      await link.dispose();
+
+      expect(initPayloads, [
+        {'t': 'old'},
+        {'t': 'new'},
+      ]);
+      // A once on the old socket, then A and B (each exactly once) on the new.
+      expect(subscribes, [0, 1, 1]);
+    });
   });
 }

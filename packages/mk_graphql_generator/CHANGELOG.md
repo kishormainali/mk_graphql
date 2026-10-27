@@ -1,3 +1,7 @@
+## Unreleased
+
+- **Feature**: subscriptions are generated. Schema `Subscription` fields and `.graphql` `subscription` operations get `Req`/`Vars`/model classes and a single `Stream<Model> name(...)` client method (no `Future`/`refetch`). Previously schema subscriptions were skipped and `.graphql` subscriptions resolved their fields against `Query`.
+
 ## 1.2.2
 
 - **New**: every generated enum now has `static Name? fromString(String? value)`, converting a wire value (e.g. `'ADMIN_USER'`) to its constant (`UserRole.adminUser`). Returns `null` for `null` or an unrecognized value, so it's safe on server enums that gain new values. Each enum also gets `String get value` returning the wire value, so `Enum.fromString(e.value) == e`. Schema enum values named `value` or `fromString` are escaped to `gValue`/`gFromString` (like Dart keywords) so they can't clash with these members.

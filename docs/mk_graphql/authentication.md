@@ -138,6 +138,12 @@ GraphQLClient(
 
 `client.isAuthenticated` is `true` when `TokenStorage.i` holds an access token. It reflects what is *stored*, not whether the server still accepts it.
 
+## Subscriptions
+
+- **SSE (`sseUrl`)** goes through `AuthLink` like any HTTP request: a 401/403 refreshes (single-flight) and retries once.
+- **WebSocket (`wsUrl`)** authenticates once per connection, in `connection_init`. The payload is built from `accessTokenHeader` on every (re)connect, after the same `isTokenExpired` check and refresh as HTTP requests, so a reconnect never resends a stale token. If a later subscribe resolves a different token (e.g. after a refresh), the socket is replaced and active subscriptions are resent on it.
+- A server that rejects the connection with close code `4401` or `4403` is treated as HTTP 401: `AuthLink` refreshes the token and re-subscribes once; if the refresh fails the session is revoked (`onRevokeToken`, listeners), same as for queries.
+
 ## Storage details
 
 - Storage is implemented by [`token_storage`](https://pub.dev/packages/token_storage) on top of `flutter_secure_storage`: the whole pair is stored as one JSON entry in a namespace private to that package, so `clearAll()`/the fresh-install wipe never touch your own secure storage.

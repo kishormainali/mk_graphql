@@ -1,4 +1,4 @@
-## Unreleased
+## 1.2.7
 
 - **Fix**: `TypenameLink` no longer adds `__typename` to a subscription's root selection set, which servers reject ("must select only one top level field" / "must not select an introspection top level field"). Nested selections still get it.
 

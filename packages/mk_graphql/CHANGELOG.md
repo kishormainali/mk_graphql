@@ -1,4 +1,4 @@
-## Unreleased
+## 1.2.6
 
 - **Fix**: `WebSocketLink` now waits for `connection_ack` before sending `subscribe` (previously it subscribed immediately, which servers that authenticate in `connection_init` reject with `4401`). New `connectionAckTimeout` (default 10s; `null` restores the old no-wait behavior) and optional `maxConnectionAge` (replaces an old socket before the next subscribe).
 

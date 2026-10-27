@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gql/ast.dart';
 import 'package:gql/language.dart';
 import 'package:gql_exec/gql_exec.dart';
 import 'package:mk_graphql/mk_graphql.dart';

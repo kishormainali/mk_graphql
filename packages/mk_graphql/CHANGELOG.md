@@ -1,4 +1,4 @@
-## Unreleased
+## 1.3.0
 
 - **Feature**: `graphql-sse` *single connection mode*. New `SseSingleConnectionLink` (and `GraphQLClient(sseUrl: …, sseSingleConnection: true)`) shares one reserved event stream across all subscriptions (`PUT` reservation, `GET` stream, `POST` per operation, `DELETE` to cancel). The stream is opened on demand, closed shortly after the last subscription ends, and re-reserved with backoff after a drop, re-sending live subscriptions. The default stays distinct connections mode (`SseLink`).
 - **Fix**: `SseLink` now closes the HTTP connection when a subscription is cancelled; previously cancelling a quiet stream never returned and left the connection open.

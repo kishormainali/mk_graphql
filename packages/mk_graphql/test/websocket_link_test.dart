@@ -208,8 +208,10 @@ void main() {
         initPayloads.add(null);
         socket.listen((raw) {
           final m = jsonDecode(raw as String) as Map<String, dynamic>;
-          if (m['type'] == 'connection_init')
+          if (m['type'] == 'connection_init') {
             initPayloads[index] = m['payload'];
+            socket.add(jsonEncode({'type': 'connection_ack'}));
+          }
           if (m['type'] == 'subscribe') subscribes.add(index);
         });
       });
@@ -232,5 +234,102 @@ void main() {
       // A once on the old socket, then A and B (each exactly once) on the new.
       expect(subscribes, [0, 1, 1]);
     });
+  });
+
+  group('WebSocketLink connection_ack', () {
+    late HttpServer server;
+    late String url;
+
+    tearDown(() => server.close(force: true));
+
+    Request subRequest() => Request(
+      operation: Operation(
+        document: parseString('subscription S { s }'),
+        operationName: 'S',
+      ),
+    );
+
+    test('subscribe is only sent after connection_ack', () async {
+      final received = <String>[];
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      url = 'ws://${server.address.host}:${server.port}';
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        socket.listen((raw) async {
+          final type = (jsonDecode(raw as String) as Map)['type'] as String;
+          received.add(type);
+          if (type == 'connection_init') {
+            await Future.delayed(const Duration(milliseconds: 150));
+            received.add('ack_sent');
+            socket.add(jsonEncode({'type': 'connection_ack'}));
+          }
+        });
+      });
+
+      final link = WebSocketLink(url);
+      final sub = link.request(subRequest()).listen((_) {}, onError: (_) {});
+      await Future.delayed(const Duration(milliseconds: 400));
+      await sub.cancel();
+      await link.dispose();
+
+      expect(received.take(3), ['connection_init', 'ack_sent', 'subscribe']);
+    });
+
+    test(
+      'a server that never acks times out and errors the subscriber',
+      () async {
+        server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        url = 'ws://${server.address.host}:${server.port}';
+        server.listen((request) async {
+          await WebSocketTransformer.upgrade(request);
+        });
+
+        final link = WebSocketLink(
+          url,
+          connectionAckTimeout: const Duration(milliseconds: 100),
+          autoReconnect: false,
+        );
+        final error = await link
+            .request(subRequest())
+            .first
+            .then<Object?>((_) => null, onError: (Object e) => e);
+        await link.dispose();
+
+        expect(error, isA<ServerException>());
+      },
+    );
+
+    test(
+      'maxConnectionAge opens a fresh socket for a later subscribe',
+      () async {
+        var connections = 0;
+        server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        url = 'ws://${server.address.host}:${server.port}';
+        server.listen((request) async {
+          final socket = await WebSocketTransformer.upgrade(request);
+          connections++;
+          socket.listen((raw) {
+            if ((jsonDecode(raw as String) as Map)['type'] ==
+                'connection_init') {
+              socket.add(jsonEncode({'type': 'connection_ack'}));
+            }
+          });
+        });
+
+        final link = WebSocketLink(
+          url,
+          maxConnectionAge: const Duration(milliseconds: 100),
+        );
+        final a = link.request(subRequest()).listen((_) {}, onError: (_) {});
+        await Future.delayed(const Duration(milliseconds: 250));
+        final b = link.request(subRequest()).listen((_) {}, onError: (_) {});
+        await Future.delayed(const Duration(milliseconds: 250));
+        await a.cancel();
+        await b.cancel();
+        await link.dispose();
+
+        expect(connections, 2);
+      },
+    );
   });
 }

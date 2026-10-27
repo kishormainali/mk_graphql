@@ -41,6 +41,20 @@ class WebSocketLink extends Link {
   /// the same instant and re-cause the spike that dropped them.
   final double reconnectJitter;
 
+  /// How long to wait for the server's `connection_ack` before giving up on
+  /// the socket (and reconnecting, if [autoReconnect]). `subscribe` is only
+  /// sent after the ack — servers that authenticate in `connection_init`
+  /// close the socket (`4401`) on a `subscribe` that arrives before it.
+  /// `null` skips the wait and subscribes immediately, for the rare server
+  /// that never acks.
+  final Duration? connectionAckTimeout;
+
+  /// When set, a subscribe on a socket older than this opens a fresh one
+  /// (re-resolving [initialPayload]) first. For servers that read the token
+  /// once per socket and reject a long-lived socket's stale one, when no
+  /// token-changed signal is available to recycle it sooner.
+  final Duration? maxConnectionAge;
+
   final bool autoReconnect;
   final ResponseParser parser;
 
@@ -57,6 +71,13 @@ class WebSocketLink extends Link {
   /// once — resending here too would send a duplicate `subscribe` for the
   /// same id).
   bool _hasConnectedOnce = false;
+
+  /// Completes `true` on the current socket's `connection_ack`, `false` if it
+  /// closes or errors first.
+  Completer<bool>? _ack;
+
+  /// When the current socket was acknowledged — see [maxConnectionAge].
+  DateTime? _connectedAt;
 
   /// Payload the current socket's `connection_init` was sent with. A later
   /// subscribe that resolves a different one (the token was refreshed since)
@@ -100,6 +121,8 @@ class WebSocketLink extends Link {
     this.reconnectBackoffMultiplier = 1.5,
     this.reconnectJitter = 0.2,
     this.autoReconnect = true,
+    this.connectionAckTimeout = const Duration(seconds: 10),
+    this.maxConnectionAge,
     this.parser = const ResponseParser(),
   }) : assert(
          reconnectJitter >= 0.0 && reconnectJitter <= 1.0,
@@ -160,13 +183,26 @@ class WebSocketLink extends Link {
         }),
       );
 
-      _connected = true;
-
+      final ack = _ack = Completer<bool>();
       _channelSubscription = _channel!.stream.listen(
         _onMessage,
         onError: _onError,
         onDone: _onDone,
       );
+
+      final timeout = connectionAckTimeout;
+      if (timeout != null) {
+        final acked = await ack.future.timeout(
+          timeout,
+          onTimeout: () =>
+              throw TimeoutException('No connection_ack from server', timeout),
+        );
+        // Closed/errored before the ack: _onDone/_onError already errored
+        // the subscribers and scheduled the reconnect.
+        if (!acked) return;
+      }
+      _connected = true;
+      _connectedAt = DateTime.now();
 
       if (_hasConnectedOnce) {
         _resendActiveSubscriptions();
@@ -175,6 +211,7 @@ class WebSocketLink extends Link {
     } on RevokeTokenException catch (e) {
       _failAll(e); // reconnecting can't help; the session is gone
     } catch (e) {
+      await _dropConnection();
       _onError(e);
     }
   }
@@ -227,6 +264,7 @@ class WebSocketLink extends Link {
 
       if (type == 'connection_ack') {
         _reconnectAttempt = 0;
+        _ack?.complete(true);
         return;
       }
 
@@ -261,6 +299,7 @@ class WebSocketLink extends Link {
 
   void _onError(dynamic error) {
     _connected = false;
+    if (_ack?.isCompleted == false) _ack!.complete(false);
     for (final controller in _activeSubscriptions.values) {
       if (!controller.isClosed) {
         controller.addError(ServerException(originalException: error));
@@ -275,6 +314,7 @@ class WebSocketLink extends Link {
   void _onDone() {
     final closeCode = _channel?.closeCode;
     _connected = false;
+    if (_ack?.isCompleted == false) _ack!.complete(false);
     _channel = null;
     if (_unauthorizedCloseCodes.contains(closeCode)) {
       _failAll(
@@ -318,12 +358,7 @@ class WebSocketLink extends Link {
 
   Future<void> _sendSubscribe(String id, Request req) async {
     try {
-      if (_connected &&
-          initialPayload is Function &&
-          jsonEncode(await _resolvePayload()) !=
-              jsonEncode(_connectedPayload)) {
-        await _dropConnection();
-      }
+      if (_connected && await _needsFreshSocket()) await _dropConnection();
       await _connect();
     } on RevokeTokenException catch (e) {
       _failAll(e);
@@ -332,8 +367,20 @@ class WebSocketLink extends Link {
     _sendSubscribeMessage(id, req);
   }
 
+  /// Whether the live socket should be replaced before another subscribe:
+  /// its token changed (a refresh happened) or it outlived [maxConnectionAge].
+  Future<bool> _needsFreshSocket() async {
+    final age = maxConnectionAge;
+    if (age != null &&
+        DateTime.now().difference(_connectedAt ?? DateTime.now()) > age) {
+      return true;
+    }
+    return initialPayload is Function &&
+        jsonEncode(await _resolvePayload()) != jsonEncode(_connectedPayload);
+  }
+
   void _sendSubscribeMessage(String id, Request req) {
-    if (_channel == null || !_sentIds.add(id)) return;
+    if (!_connected || _channel == null || !_sentIds.add(id)) return;
     final docString = printDocumentCached(req.operation.document);
     _channel!.sink.add(
       jsonEncode({

@@ -142,6 +142,7 @@ GraphQLClient(
 
 - **SSE (`sseUrl`)** goes through `AuthLink` like any HTTP request: a 401/403 refreshes (single-flight) and retries once.
 - **WebSocket (`wsUrl`)** authenticates once per connection, in `connection_init`. The payload is built from `accessTokenHeader` on every (re)connect, after the same `isTokenExpired` check and refresh as HTTP requests, so a reconnect never resends a stale token. If a later subscribe resolves a different token (e.g. after a refresh), the socket is replaced and active subscriptions are resent on it.
+- `subscribe` is sent only after the server's `connection_ack` (servers that authenticate in `connection_init` close the socket with `4401` otherwise). `WebSocketLink(connectionAckTimeout: ...)` bounds the wait (default 10s, then the socket is dropped and reconnected); `null` skips the wait for a server that never acks. `maxConnectionAge` optionally opens a fresh socket for a subscribe once the current one is older than that.
 - A server that rejects the connection with close code `4401` or `4403` is treated as HTTP 401: `AuthLink` refreshes the token and re-subscribes once; if the refresh fails the session is revoked (`onRevokeToken`, listeners), same as for queries.
 
 ## Storage details

@@ -88,6 +88,8 @@ Exactly one of these terminates the pipeline for a given request:
 
 Pick the subscription transport by passing exactly one of `wsUrl`, `sseUrl`, or a custom `subscriptionLink` to `GraphQLClient(...)`.
 
+For `sseUrl`, the default is `graphql-sse`'s *distinct connections mode* (one HTTP connection per subscription). Pass `sseSingleConnection: true` for its *single connection mode*, where every subscription shares one reserved event stream — useful over HTTP/1.1, where many open connections to one host can starve ordinary requests. The stream reopens with backoff after a drop and live subscriptions are re-sent on it.
+
 ## Customizing beyond the constructor
 
 `GraphQLClient`'s constructor covers the common cases (auth, typename injection, logging, HTTP/SSE/WebSocket transports) by building the pipeline internally from the arguments you pass — there is currently no way to hand it a fully custom, pre-assembled `Link` chain (e.g. to swap in `BatchLink` or insert your own middleware). The one exception is the subscription branch: pass `subscriptionLink` to use any `Link` you like in place of the built-in `WebSocketLink`/`SseLink` selection.

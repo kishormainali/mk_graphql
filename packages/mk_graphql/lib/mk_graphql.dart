@@ -18,7 +18,8 @@ export 'src/link/transport/batch_link.dart';
 export 'src/link/transport/dio_link.dart';
 export 'src/link/transport/http_link.dart';
 export 'src/link/logging/logger_options.dart';
-export 'src/link/transport/sse_link.dart';
+export 'src/link/transport/sse_link.dart' show SseLink;
+export 'src/link/transport/sse_single_connection_link.dart';
 export 'src/link/transform/typename_link.dart';
 export 'src/link/transport/websocket_link.dart';
 

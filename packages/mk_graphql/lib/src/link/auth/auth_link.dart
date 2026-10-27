@@ -286,7 +286,34 @@ class AuthLink extends Link {
         final retryReq = req.withContextEntry(
           HttpLinkHeaders(headers: retryHeaders),
         );
-        yield* forward(retryReq);
+        // Generation the retry is sent under: a long-lived stream (a
+        // subscription) can outlive this token too, and a later 401 on it must
+        // refresh again rather than be treated as the one-shot retry's failure.
+        final retryGeneration = _coordinator.generation;
+        var emitted = false;
+        try {
+          await for (final response in forward(retryReq)) {
+            emitted = true;
+            yield response;
+          }
+        } on ServerException catch (e) {
+          // Only a stream that was delivering before it was rejected is
+          // refreshed again; one that fails straight away with the fresh
+          // token would otherwise loop refresh -> 401 -> refresh forever.
+          if (emitted &&
+              _classify(response: e.parsedResponse, exception: e) ==
+                  AuthFailure.refresh) {
+            yield* _refreshAndRetry(
+              req,
+              contextHeaders,
+              forward,
+              retryGeneration,
+              originalException: e,
+            );
+            return;
+          }
+          rethrow;
+        }
       } else {
         _handleRevokeToken();
         if (originalResponse != null) {

@@ -25,6 +25,7 @@ import '../link/logging/logger_options.dart';
 import '../link/transform/typename_link.dart';
 import '../link/transport/dio_link.dart';
 import '../link/transport/sse_link.dart';
+import '../link/transport/sse_single_connection_link.dart';
 import '../link/transport/websocket_link.dart';
 
 /// Central GraphQL Client managing cache, links, and operation requests.
@@ -160,6 +161,13 @@ class GraphQLClient {
 
     /// Optional Server-Sent Events (SSE) endpoint URL for GraphQL subscriptions.
     String? sseUrl,
+
+    /// Use `graphql-sse`'s *single connection mode* for [sseUrl]: all
+    /// subscriptions share one event stream (reserved with a `PUT`) instead
+    /// of each opening its own HTTP connection. Requires a server that
+    /// supports it (e.g. `graphql-sse`'s handler). Defaults to distinct
+    /// connections mode.
+    bool sseSingleConnection = false,
 
     /// Custom subscription [Link] override (takes precedence over wsUrl and sseUrl).
     Link? subscriptionLink,
@@ -301,6 +309,7 @@ class GraphQLClient {
         url: url,
         wsUrl: wsUrl,
         sseUrl: sseUrl,
+        sseSingleConnection: sseSingleConnection,
         subscriptionLink: subscriptionLink,
         dio: dioInstance,
         defaultHeaders: defaultHeaders,
@@ -328,6 +337,7 @@ class GraphQLClient {
     required String url,
     String? wsUrl,
     String? sseUrl,
+    bool sseSingleConnection = false,
     Link? subscriptionLink,
     Dio? dio,
     Map<String, String>? defaultHeaders,
@@ -353,6 +363,7 @@ class GraphQLClient {
       url: url,
       wsUrl: wsUrl,
       sseUrl: sseUrl,
+      sseSingleConnection: sseSingleConnection,
       subscriptionLink: subscriptionLink,
       dio: dio,
       defaultHeaders: defaultHeaders,
@@ -580,6 +591,7 @@ class GraphQLClient {
     required String url,
     String? wsUrl,
     String? sseUrl,
+    bool sseSingleConnection = false,
     Link? subscriptionLink,
     required Dio dio,
     Map<String, String>? defaultHeaders,
@@ -647,6 +659,13 @@ class GraphQLClient {
                     ? () async =>
                           await authLink?.resolveAuthHeaders() ?? const {}
                     : null,
+              )
+            : sseUrl != null && sseSingleConnection
+            ? SseSingleConnectionLink(
+                sseUrl,
+                client: dioInstance,
+                defaultHeaders: defaultHeaders ?? const {},
+                tokenHeader: accessTokenHeader,
               )
             : sseUrl != null
             ? SseLink(

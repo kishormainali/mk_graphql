@@ -55,6 +55,32 @@ class WebSocketLink extends Link {
   /// token-changed signal is available to recycle it sooner.
   final Duration? maxConnectionAge;
 
+  /// How often a `ping` is sent on an idle `graphql-transport-ws` socket to
+  /// prove the connection is still alive. A socket that dies silently (a
+  /// NAT/proxy timeout, a phone switching networks) raises no error on its
+  /// own, so without this a long-running subscription just stops delivering.
+  /// `null` disables the heartbeat. Not sent on the legacy
+  /// `subscriptions-transport-ws` protocol, which has no client `ping`.
+  final Duration? pingInterval;
+
+  /// How long past [pingInterval] the socket may stay completely silent (no
+  /// `pong`, no data) before it is considered dead, dropped and reconnected.
+  final Duration pongTimeout;
+
+  /// How long the socket stays open after the last subscription is
+  /// cancelled before it is closed (code `1000`). The delay lets a screen
+  /// that unsubscribes and immediately re-subscribes reuse the socket. The
+  /// next subscription opens a fresh one. `null` keeps the socket open until
+  /// [dispose].
+  final Duration? idleCloseDelay;
+
+  /// While connected with an [initialPayload] callback, how often the payload
+  /// is re-resolved (which refreshes an expired token) so an open socket is
+  /// replaced with one carrying the new token *before* the server rejects the
+  /// old one — rather than only noticing on the next `subscribe`. Active
+  /// subscriptions are re-sent on the new socket. `null` disables the check.
+  final Duration? payloadCheckInterval;
+
   final bool autoReconnect;
   final ResponseParser parser;
 
@@ -96,12 +122,28 @@ class WebSocketLink extends Link {
   /// session if the refresh fails), same as for queries and mutations.
   static const _unauthorizedCloseCodes = {4401, 4403};
 
+  /// Close codes `graphql-ws` servers use for a failure that reconnecting
+  /// can't fix — `4400` bad request, `4406` subprotocol not acceptable,
+  /// `4409` duplicate subscriber id, `4429` too many init requests, `4500`
+  /// internal error. Reconnecting would just be rejected the same way, so
+  /// subscribers get the error instead.
+  static const _fatalCloseCodes = {4400, 4406, 4409, 4429, 4500};
+
   /// Consecutive failed reconnect attempts since the last successful
   /// `connection_ack` — drives the exponential backoff in
   /// [_reconnectDelay]. Reset to `0` on every `connection_ack`.
   int _reconnectAttempt = 0;
 
   static final Random _random = Random();
+
+  /// Last time anything (data, `pong`, `ping`, ack) arrived on the current
+  /// socket — what the heartbeat judges liveness by.
+  DateTime _lastMessageAt = DateTime.now();
+  Timer? _heartbeatTimer;
+  Timer? _payloadTimer;
+  Timer? _reconnectTimer;
+  Timer? _idleTimer;
+  bool _rechecking = false;
 
   final _activeSubscriptions = <String, StreamController<Response>>{};
 
@@ -123,11 +165,21 @@ class WebSocketLink extends Link {
     this.autoReconnect = true,
     this.connectionAckTimeout = const Duration(seconds: 10),
     this.maxConnectionAge,
+    this.pingInterval = const Duration(seconds: 30),
+    this.pongTimeout = const Duration(seconds: 10),
+    this.idleCloseDelay = const Duration(seconds: 5),
+    this.payloadCheckInterval = const Duration(minutes: 1),
     this.parser = const ResponseParser(),
   }) : assert(
          reconnectJitter >= 0.0 && reconnectJitter <= 1.0,
          'reconnectJitter must be within 0.0–1.0',
        );
+
+  /// Whether the negotiated subprotocol is the legacy
+  /// `subscriptions-transport-ws` (named `graphql-ws`), which spells client
+  /// messages differently: `start` / `stop` instead of `subscribe` /
+  /// `complete`, and `connection_terminate` before closing.
+  bool get _isLegacyProtocol => _channel?.protocol == 'graphql-ws';
 
   Duration _reconnectDelay() {
     final capped = cappedBackoffDelay(
@@ -169,6 +221,7 @@ class WebSocketLink extends Link {
       // Resolved before opening the socket: a failing payload (e.g. a
       // revoked session) must not leave a half-open channel behind.
       final payload = await _resolvePayload();
+      if (_isDisposed) return;
       _channel = WebSocketChannel.connect(
         Uri.parse(url),
         protocols: subprotocols,
@@ -201,8 +254,13 @@ class WebSocketLink extends Link {
         // the subscribers and scheduled the reconnect.
         if (!acked) return;
       }
+      if (_isDisposed) {
+        await _dropConnection();
+        return;
+      }
       _connected = true;
       _connectedAt = DateTime.now();
+      _startTimers();
 
       if (_hasConnectedOnce) {
         _resendActiveSubscriptions();
@@ -237,8 +295,104 @@ class WebSocketLink extends Link {
     _channelSubscription = null;
     _channel = null;
     _connected = false;
+    _stopTimers();
+    if (_ack?.isCompleted == false) _ack!.complete(false);
     await sub?.cancel();
-    await channel?.sink.close();
+    if (channel != null) {
+      if (channel.protocol == 'graphql-ws') {
+        try {
+          channel.sink.add(jsonEncode({'type': 'connection_terminate'}));
+        } catch (_) {}
+      }
+      // A normal-closure handshake, bounded: a server that never answers the
+      // close frame must not hang dispose or a reconnect.
+      try {
+        await channel.sink
+            .close(1000, 'Normal Closure')
+            .timeout(const Duration(seconds: 2));
+      } catch (_) {}
+    }
+  }
+
+  void _startTimers() {
+    _stopTimers();
+    _lastMessageAt = DateTime.now();
+    final ping = pingInterval;
+    if (ping != null && _channel?.protocol == 'graphql-transport-ws') {
+      _heartbeatTimer = Timer.periodic(ping, (_) => _heartbeat(ping));
+    }
+    final check = payloadCheckInterval;
+    if (check != null && initialPayload is Function) {
+      _payloadTimer = Timer.periodic(check, (_) => _recheckPayload());
+    }
+  }
+
+  void _stopTimers() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _payloadTimer?.cancel();
+    _payloadTimer = null;
+  }
+
+  void _heartbeat(Duration ping) {
+    if (!_connected || _isDisposed) return;
+    if (DateTime.now().difference(_lastMessageAt) > ping + pongTimeout) {
+      // Half-open socket: nothing (not even a pong) came back. Replace it.
+      _dropConnection().whenComplete(
+        () => _onError(
+          TimeoutException('WebSocket heartbeat timed out', ping + pongTimeout),
+        ),
+      );
+      return;
+    }
+    try {
+      _channel?.sink.add(jsonEncode({'type': 'ping'}));
+    } catch (_) {}
+  }
+
+  /// Replaces the socket when the token behind its `connection_init` has
+  /// changed or is about to be rejected — see [payloadCheckInterval].
+  Future<void> _recheckPayload() async {
+    if (_rechecking || !_connected || _activeSubscriptions.isEmpty) return;
+    _rechecking = true;
+    try {
+      if (await _needsFreshSocket() && !_isDisposed) {
+        await _dropConnection();
+        await _connect();
+      }
+    } on RevokeTokenException catch (e) {
+      _failAll(e);
+      await _dropConnection();
+    } catch (_) {
+      // A transient failure resolving the payload: try again next tick.
+    } finally {
+      _rechecking = false;
+    }
+  }
+
+  void _scheduleReconnect() {
+    if (!autoReconnect ||
+        _isDisposed ||
+        _activeSubscriptions.isEmpty ||
+        _reconnectTimer?.isActive == true) {
+      return;
+    }
+    _reconnectTimer = Timer(_reconnectDelay(), _reconnect);
+    _reconnectAttempt++;
+  }
+
+  void _scheduleIdleClose() {
+    _idleTimer?.cancel();
+    final delay = idleCloseDelay;
+    if (delay == null || _isDisposed || _activeSubscriptions.isNotEmpty) return;
+    _idleTimer = Timer(delay, () async {
+      if (_activeSubscriptions.isEmpty &&
+          !_isDisposed &&
+          _connectFuture == null) {
+        _reconnectTimer?.cancel();
+        await _dropConnection();
+      }
+    });
   }
 
   /// Resends `subscribe` for every subscription still in [_activeRequests]
@@ -252,6 +406,7 @@ class WebSocketLink extends Link {
   }
 
   void _onMessage(dynamic event) {
+    _lastMessageAt = DateTime.now();
     try {
       final message = jsonDecode(event as String) as Map<String, dynamic>;
       final type = message['type'] as String?;
@@ -259,6 +414,20 @@ class WebSocketLink extends Link {
 
       if (type == 'ping') {
         _channel?.sink.add(jsonEncode({'type': 'pong'}));
+        return;
+      }
+      if (type == 'pong' || type == 'ka') return;
+
+      if (type == 'connection_error') {
+        // Legacy servers reject a bad `connection_init` this way (the
+        // counterpart of the 4401 close): surface it as unauthorized so
+        // AuthLink refreshes the token and re-subscribes.
+        _failAll(
+          ServerException(
+            statusCode: 401,
+            originalException: message['payload'] ?? 'connection_error',
+          ),
+        );
         return;
       }
 
@@ -283,18 +452,34 @@ class WebSocketLink extends Link {
                 .map(parser.parseError)
                 .toList();
             controller.add(Response(errors: errors, response: message));
+          } else if (payload is Map<String, dynamic> &&
+              payload.containsKey('message')) {
+            // Legacy servers send a single error object, not a list.
+            controller.add(
+              Response(errors: [parser.parseError(payload)], response: message),
+            );
           } else {
             controller.addError(ServerException(originalException: payload));
           }
+          // An `error` message terminates the operation — the server sends
+          // no `complete` after it — so it must not stay registered, or a
+          // reconnect would resubscribe an operation the server already ended.
+          _finishOperation(id, controller);
         } else if (type == 'complete') {
-          controller.close();
-          _activeSubscriptions.remove(id);
-          _activeRequests.remove(id);
+          _finishOperation(id, controller);
         }
       }
     } catch (_) {
       // Ignore malformed payloads
     }
+  }
+
+  void _finishOperation(String id, StreamController<Response> controller) {
+    controller.close();
+    _activeSubscriptions.remove(id);
+    _activeRequests.remove(id);
+    _sentIds.remove(id);
+    _scheduleIdleClose();
   }
 
   void _onError(dynamic error) {
@@ -305,17 +490,28 @@ class WebSocketLink extends Link {
         controller.addError(ServerException(originalException: error));
       }
     }
-    if (autoReconnect && !_isDisposed) {
-      Timer(_reconnectDelay(), _reconnect);
-      _reconnectAttempt++;
-    }
+    _stopTimers();
+    _scheduleReconnect();
   }
 
   void _onDone() {
     final closeCode = _channel?.closeCode;
+    final closeReason = _channel?.closeReason;
     _connected = false;
+    _stopTimers();
     if (_ack?.isCompleted == false) _ack!.complete(false);
     _channel = null;
+    if (_fatalCloseCodes.contains(closeCode)) {
+      _failAll(
+        ServerException(
+          originalException:
+              'WebSocket closed with code $closeCode '
+                      '${closeReason ?? ''}'
+                  .trim(),
+        ),
+      );
+      return;
+    }
     if (_unauthorizedCloseCodes.contains(closeCode)) {
       _failAll(
         ServerException(
@@ -325,10 +521,7 @@ class WebSocketLink extends Link {
       );
       return;
     }
-    if (autoReconnect && !_isDisposed && _activeSubscriptions.isNotEmpty) {
-      Timer(_reconnectDelay(), _reconnect);
-      _reconnectAttempt++;
-    }
+    _scheduleReconnect();
   }
 
   void _reconnect() {
@@ -340,6 +533,7 @@ class WebSocketLink extends Link {
   Stream<Response> request(Request req, [NextLink? forward]) {
     final subId = '${req.operation.operationName ?? 'sub'}_${++_nextId}';
     final controller = StreamController<Response>();
+    _idleTimer?.cancel();
 
     _activeSubscriptions[subId] = controller;
     _activeRequests[subId] = req;
@@ -351,6 +545,7 @@ class WebSocketLink extends Link {
       _activeSubscriptions.remove(subId);
       _activeRequests.remove(subId);
       controller.close();
+      _scheduleIdleClose();
     };
 
     return controller.stream;
@@ -385,7 +580,7 @@ class WebSocketLink extends Link {
     _channel!.sink.add(
       jsonEncode({
         'id': id,
-        'type': 'subscribe',
+        'type': _isLegacyProtocol ? 'start' : 'subscribe',
         'payload': {
           'query': docString,
           if (req.operation.operationName != null)
@@ -398,21 +593,23 @@ class WebSocketLink extends Link {
 
   void _sendComplete(String id) {
     try {
-      _channel?.sink.add(jsonEncode({'id': id, 'type': 'complete'}));
+      _channel?.sink.add(
+        jsonEncode({'id': id, 'type': _isLegacyProtocol ? 'stop' : 'complete'}),
+      );
     } catch (_) {}
   }
 
   @override
   Future<void> dispose() async {
     _isDisposed = true;
-    _connected = false;
-    for (final controller in _activeSubscriptions.values) {
-      await controller.close();
-    }
+    _reconnectTimer?.cancel();
+    _idleTimer?.cancel();
+    final controllers = _activeSubscriptions.values.toList();
     _activeSubscriptions.clear();
     _activeRequests.clear();
-    await _channelSubscription?.cancel();
-    await _channel?.sink.close();
-    _channel = null;
+    for (final controller in controllers) {
+      await controller.close();
+    }
+    await _dropConnection();
   }
 }

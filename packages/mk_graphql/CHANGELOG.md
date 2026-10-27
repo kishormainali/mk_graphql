@@ -1,3 +1,14 @@
+## Unreleased
+
+- **Feature**: `graphql-sse` *single connection mode*. New `SseSingleConnectionLink` (and `GraphQLClient(sseUrl: …, sseSingleConnection: true)`) shares one reserved event stream across all subscriptions (`PUT` reservation, `GET` stream, `POST` per operation, `DELETE` to cancel). The stream is opened on demand, closed shortly after the last subscription ends, and re-reserved with backoff after a drop, re-sending live subscriptions. The default stays distinct connections mode (`SseLink`).
+- **Fix**: `SseLink` now closes the HTTP connection when a subscription is cancelled; previously cancelling a quiet stream never returned and left the connection open.
+- **Fix**: `SseLink` reconnects a dropped subscription with backoff (`autoReconnect`, `reconnectInterval`, `maxReconnectInterval`, `reconnectBackoffMultiplier`, `maxReconnectAttempts`), sends `Last-Event-ID`, and uses the current token on reconnect. New optional `idleTimeout` tears down a stream that goes silent. 4xx responses are not retried, and a rejected request's GraphQL `errors` body is kept in the exception's `parsedResponse`.
+- **Fix**: `WebSocketLink` closes idle and dead sockets and no longer leaks timers. It closes the socket (code `1000`) `idleCloseDelay` (default 5s) after the last subscription is cancelled; sends a `ping` every `pingInterval` (default 30s, `graphql-transport-ws` only) and replaces the socket if nothing comes back within `pongTimeout`; re-checks the auth payload every `payloadCheckInterval` (default 1 minute) and replaces the socket when the token changed; cancels reconnect timers on `dispose`; and only reconnects while subscriptions are active.
+- **Fix**: `WebSocketLink` now speaks the legacy `graphql-ws` (`subscriptions-transport-ws`) protocol when the server negotiates it (`start`/`stop`, `connection_terminate`, `connection_error` as unauthorized, single-object `error`).
+- **Fix**: `WebSocketLink` treats a `graphql-transport-ws` `error` message as the end of that operation (it was resubscribed after reconnects), and fails subscribers on close codes reconnecting can't fix (`4400`, `4406`, `4409`, `4429`, `4500`) instead of reconnecting forever.
+- **Fix**: `AuthLink` refreshes the token again when a subscription that was delivering after a refresh later gets a 401 (long-running streams that outlive their token), instead of failing.
+- **Behavior change**: the WebSocket ping, token re-check and idle-close are on by default; set `pingInterval`, `payloadCheckInterval` or `idleCloseDelay` to `null` to turn them off.
+
 ## 1.2.7
 
 - **Fix**: `TypenameLink` no longer adds `__typename` to a subscription's root selection set, which servers reject ("must select only one top level field" / "must not select an introspection top level field"). Nested selections still get it.

@@ -1,4 +1,4 @@
-## Unreleased
+## 1.3.0
 
 - **Feature**: subscriptions are generated. Schema `Subscription` fields and `.graphql` `subscription` operations get `Req`/`Vars`/model classes and a single `Stream<Model> name(...)` client method (no `Future`/`refetch`). Previously schema subscriptions were skipped and `.graphql` subscriptions resolved their fields against `Query`.
 

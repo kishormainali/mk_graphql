@@ -1,4 +1,4 @@
-## Unreleased
+## 1.2.5
 
 - **Fix**: WebSocket subscriptions now get the same auth handling as queries and mutations. `connection_init` re-checks token expiry (proactive refresh) on every connect/reconnect instead of resending a stale token; a `4401`/`4403` close triggers a token refresh and one re-subscribe (revoking the session if refresh fails) instead of reconnecting forever with the rejected token; a changed token replaces the socket. Also fixed a duplicate `subscribe` being sent for a subscription started while reconnecting.
 - `AuthLink.resolveAuthHeaders()` exposes the shared "current auth headers, refreshing if expired" step.

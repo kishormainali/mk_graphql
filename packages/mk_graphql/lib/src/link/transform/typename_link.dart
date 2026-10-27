@@ -67,9 +67,21 @@ class _AddTypenameVisitor extends TransformingVisitor {
       directives: node.directives
           .map((d) => d.accept(this) as DirectiveNode)
           .toList(),
-      selectionSet: node.selectionSet.accept(this) as SelectionSetNode,
+      selectionSet: node.type == OperationType.subscription
+          ? _visitSubscriptionRoot(node.selectionSet)
+          : node.selectionSet.accept(this) as SelectionSetNode,
     );
   }
+
+  /// A subscription must select exactly one non-introspection top-level
+  /// field, so its root selection set is left alone — only the selections
+  /// nested under that field get `__typename`.
+  SelectionSetNode _visitSubscriptionRoot(SelectionSetNode root) =>
+      SelectionSetNode(
+        selections: root.selections
+            .map((s) => s.accept(this) as SelectionNode)
+            .toList(),
+      );
 
   @override
   SelectionSetNode visitSelectionSetNode(SelectionSetNode node) {

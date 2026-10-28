@@ -1,3 +1,10 @@
+## 1.4.0
+
+- **Feature**: GraphQL unions and interfaces are generated. Schema unions/interfaces get a sealed `{Name}Model` in `models.dart` whose `fromJson` dispatches on `__typename`, and each member object model `implements` it — previously a field of union/interface type referenced a nonexistent `{Name}Model` and `json_serializable` failed with `InvalidType`.
+- **Feature**: `.graphql` operations with `... on Member` inline fragments (or fragment spreads) on a union/interface field generate a sealed model plus one model per selected member (interface common fields are included in each). Unselected members parse to an `...UnknownModel` instead of throwing. Previously the fragments were flattened into one class and list fields lost their `List<...>` type.
+- **Feature**: an operation root field with no selection set that returns a union or interface now gets an auto-generated selection, like object types already did.
+- **Behavior change**: schema-derived selections for interface return types now also select `__typename` and `... on Impl { ... }` for every implementer, so the sealed model can be parsed.
+
 ## 1.3.0
 
 - **Feature**: subscriptions are generated. Schema `Subscription` fields and `.graphql` `subscription` operations get `Req`/`Vars`/model classes and a single `Stream<Model> name(...)` client method (no `Future`/`refetch`). Previously schema subscriptions were skipped and `.graphql` subscriptions resolved their fields against `Query`.

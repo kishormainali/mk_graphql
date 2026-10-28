@@ -165,7 +165,29 @@ class SchemaGenerator {
     Map<String, String> customScalars = const {},
     String? packageName,
     String generatedDir = '',
+    List<UnionTypeDefinitionNode> unions = const [],
+    List<InterfaceTypeDefinitionNode> interfaces = const [],
   }) {
+    // Abstract type name -> concrete member type names. An interface's
+    // members are the object types declaring `implements` it.
+    final abstractMembers = <String, List<String>>{
+      for (final u in unions)
+        u.name.value: [for (final m in u.types) m.name.value],
+      for (final i in interfaces)
+        i.name.value: [
+          for (final o in objects)
+            if (o.interfaces.any((n) => n.name.value == i.name.value))
+              o.name.value,
+        ],
+    };
+    final unionsByMember = <String, List<String>>{};
+    abstractMembers.forEach((abstractName, members) {
+      for (final m in members) {
+        unionsByMember
+            .putIfAbsent(m, () => [])
+            .add('${abstractName.pascalCase}Model');
+      }
+    });
     final filtered = objects
         .where((o) =>
             o.name.value != 'Query' &&
@@ -198,7 +220,10 @@ class SchemaGenerator {
       }
 
       _generateFreezedClass(
-          className: className, fields: fields, buffer: classBuffer);
+          className: className,
+          fields: fields,
+          buffer: classBuffer,
+          implementsTypes: unionsByMember[rawName] ?? const []);
       classBuffers.add(classBuffer);
     }
 
@@ -229,6 +254,12 @@ class SchemaGenerator {
     buffer.writeln("part 'models.freezed.dart';");
     buffer.writeln("part 'models.g.dart';");
     buffer.writeln();
+    abstractMembers.forEach((abstractName, members) {
+      buffer.writeln(codegen.emitSpec(codegen.sealedUnion(
+        className: '${abstractName.pascalCase}Model',
+        members: {for (final m in members) m: '${m.pascalCase}Model'},
+      )));
+    });
     for (final classBuffer in classBuffers) {
       buffer.write(classBuffer);
     }
@@ -487,11 +518,13 @@ class SchemaGenerator {
     required Map<String, FieldTypeInfo> fields,
     required StringBuffer buffer,
     bool isInput = false,
+    List<String> implementsTypes = const [],
   }) {
     buffer.writeln(codegen.emitSpec(codegen.freezedDataClass(
       className: className,
       fields: fields,
       includeIfNull: !isInput,
+      implementsTypes: implementsTypes,
     )));
   }
 

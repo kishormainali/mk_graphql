@@ -49,6 +49,7 @@ Class freezedDataClass({
   required String className,
   required Map<String, FieldTypeInfo> fields,
   bool includeIfNull = true,
+  List<String> implementsTypes = const [],
 }) {
   final params = <Parameter>[];
   fields.forEach((rawName, typeInfo) {
@@ -108,6 +109,7 @@ Class freezedDataClass({
     ..name = className
     ..annotations.add(refer('freezed'))
     ..mixins.add(refer('_\$$className'))
+    ..implements.addAll(implementsTypes.map(refer))
     ..constructors.addAll([
       Constructor((c) => c
         ..constant = true
@@ -122,6 +124,39 @@ Class freezedDataClass({
           ..type = refer('Map<String, dynamic>')))
         ..body = _exprBody('_\$${className}FromJson(json)')),
     ]));
+}
+
+/// `sealed class Union { factory Union.fromJson(json) => switch
+/// (json['__typename']) {...} }` — a GraphQL union. Members are the freezed
+/// model classes (which `implements` this), so a union-typed field can be
+/// parsed by `json_serializable` and exhaustively `switch`ed on.
+/// [members] maps each wire `__typename` to its Dart model class.
+Class sealedUnion({
+  required String className,
+  required Map<String, String> members,
+  String? fallback,
+}) {
+  final cases = members.entries
+      .map((e) => "'${e.key}' => ${e.value}.fromJson(json),")
+      .join();
+  return Class((b) => b
+    ..sealed = true
+    ..name = className
+    ..constructors.addAll([
+      Constructor((c) => c..constant = true),
+      Constructor((c) => c
+        ..factory = true
+        ..name = 'fromJson'
+        ..requiredParameters.add(Parameter((p) => p
+          ..name = 'json'
+          ..type = refer('Map<String, dynamic>')))
+        ..lambda = true
+        ..body = Code("switch (json['__typename']) { $cases "
+            "${fallback != null ? '_ => $fallback.fromJson(json),' : "final t => throw ArgumentError('Unknown $className __typename: \$t'),"} }")),
+    ])
+    ..methods.add(Method((m) => m
+      ..returns = refer('Map<String, dynamic>')
+      ..name = 'toJson')));
 }
 
 /// `@freezed abstract class XReq extends GraphQLRequest<Model, Vars> with

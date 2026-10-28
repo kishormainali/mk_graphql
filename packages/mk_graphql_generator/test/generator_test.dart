@@ -7,6 +7,96 @@ import 'package:mk_graphql_generator/src/parser/graphql_parser.dart';
 void main() {
   group('GeneratorOrchestrator Tests with Structured Folders & Extensions', () {
     test(
+        'interfaces: schema model, operation fragments, and root field auto-selection',
+        () async {
+      const schema = '''
+        type Query { node: Node! shape: Shape }
+        interface Node { id: ID! }
+        type User implements Node { id: ID! name: String! }
+        type Post implements Node { id: ID! title: String }
+        type Circle { r: Int! }
+        type Square { s: Int! }
+        union Shape = Circle | Square
+      ''';
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
+        content: '''
+          $schema
+          query GetNode {
+            node { id ... on User { name } }
+          }
+          query GetShape { shape }
+        ''',
+        inputPath: 'schema.graphql',
+      );
+      final models = bundle.files['generated/models/models.dart']!;
+      expect(models, contains('sealed class NodeModel'));
+      expect(models, contains('implements NodeModel'));
+
+      final node = bundle.files['generated/get_node/get_node_model.dart']!;
+      expect(node, contains('sealed class GetNodeNodeModel'));
+      expect(node, contains("'User' => GetNodeNodeUserModel.fromJson"));
+      // unselected implementer falls back, keeping the common `id`
+      expect(node, contains('GetNodeNodeUnknownModel.fromJson'));
+      expect(
+          RegExp(r'class GetNodeNodeUnknownModel[^}]*required String id')
+              .hasMatch(node),
+          isTrue);
+
+      // root field with no selection set returning a union
+      final shapeReq = bundle.files['generated/get_shape/get_shape_req.dart']!;
+      expect(shapeReq, contains('... on Circle'));
+      expect(bundle.files['generated/get_shape/get_shape_model.dart']!,
+          contains('sealed class GetShapeShapeModel'));
+    });
+
+    test('operation inline fragments on a union field become a sealed model',
+        () async {
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
+        content: '''
+          type Query { thread: Thread! }
+          type Thread { blocks: [Block!]! }
+          type TextBlock { text: String! }
+          type ListBlock { n: Int! }
+          type UiBlock { c: String }
+          union Block = TextBlock | ListBlock | UiBlock
+
+          query GetThread {
+            thread { blocks { ... on TextBlock { text } ... on ListBlock { n } } }
+          }
+        ''',
+        inputPath: 'schema.graphql',
+      );
+      final model = bundle.files['generated/get_thread/get_thread_model.dart']!;
+      expect(model, contains('sealed class GetThreadThreadBlocksModel'));
+      expect(
+          model, contains('required List<GetThreadThreadBlocksModel> blocks'));
+      expect(model, contains('implements GetThreadThreadBlocksModel'));
+      expect(model, contains("'TextBlock' =>"));
+      // UiBlock isn't selected: falls back instead of throwing
+      expect(model, contains('GetThreadThreadBlocksUnknownModel.fromJson'));
+      expect(bundle.files['generated/get_thread/get_thread_req.dart']!,
+          contains('... on TextBlock'));
+    });
+
+    test('schema union becomes a sealed model its members implement', () async {
+      final bundle = await GeneratorOrchestrator.generateForGraphQLFile(
+        content: '''
+          type Query { thread: Thread! }
+          type Thread { blocks: [Block!]! }
+          type TextBlock { text: String! }
+          type ListBlock { items: [String!]! }
+          union Block = TextBlock | ListBlock
+        ''',
+        inputPath: 'schema.graphql',
+      );
+      final models = bundle.files['generated/models/models.dart']!;
+      expect(models, contains('sealed class BlockModel'));
+      expect(models, contains("'TextBlock' => TextBlockModel.fromJson(json)"));
+      expect(models, contains('implements BlockModel'));
+      expect(models, contains('List<BlockModel> blocks'));
+    });
+
+    test(
         'generates enums/, inputs/, models/, and operation directories for schema.graphql',
         () async {
       const graphqlContent = '''

@@ -46,6 +46,8 @@ typedef _GenContext = ({
   String sharedPrefix,
   ParsedGraphQLDocument? schemaParsed,
   Map<String, ObjectTypeDefinitionNode> schemaObjectTypesByName,
+  Map<String, UnionTypeDefinitionNode> schemaUnionTypesByName,
+  Map<String, InterfaceTypeDefinitionNode> schemaInterfaceTypesByName,
   Set<String> enumNames,
   Set<String> inputNames,
   Set<String> scalarNames,
@@ -204,6 +206,17 @@ class GeneratorOrchestrator {
         t.name.value: t,
     };
 
+    final schemaUnionTypesByName = <String, UnionTypeDefinitionNode>{
+      for (final u in schemaParsed?.unionTypes ?? <UnionTypeDefinitionNode>[])
+        u.name.value: u,
+    };
+
+    final schemaInterfaceTypesByName = <String, InterfaceTypeDefinitionNode>{
+      for (final i
+          in schemaParsed?.interfaceTypes ?? <InterfaceTypeDefinitionNode>[])
+        i.name.value: i,
+    };
+
     // Merged enum / input name sets (schema + feature file)
     final enumNames = <String>{
       ...parsed.enumTypes.map((e) => e.name.value.pascalCase),
@@ -231,6 +244,11 @@ class GeneratorOrchestrator {
       for (final t in schemaObjectTypesByName.keys)
         if (t != 'Query' && t != 'Mutation' && t != 'Subscription')
           '${t.pascalCase}Model',
+      for (final u in schemaParsed?.unionTypes ?? <UnionTypeDefinitionNode>[])
+        '${u.name.value.pascalCase}Model',
+      for (final i
+          in schemaParsed?.interfaceTypes ?? <InterfaceTypeDefinitionNode>[])
+        '${i.name.value.pascalCase}Model',
     };
 
     return (
@@ -243,6 +261,8 @@ class GeneratorOrchestrator {
       sharedPrefix: sharedPrefix,
       schemaParsed: schemaParsed,
       schemaObjectTypesByName: schemaObjectTypesByName,
+      schemaUnionTypesByName: schemaUnionTypesByName,
+      schemaInterfaceTypesByName: schemaInterfaceTypesByName,
       enumNames: enumNames,
       inputNames: inputNames,
       scalarNames: scalarNames,
@@ -302,6 +322,8 @@ class GeneratorOrchestrator {
         customScalars: customScalars,
         packageName: packageName,
         generatedDir: ctx.schemaGeneratedDir,
+        unions: ctx.parsed.unionTypes,
+        interfaces: ctx.parsed.interfaceTypes,
       );
       objectFilesMap.forEach((path, code) {
         files['${ctx.sharedPrefix}$path'] = code;
@@ -477,10 +499,15 @@ class GeneratorOrchestrator {
                   ? SchemaGenerator.unwrapTypeName(schemaFieldDef.type)
                   : null;
               if (schemaTypeName != null &&
-                  ctx.schemaObjectTypesByName.containsKey(schemaTypeName)) {
+                  (ctx.schemaObjectTypesByName.containsKey(schemaTypeName) ||
+                      ctx.schemaUnionTypesByName.containsKey(schemaTypeName) ||
+                      ctx.schemaInterfaceTypesByName
+                          .containsKey(schemaTypeName))) {
                 final autoSel = SchemaUtilityGenerator.buildSelectionSetNode(
                   type: schemaFieldDef!.type,
                   objectTypesByName: ctx.schemaObjectTypesByName,
+                  unionTypesByName: ctx.schemaUnionTypesByName,
+                  interfaceTypesByName: ctx.schemaInterfaceTypesByName,
                   enumNames: ctx.enumNames,
                   inputNames: ctx.inputNames,
                   scalarNames: ctx.scalarNames,
@@ -540,6 +567,8 @@ class GeneratorOrchestrator {
               scalarNames: ctx.scalarNames,
               customScalars: customScalars,
               schemaObjectTypesByName: ctx.schemaObjectTypesByName,
+              unionTypesByName: ctx.schemaUnionTypesByName,
+              interfaceTypesByName: ctx.schemaInterfaceTypesByName,
               fragmentsByName: fragmentsByName,
               fragmentModelCache: fragmentModelCache,
               fragmentClassNames: fragmentClassNames,
@@ -1060,11 +1089,13 @@ class GeneratorOrchestrator {
     // @JsonSerializable) since stacking that on these freezed 4.x classes
     // breaks fromJson generation for required fields.
     bool includeIfNull = true,
+    List<String> implementsTypes = const [],
   }) {
     buffer.writeln(codegen.emitSpec(codegen.freezedDataClass(
       className: className,
       fields: fields,
       includeIfNull: includeIfNull,
+      implementsTypes: implementsTypes,
     )));
   }
 
@@ -1189,11 +1220,14 @@ class GeneratorOrchestrator {
     required Set<String> scalarNames,
     Map<String, String> customScalars = const {},
     required Map<String, ObjectTypeDefinitionNode> schemaObjectTypesByName,
+    required Map<String, UnionTypeDefinitionNode> unionTypesByName,
+    required Map<String, InterfaceTypeDefinitionNode> interfaceTypesByName,
     required Map<String, FragmentDefinitionNode> fragmentsByName,
     required Map<String, String> fragmentModelCache,
     required Set<String> fragmentClassNames,
     required StringBuffer fragmentsBuffer,
     String suffix = 'Model',
+    List<String> implementsTypes = const [],
   }) {
     final soleSpread = _asSoleFragmentSpread(selectionSet);
     if (soleSpread != null) {
@@ -1206,6 +1240,8 @@ class GeneratorOrchestrator {
           scalarNames: scalarNames,
           customScalars: customScalars,
           schemaObjectTypesByName: schemaObjectTypesByName,
+          unionTypesByName: unionTypesByName,
+          interfaceTypesByName: interfaceTypesByName,
           fragmentsByName: fragmentsByName,
           fragmentModelCache: fragmentModelCache,
           fragmentClassNames: fragmentClassNames,
@@ -1218,15 +1254,51 @@ class GeneratorOrchestrator {
     if (sharedClassNames.contains(className)) return className;
     sharedClassNames.add(className);
 
-    final schemaType =
-        schemaTypeName != null ? schemaObjectTypesByName[schemaTypeName] : null;
+    final abstractMembers = _abstractMembers(
+      schemaTypeName,
+      unionTypesByName: unionTypesByName,
+      interfaceTypesByName: interfaceTypesByName,
+      schemaObjectTypesByName: schemaObjectTypesByName,
+    );
+    if (abstractMembers != null &&
+        (unionTypesByName.containsKey(schemaTypeName) ||
+            _hasTypeConditionedSelections(
+                selectionSet, fragmentsByName, abstractMembers))) {
+      _generateAbstractSelectionModel(
+        abstractName: schemaTypeName!,
+        memberNames: abstractMembers,
+        className: className,
+        baseName: baseName,
+        suffix: suffix,
+        selectionSet: selectionSet,
+        buffer: buffer,
+        sharedClassNames: sharedClassNames,
+        enumNames: enumNames,
+        inputNames: inputNames,
+        scalarNames: scalarNames,
+        customScalars: customScalars,
+        schemaObjectTypesByName: schemaObjectTypesByName,
+        unionTypesByName: unionTypesByName,
+        interfaceTypesByName: interfaceTypesByName,
+        fragmentsByName: fragmentsByName,
+        fragmentModelCache: fragmentModelCache,
+        fragmentClassNames: fragmentClassNames,
+        fragmentsBuffer: fragmentsBuffer,
+      );
+      return className;
+    }
+
+    final schemaFields = schemaTypeName == null
+        ? null
+        : (schemaObjectTypesByName[schemaTypeName]?.fields ??
+            interfaceTypesByName[schemaTypeName]?.fields);
     final fields = <String, FieldTypeInfo>{};
 
     for (final child
         in _collectEffectiveFields(selectionSet, fragmentsByName)) {
       final childName = child.alias?.value ?? child.name.value;
-      final childSchemaFieldDef = schemaType?.fields
-          .where((f) => f.name.value == child.name.value)
+      final childSchemaFieldDef = schemaFields
+          ?.where((f) => f.name.value == child.name.value)
           .firstOrNull;
       final hasConditionalDirective = child.directives
           .any((d) => d.name.value == 'include' || d.name.value == 'skip');
@@ -1246,6 +1318,8 @@ class GeneratorOrchestrator {
           scalarNames: scalarNames,
           customScalars: customScalars,
           schemaObjectTypesByName: schemaObjectTypesByName,
+          unionTypesByName: unionTypesByName,
+          interfaceTypesByName: interfaceTypesByName,
           fragmentsByName: fragmentsByName,
           fragmentModelCache: fragmentModelCache,
           fragmentClassNames: fragmentClassNames,
@@ -1279,9 +1353,152 @@ class GeneratorOrchestrator {
       className: className,
       fields: fields,
       buffer: buffer,
+      implementsTypes: implementsTypes,
     );
 
     return className;
+  }
+
+  /// Concrete member type names of a union, or of an interface (the schema
+  /// object types implementing it); null if [typeName] is neither.
+  static Set<String>? _abstractMembers(
+    String? typeName, {
+    required Map<String, UnionTypeDefinitionNode> unionTypesByName,
+    required Map<String, InterfaceTypeDefinitionNode> interfaceTypesByName,
+    required Map<String, ObjectTypeDefinitionNode> schemaObjectTypesByName,
+  }) {
+    if (typeName == null) return null;
+    final union = unionTypesByName[typeName];
+    if (union != null) return {for (final m in union.types) m.name.value};
+    if (!interfaceTypesByName.containsKey(typeName)) return null;
+    return {
+      for (final o in schemaObjectTypesByName.values)
+        if (o.interfaces.any((i) => i.name.value == typeName)) o.name.value,
+    };
+  }
+
+  /// True if [selectionSet] narrows to a concrete member via an inline
+  /// fragment or fragment spread (`... on Member`).
+  static bool _hasTypeConditionedSelections(
+    SelectionSetNode selectionSet,
+    Map<String, FragmentDefinitionNode> fragmentsByName,
+    Set<String> memberNames,
+  ) {
+    for (final sel in selectionSet.selections) {
+      if (sel is InlineFragmentNode) {
+        final on = sel.typeCondition?.on.name.value;
+        if ((on != null && memberNames.contains(on)) ||
+            _hasTypeConditionedSelections(
+                sel.selectionSet, fragmentsByName, memberNames)) {
+          return true;
+        }
+      } else if (sel is FragmentSpreadNode) {
+        final f = fragmentsByName[sel.name.value];
+        if (f != null &&
+            (memberNames.contains(f.typeCondition.on.name.value) ||
+                _hasTypeConditionedSelections(
+                    f.selectionSet, fragmentsByName, memberNames))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /// A selection on a union- or interface-typed field
+  /// (`blocks { ... on A {..} ... on B {..} }`): emits a sealed [className]
+  /// plus one model per selected member, each scoped to that member's own
+  /// inline-fragment / fragment-spread fields plus any fields selected on the
+  /// abstract type itself (interface common fields). Members not selected
+  /// parse to an `Unknown` model carrying just the common fields, rather
+  /// than throwing.
+  static void _generateAbstractSelectionModel({
+    required String abstractName,
+    required Set<String> memberNames,
+    required String className,
+    required String baseName,
+    required String suffix,
+    required SelectionSetNode selectionSet,
+    required StringBuffer buffer,
+    required Set<String> sharedClassNames,
+    required Set<String> enumNames,
+    required Set<String> inputNames,
+    required Set<String> scalarNames,
+    required Map<String, String> customScalars,
+    required Map<String, ObjectTypeDefinitionNode> schemaObjectTypesByName,
+    required Map<String, UnionTypeDefinitionNode> unionTypesByName,
+    required Map<String, InterfaceTypeDefinitionNode> interfaceTypesByName,
+    required Map<String, FragmentDefinitionNode> fragmentsByName,
+    required Map<String, String> fragmentModelCache,
+    required Set<String> fragmentClassNames,
+    required StringBuffer fragmentsBuffer,
+  }) {
+    final common = <SelectionNode>[];
+    final byMember = <String, List<SelectionNode>>{};
+
+    void visit(SelectionSetNode selSet, String? onType) {
+      for (final sel in selSet.selections) {
+        if (sel is InlineFragmentNode) {
+          visit(sel.selectionSet, sel.typeCondition?.on.name.value ?? onType);
+        } else if (sel is FragmentSpreadNode) {
+          final f = fragmentsByName[sel.name.value];
+          if (f != null) visit(f.selectionSet, f.typeCondition.on.name.value);
+        } else if (onType == null || onType == abstractName) {
+          common.add(sel);
+        } else if (memberNames.contains(onType)) {
+          byMember.putIfAbsent(onType, () => []).add(sel);
+        }
+      }
+    }
+
+    visit(selectionSet, null);
+
+    final isInterface = interfaceTypesByName.containsKey(abstractName);
+    String resolve(String base, SelectionSetNode sel, String? type) =>
+        _resolveSelectionModel(
+          baseName: base,
+          selectionSet: sel,
+          schemaTypeName: type,
+          buffer: buffer,
+          sharedClassNames: sharedClassNames,
+          enumNames: enumNames,
+          inputNames: inputNames,
+          scalarNames: scalarNames,
+          customScalars: customScalars,
+          schemaObjectTypesByName: schemaObjectTypesByName,
+          unionTypesByName: unionTypesByName,
+          interfaceTypesByName: interfaceTypesByName,
+          fragmentsByName: fragmentsByName,
+          fragmentModelCache: fragmentModelCache,
+          fragmentClassNames: fragmentClassNames,
+          fragmentsBuffer: fragmentsBuffer,
+          suffix: suffix,
+          implementsTypes: [className],
+        );
+
+    final members = <String, String>{};
+    for (final member in memberNames.where(byMember.containsKey)) {
+      members[member] = resolve(
+        '$baseName${member.pascalCase}',
+        SelectionSetNode(selections: [...common, ...byMember[member]!]),
+        member,
+      );
+    }
+
+    String? fallback;
+    if (members.length < memberNames.length) {
+      fallback = resolve(
+        '${baseName}Unknown',
+        SelectionSetNode(selections: common),
+        isInterface ? abstractName : null,
+      );
+    }
+
+    buffer.writeln(codegen.emitSpec(codegen.sealedUnion(
+      className: className,
+      members: members,
+      fallback: fallback,
+    )));
   }
 
   /// Generates the single shared class for a named fragment the first time
@@ -1293,6 +1510,8 @@ class GeneratorOrchestrator {
     required Set<String> scalarNames,
     Map<String, String> customScalars = const {},
     required Map<String, ObjectTypeDefinitionNode> schemaObjectTypesByName,
+    required Map<String, UnionTypeDefinitionNode> unionTypesByName,
+    required Map<String, InterfaceTypeDefinitionNode> interfaceTypesByName,
     required Map<String, FragmentDefinitionNode> fragmentsByName,
     required Map<String, String> fragmentModelCache,
     required Set<String> fragmentClassNames,
@@ -1318,6 +1537,8 @@ class GeneratorOrchestrator {
       scalarNames: scalarNames,
       customScalars: customScalars,
       schemaObjectTypesByName: schemaObjectTypesByName,
+      unionTypesByName: unionTypesByName,
+      interfaceTypesByName: interfaceTypesByName,
       fragmentsByName: fragmentsByName,
       fragmentModelCache: fragmentModelCache,
       fragmentClassNames: fragmentClassNames,

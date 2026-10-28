@@ -304,7 +304,9 @@ class SchemaUtilityGenerator {
 
     if (interfaceTypesByName.containsKey(typeName)) {
       final ifaceType = interfaceTypesByName[typeName]!;
-      final selections = <SelectionNode>[];
+      final selections = <SelectionNode>[
+        FieldNode(name: NameNode(value: '__typename')),
+      ];
       final nextAncestors = {...ancestors, typeName};
 
       for (final field in ifaceType.fields) {
@@ -344,6 +346,31 @@ class SchemaUtilityGenerator {
               selectionSet: subSet,
             ));
           }
+        }
+      }
+
+      // Implementers' own fields: the sealed model for an interface
+      // dispatches on __typename to a per-implementer model.
+      for (final impl in objectTypesByName.values
+          .where((o) => o.interfaces.any((n) => n.name.value == typeName))) {
+        final implSet = buildSelectionSetNode(
+          type: NamedTypeNode(name: impl.name),
+          objectTypesByName: objectTypesByName,
+          unionTypesByName: unionTypesByName,
+          interfaceTypesByName: interfaceTypesByName,
+          enumNames: enumNames,
+          scalarNames: scalarNames,
+          customScalars: customScalars,
+          ancestors: ancestors,
+          depth: depth + 1,
+          maxDepth: maxDepth,
+        );
+        if (implSet != null && implSet.selections.isNotEmpty) {
+          selections.add(InlineFragmentNode(
+            typeCondition:
+                TypeConditionNode(on: NamedTypeNode(name: impl.name)),
+            selectionSet: implSet,
+          ));
         }
       }
 

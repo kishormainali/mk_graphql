@@ -3641,6 +3641,76 @@ void main() {
       await client.dispose();
     });
 
+    test(
+      'cancelling a quiet subscription completes and closes its socket',
+      () async {
+        var subscribes = 0;
+        var completes = 0;
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((request) async {
+          final socket = await WebSocketTransformer.upgrade(
+            request,
+            protocolSelector: (p) => 'graphql-transport-ws',
+          );
+          socket.listen((raw) {
+            final m = jsonDecode(raw as String) as Map<String, dynamic>;
+            if (m['type'] == 'connection_init') {
+              socket.add(jsonEncode({'type': 'connection_ack'}));
+            } else if (m['type'] == 'subscribe') {
+              subscribes++; // never answers: the subscription stays quiet
+            } else if (m['type'] == 'complete') {
+              completes++;
+            }
+          });
+        });
+        final client = GraphQLClient(
+          url: 'https://example.com/graphql',
+          wsUrl: 'ws://${server.address.host}:${server.port}',
+          addTypename: false,
+        );
+        final sub = client.stream(_SubReq(const _TestVars('1'))).listen((_) {});
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(subscribes, 1);
+
+        await sub.cancel().timeout(const Duration(seconds: 2));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(completes, 1); // the server was told to stop it
+        await client.dispose().timeout(const Duration(seconds: 2));
+      },
+    );
+
+    test(
+      'cancelling a quiet subscription with onConnectionState completes',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((request) async {
+          final socket = await WebSocketTransformer.upgrade(
+            request,
+            protocolSelector: (p) => 'graphql-transport-ws',
+          );
+          socket.listen((raw) {
+            final m = jsonDecode(raw as String) as Map<String, dynamic>;
+            if (m['type'] == 'connection_init') {
+              socket.add(jsonEncode({'type': 'connection_ack'}));
+            }
+          });
+        });
+        final client = GraphQLClient(
+          url: 'https://example.com/graphql',
+          wsUrl: 'ws://${server.address.host}:${server.port}',
+          addTypename: false,
+        );
+        final sub = client
+            .stream(_SubReq(const _TestVars('1')), onConnectionState: (_) {})
+            .listen((_) {});
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await sub.cancel().timeout(const Duration(seconds: 2));
+        await client.dispose().timeout(const Duration(seconds: 2));
+      },
+    );
+
     test('surfaces a custom subscriptionLink that reports status', () async {
       final link = _StatusLink();
       final client = GraphQLClient(

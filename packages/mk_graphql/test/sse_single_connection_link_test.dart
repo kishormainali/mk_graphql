@@ -308,4 +308,28 @@ void main() {
     expect(n.value.status, SubscriptionConnectionStatus.disconnected);
     await link.dispose();
   });
+
+  test('cancelling the request token ends a quiet subscription', () async {
+    final link = makeLink();
+    final token = CancelToken();
+    var done = false;
+    link
+        .request(
+          Request(
+            operation: Operation(
+              document: parseString('subscription A { s }'),
+              operationName: 'A',
+            ),
+            context: Context().withEntry(DioLinkCancelTokenContextEntry(token)),
+          ),
+        )
+        .listen((_) {}, onDone: () => done = true);
+    await settle();
+    final id = server.posted['tok1']!.single;
+    token.cancel();
+    await settle(200);
+    expect(done, isTrue);
+    expect(server.deleted, [id]);
+    await link.dispose();
+  });
 }

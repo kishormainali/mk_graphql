@@ -781,12 +781,19 @@ class GraphQLClient {
     GraphQLRequest req,
     gql.Request gqlReq, {
     required bool skipDedup,
-  }) async* {
+  }) {
+    // Returned as-is, not re-yielded through a generator: a subscription's
+    // cancellation must reach the transport without waiting on its next event.
     if (skipDedup || _isMutation(gqlReq) || _isSubscription(gqlReq)) {
-      yield* _pipeline.request(gqlReq);
-      return;
+      return _pipeline.request(gqlReq);
     }
+    return _dedupedRequest(req, gqlReq);
+  }
 
+  Stream<gql.Response> _dedupedRequest(
+    GraphQLRequest req,
+    gql.Request gqlReq,
+  ) async* {
     final key = computeRequestKey(req);
     var future = _inFlight[key];
     final isOwner = future == null;
@@ -1346,8 +1353,23 @@ class GraphQLClient {
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
     ConnectionStatusNotifier? statusNotifier,
-  }) async* {
-    final effectiveCancelToken = cancelToken ?? req.cancelToken;
+  }) {
+    var effectiveCancelToken = cancelToken ?? req.cancelToken;
+    // A subscription gets its own token (linked to the caller's) so that
+    // cancelling the returned stream tells the transport to stop directly:
+    // intermediate links (`AuthLink`, `LoggerLink`, ...) are `async*`
+    // generators that can't be cancelled while they await the next event.
+    CancelToken? ownToken;
+    if (req.documentNode.definitions.whereType<OperationDefinitionNode>().any(
+      (d) => d.type == OperationType.subscription,
+    )) {
+      ownToken = CancelToken();
+      final callerToken = effectiveCancelToken;
+      callerToken?.whenCancel.then((e) {
+        if (!ownToken!.isCancelled) ownToken.cancel(e.error);
+      });
+      effectiveCancelToken = ownToken;
+    }
     var context = gql.Context().withEntry(
       gql.HttpLinkHeaders(headers: req.headers ?? {}),
     );
@@ -1379,38 +1401,97 @@ class GraphQLClient {
         req.retry ??
         (_isMutation(gqlReq) || _isSubscription(gqlReq) ? null : defaultRetry);
 
-    var attempt = 1;
-    while (true) {
-      try {
-        await for (final res in _requestThroughPipeline(
-          req,
-          gqlReq,
-          skipDedup: effectiveCancelToken != null,
-        )) {
-          yield GraphQLResponse<TData>(
-            data: res.data != null ? req.parseData(res.data!) : null,
-            errors: mapGraphQLErrors(res.errors),
-            source: ResponseSource.network,
+    // A controller rather than an `async*` generator: a generator can't be
+    // cancelled while it awaits the pipeline's next event, so cancelling a
+    // quiet subscription would hang (and leave it subscribed) until the server
+    // happened to send something. `onCancel` cancels the pipeline
+    // subscription directly, which also tells the transport to stop it.
+    late final StreamController<GraphQLResponse<TData>> controller;
+    StreamSubscription<gql.Response>? current;
+    Completer<void>? attemptDone;
+    var cancelled = false;
+
+    Future<void> consume() {
+      final done = attemptDone = Completer<void>();
+      current =
+          _requestThroughPipeline(
+            req,
+            gqlReq,
+            skipDedup: effectiveCancelToken != null,
+          ).listen(
+            (res) {
+              if (cancelled) return;
+              try {
+                controller.add(
+                  GraphQLResponse<TData>(
+                    data: res.data != null ? req.parseData(res.data!) : null,
+                    errors: mapGraphQLErrors(res.errors),
+                    source: ResponseSource.network,
+                  ),
+                );
+              } catch (e, st) {
+                if (!done.isCompleted) done.completeError(e, st);
+                current?.cancel();
+              }
+            },
+            onError: (Object e, StackTrace st) {
+              if (!done.isCompleted) done.completeError(e, st);
+            },
+            onDone: () {
+              if (!done.isCompleted) done.complete();
+            },
+            cancelOnError: true,
           );
-        }
-        return;
-      } catch (e) {
-        final mapped = GraphQLExceptionExtension.fromLinkException(e);
-        final canRetry =
-            retryOptions != null &&
-            attempt < retryOptions.maxAttempts &&
-            retryOptions.shouldRetry(mapped);
-        if (!canRetry) {
-          yield GraphQLResponse<TData>(
-            linkException: mapped,
-            source: ResponseSource.network,
-          );
-          return;
-        }
-        await Future<void>.delayed(retryOptions.delayForAttempt(attempt));
-        attempt++;
-      }
+      return done.future;
     }
+
+    Future<void> run() async {
+      var attempt = 1;
+      while (!cancelled) {
+        try {
+          await consume();
+          break;
+        } catch (e) {
+          if (cancelled) break;
+          final mapped = GraphQLExceptionExtension.fromLinkException(e);
+          final canRetry =
+              retryOptions != null &&
+              attempt < retryOptions.maxAttempts &&
+              retryOptions.shouldRetry(mapped);
+          if (!canRetry) {
+            controller.add(
+              GraphQLResponse<TData>(
+                linkException: mapped,
+                source: ResponseSource.network,
+              ),
+            );
+            break;
+          }
+          await Future<void>.delayed(retryOptions.delayForAttempt(attempt));
+          attempt++;
+        }
+      }
+      if (!controller.isClosed) await controller.close();
+    }
+
+    controller = StreamController<GraphQLResponse<TData>>(
+      onListen: () => unawaited(run()),
+      onPause: () => current?.pause(),
+      onResume: () => current?.resume(),
+      onCancel: () {
+        cancelled = true;
+        final done = attemptDone;
+        if (done != null && !done.isCompleted) done.complete();
+        if (ownToken != null && !ownToken.isCancelled) {
+          ownToken.cancel('Subscription cancelled');
+        }
+        // Not awaited: the pipeline's generators unwind on their own once
+        // the transport has stopped, and waiting here could hang the caller.
+        unawaited(current?.cancel().catchError((_) {}));
+        return null;
+      },
+    );
+    return controller.stream;
   }
 }
 

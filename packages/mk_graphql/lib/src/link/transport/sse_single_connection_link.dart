@@ -10,6 +10,7 @@ import '../../core/backoff.dart';
 import '../../core/connection_status.dart';
 import '../../core/document_print_cache.dart';
 import '../auth/auth_types.dart';
+import 'dio_link.dart' show DioLinkCancelTokenContextEntry;
 import 'sse_link.dart';
 
 /// Terminating [Link] for GraphQL over Server-Sent Events in
@@ -147,6 +148,14 @@ class SseSingleConnectionLink extends Link implements ConnectionStatusSource {
       onCancel: () => _cancelOperation(op),
     );
     op = _Operation('${_idPrefix}_${++_nextId}', req, controller);
+    // Lets a caller stop a subscription that is waiting on a quiet stream,
+    // through links in between that can't forward a cancel in time.
+    req.context.entry<DioLinkCancelTokenContextEntry>()?.token?.whenCancel.then(
+      (_) {
+        _cancelOperation(op);
+        if (!controller.isClosed) unawaited(controller.close());
+      },
+    );
     return controller.stream;
   }
 

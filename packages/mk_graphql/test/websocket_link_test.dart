@@ -859,4 +859,51 @@ void main() {
       await link.dispose();
     });
   });
+
+  group('WebSocketLink cancel token', () {
+    test('cancelling the request token ends a quiet subscription', () async {
+      var completes = 0;
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (p) => 'graphql-transport-ws',
+        );
+        socket.listen((raw) {
+          final m = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (m['type'] == 'connection_init') {
+            socket.add(jsonEncode({'type': 'connection_ack'}));
+          } else if (m['type'] == 'complete') {
+            completes++;
+          }
+        });
+      });
+      final link = WebSocketLink(
+        'ws://${server.address.host}:${server.port}',
+        idleCloseDelay: null,
+      );
+      final token = CancelToken();
+      var done = false;
+      link
+          .request(
+            Request(
+              operation: Operation(
+                document: parseString('subscription S { s }'),
+                operationName: 'S',
+              ),
+              context: Context().withEntry(
+                DioLinkCancelTokenContextEntry(token),
+              ),
+            ),
+          )
+          .listen((_) {}, onDone: () => done = true);
+      await Future.delayed(const Duration(milliseconds: 200));
+      token.cancel();
+      await Future.delayed(const Duration(milliseconds: 200));
+      expect(done, isTrue);
+      expect(completes, 1);
+      await link.dispose();
+    });
+  });
 }

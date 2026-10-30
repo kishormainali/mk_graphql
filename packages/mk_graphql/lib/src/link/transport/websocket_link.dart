@@ -10,6 +10,7 @@ import '../../core/backoff.dart';
 import '../../core/connection_status.dart';
 import '../../core/document_print_cache.dart';
 import '../../core/error.dart' show RevokeTokenException;
+import 'dio_link.dart' show DioLinkCancelTokenContextEntry;
 
 typedef WebSocketPayloadCallback = FutureOr<dynamic> Function();
 
@@ -580,7 +581,10 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
     );
     _sendSubscribe(subId, req);
 
-    controller.onCancel = () {
+    var ended = false;
+    void end() {
+      if (ended) return;
+      ended = true;
       // Null after `_failAll`, which already reported `error` to it.
       _activeRequests[subId]?.subscriptionStatus?.report(
         subId,
@@ -592,7 +596,14 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
       _activeRequests.remove(subId);
       controller.close();
       _scheduleIdleClose();
-    };
+    }
+
+    controller.onCancel = end;
+    // Lets a caller stop a subscription that is waiting on a quiet socket,
+    // through links in between that can't forward a cancel in time.
+    req.context.entry<DioLinkCancelTokenContextEntry>()?.token?.whenCancel.then(
+      (_) => end(),
+    );
 
     return controller.stream;
   }

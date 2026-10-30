@@ -1,3 +1,10 @@
+## 1.4.0
+
+- **Feature**: subscription connection status. `GraphQLClient.connectionState` and `connectionStateStream` report `connecting`, `connected`, `reconnecting`, `disconnected` or `error` for the WebSocket / SSE subscription transport, with the last error (kept until the next successful connect) and the consecutive reconnect attempt count. `WebSocketLink`, `SseSingleConnectionLink` and `SseLink` implement the new `ConnectionStatusSource`; `SseLink` reports an aggregate over its per-subscription streams. A custom `subscriptionLink` is surfaced when it implements `ConnectionStatusSource`, otherwise the state stays `disconnected`.
+- **Feature**: `client.stream(req, onConnectionState: …)` reports one subscription's own connection state. Links publish to it through the new `ConnectionStatusContextEntry` / `Request.subscriptionStatus`.
+- **Fix**: cancelling a subscription that has not yet received an event no longer hangs, and now stops it on the server. The link pipeline's `async*` links (`AuthLink`, `LoggerLink`, …) could not forward a cancel while waiting for the next event, so the cancel never reached the transport. Each subscription now gets its own `CancelToken`, which the client cancels and `WebSocketLink` and `SseSingleConnectionLink` honor (`SseLink` already did).
+- **Behavior change**: a `CancelToken` passed to `client.stream` (or set on the request) now ends a WebSocket or single-connection SSE subscription; previously it was ignored there.
+
 ## 1.3.0
 
 - **Feature**: `graphql-sse` *single connection mode*. New `SseSingleConnectionLink` (and `GraphQLClient(sseUrl: …, sseSingleConnection: true)`) shares one reserved event stream across all subscriptions (`PUT` reservation, `GET` stream, `POST` per operation, `DELETE` to cancel). The stream is opened on demand, closed shortly after the last subscription ends, and re-reserved with backoff after a drop, re-sending live subscriptions. The default stays distinct connections mode (`SseLink`).

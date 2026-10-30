@@ -77,6 +77,18 @@ class SseLink extends Link implements ConnectionStatusSource {
   /// aggregate can be `error`) until the next subscription starts.
   final _errored = <Object>{};
 
+  /// Reports one subscription's status to the aggregate and to that
+  /// subscription's own notifier, if it asked for one.
+  void _report(
+    Request req,
+    Object source,
+    SubscriptionConnectionStatus status, {
+    Object? error,
+  }) {
+    connectionStatus.report(source, status, error: error);
+    req.subscriptionStatus?.report(source, status, error: error);
+  }
+
   SseLink(
     this.url, {
     dio.Dio? client,
@@ -159,15 +171,17 @@ class SseLink extends Link implements ConnectionStatusSource {
     } catch (e) {
       if (isSubscription && !token.isCancelled) {
         _errored.add(token);
-        connectionStatus.report(
-          token,
-          SubscriptionConnectionStatus.error,
-          error: e,
-        );
+        _report(req, token, SubscriptionConnectionStatus.error, error: e);
       }
       rethrow;
     } finally {
-      if (!_errored.contains(token)) connectionStatus.release(token);
+      if (!_errored.contains(token)) {
+        connectionStatus.release(token);
+        req.subscriptionStatus?.report(
+          token,
+          SubscriptionConnectionStatus.disconnected,
+        );
+      }
     }
   }
 
@@ -181,7 +195,7 @@ class SseLink extends Link implements ConnectionStatusSource {
 
     while (true) {
       if (state.tracked && state.attempts == 0) {
-        connectionStatus.report(token, SubscriptionConnectionStatus.connecting);
+        _report(req, token, SubscriptionConnectionStatus.connecting);
       }
       Object? failure;
       StackTrace? failureStack;
@@ -210,7 +224,8 @@ class SseLink extends Link implements ConnectionStatusSource {
             );
       }
       if (state.tracked) {
-        connectionStatus.report(
+        _report(
+          req,
           token,
           SubscriptionConnectionStatus.reconnecting,
           error: failure ?? 'SSE stream closed without completing',
@@ -324,10 +339,7 @@ class SseLink extends Link implements ConnectionStatusSource {
     }
 
     if (state.tracked) {
-      connectionStatus.report(
-        subscriptionToken,
-        SubscriptionConnectionStatus.connected,
-      );
+      _report(req, subscriptionToken, SubscriptionConnectionStatus.connected);
     }
 
     final body = dioResponse.data?.stream;

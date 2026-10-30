@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:gql_exec/gql_exec.dart' show ContextEntry, Request;
+
 /// Lifecycle of a subscription transport (WebSocket or SSE).
 enum SubscriptionConnectionStatus {
   /// Opening the first connection.
@@ -54,6 +56,25 @@ class SubscriptionConnectionState {
   String toString() =>
       'SubscriptionConnectionState($status, attempt: $attempt, '
       'lastError: $lastError)';
+}
+
+/// Request-context entry carrying the notifier a link reports one
+/// subscription's own connection status to (see
+/// `GraphQLClient.stream(onConnectionState:)`). Links without status support
+/// ignore it.
+class ConnectionStatusContextEntry extends ContextEntry {
+  final ConnectionStatusNotifier notifier;
+
+  const ConnectionStatusContextEntry(this.notifier);
+
+  @override
+  List<Object?> get fieldsForEquality => [notifier];
+}
+
+/// The per-subscription status notifier attached to a [Request], if any.
+extension SubscriptionRequestStatus on Request {
+  ConnectionStatusNotifier? get subscriptionStatus =>
+      context.entry<ConnectionStatusContextEntry>()?.notifier;
 }
 
 /// Implemented by links that can report their connection status.

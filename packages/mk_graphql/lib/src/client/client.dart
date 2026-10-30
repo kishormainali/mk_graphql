@@ -854,12 +854,64 @@ class GraphQLClient {
   /// Executes a request and returns a [Stream] of [TData], throwing on errors.
   ///
   /// Supports cancellation via [cancelToken] or [req.cancelToken].
+  ///
+  /// For a subscription, [onConnectionState] is called with that
+  /// subscription's own connection state (`connecting` → `connected`, then
+  /// `reconnecting` / `error` as it drops) for as long as the returned stream
+  /// is listened to. With WebSocket and single-connection SSE it follows the
+  /// shared connection while the subscription is live; with `SseLink` it is
+  /// that subscription's own stream. It never fires for queries or mutations.
+  /// Use [connectionState] for the link-wide state instead.
   Stream<TData> stream<TData, TVars>(
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
+    void Function(SubscriptionConnectionState state)? onConnectionState,
+  }) {
+    if (onConnectionState == null) {
+      return _stream(req, cancelToken: cancelToken);
+    }
+    final notifier = ConnectionStatusNotifier();
+    final data = _stream(
+      req,
+      cancelToken: cancelToken,
+      statusNotifier: notifier,
+    );
+    StreamSubscription<SubscriptionConnectionState>? statusSub;
+    StreamSubscription<TData>? inner;
+    late final StreamController<TData> controller;
+    controller = StreamController<TData>(
+      onListen: () {
+        statusSub = notifier.stream.listen(onConnectionState);
+        inner = data.listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: controller.close,
+        );
+      },
+      onPause: () => inner?.pause(),
+      onResume: () => inner?.resume(),
+      onCancel: () {
+        // Status first and synchronously: cancelling the data stream may not
+        // complete until the subscription's next event.
+        statusSub?.cancel();
+        unawaited(notifier.close());
+        return inner?.cancel();
+      },
+    );
+    return controller.stream;
+  }
+
+  Stream<TData> _stream<TData, TVars>(
+    GraphQLRequest<TData, TVars> req, {
+    CancelToken? cancelToken,
+    ConnectionStatusNotifier? statusNotifier,
   }) {
     final effectiveErrorPolicy = req.errorPolicy ?? defaultErrorPolicy;
-    return request(req, cancelToken: cancelToken)
+    return _request(
+          req,
+          cancelToken: cancelToken,
+          statusNotifier: statusNotifier,
+        )
         .map((response) {
           if (response.data == null ||
               (response.hasErrors &&
@@ -931,6 +983,12 @@ class GraphQLClient {
   Stream<GraphQLResponse<TData>> request<TData, TVars>(
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
+  }) => _request(req, cancelToken: cancelToken);
+
+  Stream<GraphQLResponse<TData>> _request<TData, TVars>(
+    GraphQLRequest<TData, TVars> req, {
+    CancelToken? cancelToken,
+    ConnectionStatusNotifier? statusNotifier,
   }) async* {
     final policy = _resolveFetchPolicy(req, defaultFetchPolicy);
 
@@ -954,7 +1012,11 @@ class GraphQLClient {
       case FetchPolicy.cacheFirst:
         final cached = cache.readQuery(req);
         if (cached == null) {
-          yield* _fetchFromNetwork(req, cancelToken: cancelToken);
+          yield* _fetchFromNetwork(
+            req,
+            cancelToken: cancelToken,
+            statusNotifier: statusNotifier,
+          );
           break;
         }
         final staleTime = req.staleTime ?? defaultStaleTime;
@@ -968,7 +1030,11 @@ class GraphQLClient {
           loading: !isFresh,
         );
         if (isFresh) break;
-        yield* _fetchFromNetwork(req, cancelToken: cancelToken);
+        yield* _fetchFromNetwork(
+          req,
+          cancelToken: cancelToken,
+          statusNotifier: statusNotifier,
+        );
         break;
 
       case FetchPolicy.cacheAndNetwork:
@@ -980,15 +1046,27 @@ class GraphQLClient {
             loading: true,
           );
         }
-        yield* _fetchFromNetwork(req, cancelToken: cancelToken);
+        yield* _fetchFromNetwork(
+          req,
+          cancelToken: cancelToken,
+          statusNotifier: statusNotifier,
+        );
         break;
 
       case FetchPolicy.networkOnly:
-        yield* _fetchFromNetwork(req, cancelToken: cancelToken);
+        yield* _fetchFromNetwork(
+          req,
+          cancelToken: cancelToken,
+          statusNotifier: statusNotifier,
+        );
         break;
 
       case FetchPolicy.noCache:
-        yield* _executeNetworkRequest(req, cancelToken: cancelToken);
+        yield* _executeNetworkRequest(
+          req,
+          cancelToken: cancelToken,
+          statusNotifier: statusNotifier,
+        );
         break;
     }
 
@@ -1248,10 +1326,12 @@ class GraphQLClient {
   Stream<GraphQLResponse<TData>> _fetchFromNetwork<TData, TVars>(
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
+    ConnectionStatusNotifier? statusNotifier,
   }) async* {
     await for (final response in _executeNetworkRequest(
       req,
       cancelToken: cancelToken,
+      statusNotifier: statusNotifier,
     )) {
       if (response.data != null && !response.hasErrors) {
         cache.writeQuery(req, response.data as TData);
@@ -1265,6 +1345,7 @@ class GraphQLClient {
   Stream<GraphQLResponse<TData>> _executeNetworkRequest<TData, TVars>(
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
+    ConnectionStatusNotifier? statusNotifier,
   }) async* {
     final effectiveCancelToken = cancelToken ?? req.cancelToken;
     var context = gql.Context().withEntry(
@@ -1274,6 +1355,10 @@ class GraphQLClient {
       context = context.withEntry(
         DioLinkCancelTokenContextEntry(effectiveCancelToken),
       );
+    }
+
+    if (statusNotifier != null) {
+      context = context.withEntry(ConnectionStatusContextEntry(statusNotifier));
     }
 
     final gqlReq = gql.Request(

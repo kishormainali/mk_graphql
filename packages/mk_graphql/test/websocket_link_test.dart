@@ -758,4 +758,105 @@ void main() {
       await sub.cancel();
     });
   });
+
+  group('WebSocketLink per-subscription status', () {
+    test(
+      'each subscription has its own notifier on the shared socket',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((request) async {
+          final socket = await WebSocketTransformer.upgrade(
+            request,
+            protocolSelector: (p) => 'graphql-transport-ws',
+          );
+          socket.listen((raw) {
+            final m = jsonDecode(raw as String) as Map<String, dynamic>;
+            if (m['type'] == 'connection_init') {
+              socket.add(jsonEncode({'type': 'connection_ack'}));
+            }
+          });
+        });
+        final link = WebSocketLink(
+          'ws://${server.address.host}:${server.port}',
+          idleCloseDelay: null,
+        );
+        Request req(ConnectionStatusNotifier n) => Request(
+          operation: Operation(
+            document: parseString('subscription S { s }'),
+            operationName: 'S',
+          ),
+          context: Context().withEntry(ConnectionStatusContextEntry(n)),
+        );
+
+        final a = ConnectionStatusNotifier();
+        final aSeen = <SubscriptionConnectionStatus>[];
+        a.stream.listen((s) => aSeen.add(s.status));
+        final subA = link.request(req(a)).listen((_) {});
+        await Future.delayed(const Duration(milliseconds: 300));
+        expect(aSeen, [
+          SubscriptionConnectionStatus.connecting,
+          SubscriptionConnectionStatus.connected,
+        ]);
+
+        // Joining an already-connected socket starts at `connected`.
+        final b = ConnectionStatusNotifier();
+        final subB = link.request(req(b)).listen((_) {});
+        await Future.delayed(const Duration(milliseconds: 50));
+        expect(b.value.status, SubscriptionConnectionStatus.connected);
+
+        // Cancelling A ends only A.
+        await subA.cancel();
+        await Future.delayed(const Duration(milliseconds: 50));
+        expect(a.value.status, SubscriptionConnectionStatus.disconnected);
+        expect(b.value.status, SubscriptionConnectionStatus.connected);
+        expect(
+          link.connectionStatus.value.status,
+          SubscriptionConnectionStatus.connected,
+        );
+
+        await subB.cancel();
+        await link.dispose();
+      },
+    );
+
+    test('a fatal close puts every live subscription in error', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (p) => 'graphql-transport-ws',
+        );
+        socket.listen((raw) {
+          final m = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (m['type'] == 'connection_init') {
+            socket.close(4401, 'Unauthorized');
+          }
+        });
+      });
+      final link = WebSocketLink(
+        'ws://${server.address.host}:${server.port}',
+        idleCloseDelay: null,
+      );
+      final n = ConnectionStatusNotifier();
+      final sub = link
+          .request(
+            Request(
+              operation: Operation(
+                document: parseString('subscription S { s }'),
+                operationName: 'S',
+              ),
+              context: Context().withEntry(ConnectionStatusContextEntry(n)),
+            ),
+          )
+          .listen((_) {}, onError: (_) {});
+      await Future.delayed(const Duration(milliseconds: 300));
+      expect(n.value.status, SubscriptionConnectionStatus.error);
+      expect(n.value.lastError, isNotNull);
+      await sub.cancel();
+      expect(n.value.status, SubscriptionConnectionStatus.error);
+      await link.dispose();
+    });
+  });
 }

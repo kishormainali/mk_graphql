@@ -75,8 +75,14 @@ class SseSingleConnectionLink extends Link implements ConnectionStatusSource {
   @override
   final ConnectionStatusNotifier connectionStatus = ConnectionStatusNotifier();
 
-  void _report(SubscriptionConnectionStatus status, [Object? error]) =>
-      connectionStatus.report(this, status, error: error);
+  /// Reports to the link-wide status and mirrors it to every live
+  /// operation's own notifier (they share this one stream).
+  void _report(SubscriptionConnectionStatus status, [Object? error]) {
+    connectionStatus.report(this, status, error: error);
+    for (final op in _ops.values) {
+      op.request.subscriptionStatus?.report(op.id, status, error: error);
+    }
+  }
 
   SseSingleConnectionLink(
     this.url, {
@@ -126,6 +132,15 @@ class SseSingleConnectionLink extends Link implements ConnectionStatusSource {
         }
         _idleTimer?.cancel();
         _ops[op.id] = op;
+        final current = connectionStatus.value;
+        req.subscriptionStatus?.report(
+          op.id,
+          current.status == SubscriptionConnectionStatus.connected ||
+                  current.status == SubscriptionConnectionStatus.reconnecting
+              ? current.status
+              : SubscriptionConnectionStatus.connecting,
+          error: current.lastError,
+        );
         _ensureRunning();
         _flush();
       },
@@ -372,6 +387,10 @@ class SseSingleConnectionLink extends Link implements ConnectionStatusSource {
   /// Ends [op] normally (server `complete`) or after a terminal error.
   void _finish(_Operation op) {
     if (_ops.remove(op.id) == null) return;
+    op.request.subscriptionStatus?.report(
+      op.id,
+      SubscriptionConnectionStatus.disconnected,
+    );
     op.cancel.cancel('finished');
     op.controller.close();
     _scheduleIdleClose();
@@ -471,6 +490,10 @@ class SseSingleConnectionLink extends Link implements ConnectionStatusSource {
 
   void _cancelOperation(_Operation op) {
     if (_ops.remove(op.id) == null) return;
+    op.request.subscriptionStatus?.report(
+      op.id,
+      SubscriptionConnectionStatus.disconnected,
+    );
     final wasSent = op.posted;
     op.cancel.cancel('Subscription cancelled');
     if (wasSent && _streamOpen) unawaited(_delete(op));
@@ -509,6 +532,7 @@ class SseSingleConnectionLink extends Link implements ConnectionStatusSource {
     _isDisposed = true;
     _idleTimer?.cancel();
     _streamCancel?.cancel('disposed');
+    _report(SubscriptionConnectionStatus.disconnected);
     final ops = _ops.values.toList();
     _ops.clear();
     for (final op in ops) {
@@ -516,7 +540,6 @@ class SseSingleConnectionLink extends Link implements ConnectionStatusSource {
       await op.controller.close();
     }
     if (_ownsClient) client.close();
-    _report(SubscriptionConnectionStatus.disconnected);
     await connectionStatus.close();
   }
 }

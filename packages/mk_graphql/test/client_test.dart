@@ -3594,6 +3594,53 @@ void main() {
       },
     );
 
+    test('stream(onConnectionState) reports that subscription only', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (p) => 'graphql-transport-ws',
+        );
+        socket.listen((raw) {
+          final m = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (m['type'] == 'connection_init') {
+            socket.add(jsonEncode({'type': 'connection_ack'}));
+          } else if (m['type'] == 'subscribe') {
+            socket.add(
+              jsonEncode({
+                'id': m['id'],
+                'type': 'next',
+                'payload': {
+                  'data': {'id': '1', 'name': 'live'},
+                },
+              }),
+            );
+          }
+        });
+      });
+      final client = GraphQLClient(
+        url: 'https://example.com/graphql',
+        wsUrl: 'ws://${server.address.host}:${server.port}',
+        addTypename: false,
+      );
+      final seen = <SubscriptionConnectionStatus>[];
+      final data = await client
+          .stream(
+            _SubReq(const _TestVars('1')),
+            onConnectionState: (s) => seen.add(s.status),
+          )
+          .first
+          .timeout(const Duration(seconds: 5));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(data.name, 'live');
+      expect(seen, [
+        SubscriptionConnectionStatus.connecting,
+        SubscriptionConnectionStatus.connected,
+      ]);
+      await client.dispose();
+    });
+
     test('surfaces a custom subscriptionLink that reports status', () async {
       final link = _StatusLink();
       final client = GraphQLClient(

@@ -118,6 +118,19 @@ StreamBuilder<SubscriptionConnectionState>(
 )
 ```
 
+### Per subscription
+
+To show the status of one subscription, pass `onConnectionState` to `client.stream`:
+
+```dart
+client.stream(
+  MessageAdded(),
+  onConnectionState: (state) => setState(() => _chatStatus = state),
+).listen(handleMessage);
+```
+
+It fires for that subscription only (never for queries or mutations) while the returned stream is listened to, starting at `connecting` — or `connected` when it joins a connection that is already up — and ending at `disconnected` once it completes or is cancelled. With `WebSocketLink` and `SseSingleConnectionLink` the subscriptions share one connection, so it follows that connection while the subscription is live. `SseLink` opens one stream per subscription, so there each subscription reports its own. A custom link can report to it by reading `request.subscriptionStatus`.
+
 `WebSocketLink` and `SseSingleConnectionLink` report their one connection. `SseLink` opens one stream per subscription, so it reports an aggregate over subscriptions: `connected` while any stream is open, `error` only when every subscription has failed. A custom `subscriptionLink` is surfaced when it implements `ConnectionStatusSource`; otherwise the state stays `disconnected`.
 
 ## Customizing beyond the constructor

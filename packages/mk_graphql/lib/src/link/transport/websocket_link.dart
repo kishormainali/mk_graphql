@@ -89,8 +89,14 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
   @override
   final ConnectionStatusNotifier connectionStatus = ConnectionStatusNotifier();
 
-  void _report(SubscriptionConnectionStatus status, [Object? error]) =>
-      connectionStatus.report(this, status, error: error);
+  /// Reports to the link-wide status and mirrors it to every live
+  /// subscription's own notifier (they share this one socket).
+  void _report(SubscriptionConnectionStatus status, [Object? error]) {
+    connectionStatus.report(this, status, error: error);
+    for (final entry in _activeRequests.entries) {
+      entry.value.subscriptionStatus?.report(entry.key, status, error: error);
+    }
+  }
 
   WebSocketChannel? _channel;
   StreamSubscription? _channelSubscription;
@@ -495,6 +501,10 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
   }
 
   void _finishOperation(String id, StreamController<Response> controller) {
+    _activeRequests[id]?.subscriptionStatus?.report(
+      id,
+      SubscriptionConnectionStatus.disconnected,
+    );
     controller.close();
     _activeSubscriptions.remove(id);
     _activeRequests.remove(id);
@@ -559,9 +569,23 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
 
     _activeSubscriptions[subId] = controller;
     _activeRequests[subId] = req;
+    final current = connectionStatus.value;
+    req.subscriptionStatus?.report(
+      subId,
+      current.status == SubscriptionConnectionStatus.connected ||
+              current.status == SubscriptionConnectionStatus.reconnecting
+          ? current.status
+          : SubscriptionConnectionStatus.connecting,
+      error: current.lastError,
+    );
     _sendSubscribe(subId, req);
 
     controller.onCancel = () {
+      // Null after `_failAll`, which already reported `error` to it.
+      _activeRequests[subId]?.subscriptionStatus?.report(
+        subId,
+        SubscriptionConnectionStatus.disconnected,
+      );
       _sendComplete(subId);
       _sentIds.remove(subId);
       _activeSubscriptions.remove(subId);
@@ -626,6 +650,7 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
     _isDisposed = true;
     _reconnectTimer?.cancel();
     _idleTimer?.cancel();
+    _report(SubscriptionConnectionStatus.disconnected);
     final controllers = _activeSubscriptions.values.toList();
     _activeSubscriptions.clear();
     _activeRequests.clear();
@@ -633,7 +658,6 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
       await controller.close();
     }
     await _dropConnection();
-    _report(SubscriptionConnectionStatus.disconnected);
     await connectionStatus.close();
   }
 }

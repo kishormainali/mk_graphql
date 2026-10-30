@@ -282,4 +282,30 @@ void main() {
       );
     });
   });
+
+  test('a subscription reports its own status to its notifier', () async {
+    final link = makeLink();
+    final n = ConnectionStatusNotifier();
+    final seen = <SubscriptionConnectionStatus>[];
+    n.stream.listen((s) => seen.add(s.status));
+    final s = link
+        .request(
+          Request(
+            operation: Operation(
+              document: parseString('subscription A { s }'),
+              operationName: 'A',
+            ),
+            context: Context().withEntry(ConnectionStatusContextEntry(n)),
+          ),
+        )
+        .listen((_) {});
+    await settle();
+    expect(seen, [
+      SubscriptionConnectionStatus.connecting,
+      SubscriptionConnectionStatus.connected,
+    ]);
+    await s.cancel();
+    expect(n.value.status, SubscriptionConnectionStatus.disconnected);
+    await link.dispose();
+  });
 }

@@ -230,7 +230,9 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
       // revoked session) must not leave a half-open channel behind.
       final payload = await _resolvePayload();
       if (_isDisposed) return;
-      if (_reconnectAttempt == 0) {
+      // A retry was already reported as `reconnecting` when it was scheduled.
+      if (connectionStatus.value.status !=
+          SubscriptionConnectionStatus.reconnecting) {
         _report(SubscriptionConnectionStatus.connecting);
       }
       _channel = WebSocketChannel.connect(

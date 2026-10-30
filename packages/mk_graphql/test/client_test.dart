@@ -3711,6 +3711,97 @@ void main() {
       },
     );
 
+    test('subscription delivers every event in order and completes', () async {
+      final link = _ControlledLink();
+      final client = GraphQLClient.fromLink(link);
+      final got = <String?>[];
+      final done = Completer<void>();
+      client
+          .stream(_SubReq(const _TestVars('1')))
+          .listen((d) => got.add(d.name), onDone: done.complete);
+      await Future<void>.delayed(Duration.zero);
+      link
+        ..emit('a')
+        ..emit('b')
+        ..emit('c');
+      await link.controller.close();
+      await done.future.timeout(const Duration(seconds: 2));
+      expect(got, ['a', 'b', 'c']);
+    });
+
+    test('a link error after events surfaces on the stream', () async {
+      final link = _ControlledLink();
+      final client = GraphQLClient.fromLink(link);
+      final got = <String?>[];
+      final errors = <Object>[];
+      final done = Completer<void>();
+      client
+          .stream(_SubReq(const _TestVars('1')))
+          .listen(
+            (d) => got.add(d.name),
+            onError: errors.add,
+            onDone: done.complete,
+          );
+      await Future<void>.delayed(Duration.zero);
+      link.emit('a');
+      link.controller.addError(
+        const ServerException(originalException: 'boom'),
+      );
+      await done.future.timeout(const Duration(seconds: 2));
+      expect(got, ['a']);
+      expect(errors, hasLength(1));
+      expect(errors.single, isA<GraphQLException>());
+    });
+
+    test('pause and resume buffer events instead of dropping them', () async {
+      final link = _ControlledLink();
+      final client = GraphQLClient.fromLink(link);
+      final got = <String?>[];
+      final sub = client
+          .stream(_SubReq(const _TestVars('1')))
+          .listen((d) => got.add(d.name));
+      await Future<void>.delayed(Duration.zero);
+      link.emit('a');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      sub.pause();
+      link
+        ..emit('b')
+        ..emit('c');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(got, ['a']);
+      sub.resume();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(got, ['a', 'b', 'c']);
+      await sub.cancel().timeout(const Duration(seconds: 2));
+    });
+
+    test(
+      'cancelling a quiet subscription over any link reaches the link',
+      () async {
+        final link = _ControlledLink();
+        final client = GraphQLClient.fromLink(link);
+        final sub = client.stream(_SubReq(const _TestVars('1'))).listen((_) {});
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(link.requests, 1);
+        await sub.cancel().timeout(const Duration(seconds: 2));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(link.cancelled, isTrue);
+      },
+    );
+
+    test(
+      'a query still completes and ignores cancel of other streams',
+      () async {
+        final link = _ControlledLink();
+        final client = GraphQLClient.fromLink(link);
+        final result = client.future(_TestReq(const _TestVars('1')));
+        await Future<void>.delayed(Duration.zero);
+        link.emit('q');
+        await link.controller.close();
+        expect((await result).name, 'q');
+      },
+    );
+
     test('surfaces a custom subscriptionLink that reports status', () async {
       final link = _StatusLink();
       final client = GraphQLClient(
@@ -3842,4 +3933,27 @@ class _StatusLink extends Link implements ConnectionStatusSource {
   @override
   Stream<gql.Response> request(gql.Request request, [NextLink? forward]) =>
       const Stream.empty();
+}
+
+/// A link whose single response stream the test drives by hand.
+class _ControlledLink extends Link {
+  late final StreamController<gql.Response> controller;
+  bool cancelled = false;
+  int requests = 0;
+
+  _ControlledLink() {
+    controller = StreamController<gql.Response>(
+      onCancel: () => cancelled = true,
+    );
+  }
+
+  @override
+  Stream<gql.Response> request(gql.Request request, [NextLink? forward]) {
+    requests++;
+    return controller.stream;
+  }
+
+  void emit(String name) => controller.add(
+    gql.Response(data: {'id': '1', 'name': name}, response: const {}),
+  );
 }

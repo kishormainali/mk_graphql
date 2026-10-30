@@ -18,6 +18,7 @@ import '../core/request.dart';
 import '../core/request_key.dart';
 import '../core/retry_options.dart';
 import '../core/response.dart';
+import '../core/connection_status.dart';
 import '../link/auth/auth_link.dart';
 import '../link/logging/logger.dart';
 import '../link/logging/logger_link.dart';
@@ -49,6 +50,21 @@ import '../link/transport/websocket_link.dart';
 /// [TokenStorage.saveToken]; see also [isAuthenticated].
 class GraphQLClient {
   final Link _pipeline;
+  final ConnectionStatusSource? _connectionStatusSource;
+
+  /// Current state of the subscription connection (WebSocket or SSE), for
+  /// showing connecting / reconnecting / disconnected / error to the user.
+  /// Always `disconnected` when there is no subscription link, or a custom
+  /// `subscriptionLink` that doesn't implement [ConnectionStatusSource].
+  SubscriptionConnectionState get connectionState =>
+      _connectionStatusSource?.connectionStatus.value ??
+      SubscriptionConnectionState.disconnected;
+
+  /// Emits each change of [connectionState]. It does not replay the current
+  /// value — read [connectionState] for that (e.g. as a `StreamBuilder`'s
+  /// `initialData`).
+  Stream<SubscriptionConnectionState> get connectionStateStream =>
+      _connectionStatusSource?.connectionStatus.stream ?? const Stream.empty();
 
   /// The normalized cache backing [FetchPolicy]s and [watchQuery].
   final Cache cache;
@@ -305,7 +321,7 @@ class GraphQLClient {
       maxConcurrentBackgroundRefetches: maxConcurrentBackgroundRefetches,
       loggerOptions: loggerOptions,
       ownedDio: dio == null ? dioInstance : null,
-      pipeline: _buildPipeline(
+      built: _buildPipeline(
         url: url,
         wsUrl: wsUrl,
         sseUrl: sseUrl,
@@ -396,9 +412,10 @@ class GraphQLClient {
     required this.defaultRetry,
     this.maxConcurrentBackgroundRefetches,
     required Dio? ownedDio,
-    required Link pipeline,
+    required ({Link pipeline, ConnectionStatusSource? statusSource}) built,
   }) : _ownedDio = ownedDio,
-       _pipeline = pipeline;
+       _pipeline = built.pipeline,
+       _connectionStatusSource = built.statusSource;
 
   /// Creates a [GraphQLClient] using a custom [Link] pipeline directly.
   GraphQLClient.fromLink(
@@ -411,9 +428,11 @@ class GraphQLClient {
     this.defaultCacheTime,
     this.defaultRetry,
     this.maxConcurrentBackgroundRefetches,
+    ConnectionStatusSource? connectionStatusSource,
   }) : cache = cache ?? InMemoryCache(),
        _ownedDio = null,
-       _pipeline = link;
+       _pipeline = link,
+       _connectionStatusSource = connectionStatusSource;
 
   /// Derives [accessTokenHeader]/`onTokenRefresh`/[onRevokeToken] from
   /// [refreshCallback] so [GraphQLClient] can manage its own auth session via
@@ -587,7 +606,8 @@ class GraphQLClient {
     return {'Authorization': 'Bearer ${newToken.accessToken}'};
   }
 
-  static Link _buildPipeline({
+  static ({Link pipeline, ConnectionStatusSource? statusSource})
+  _buildPipeline({
     required String url,
     String? wsUrl,
     String? sseUrl,
@@ -682,7 +702,12 @@ class GraphQLClient {
       links.add(dioLink);
     }
 
-    return Link.from(links);
+    return (
+      pipeline: Link.from(links),
+      statusSource: subLink is ConnectionStatusSource
+          ? subLink as ConnectionStatusSource
+          : null,
+    );
   }
 
   static bool _isSubscription(gql.Request req) => _operationIs(

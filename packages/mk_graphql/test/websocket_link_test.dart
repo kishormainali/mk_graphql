@@ -687,7 +687,6 @@ void main() {
         if (index == 0) socket.close(4401, 'Unauthorized');
       });
       final link = WebSocketLink(url, idleCloseDelay: null);
-      final seen = record(link);
       final first = link.request(subRequest()).listen((_) {}, onError: (_) {});
       await Future.delayed(wait);
       final state = link.connectionStatus.value;
@@ -695,20 +694,16 @@ void main() {
       expect((state.lastError as ServerException).statusCode, 401);
       await first.cancel();
 
-      seen.clear();
+      final states = <SubscriptionConnectionState>[];
+      link.connectionStatus.stream.listen(states.add);
       final second = link.request(subRequest()).listen((_) {});
-      await Future.delayed(const Duration(milliseconds: 5));
-      expect(
-        link.connectionStatus.value.status,
-        SubscriptionConnectionStatus.connecting,
-      );
-      expect(link.connectionStatus.value.lastError, isNotNull);
       await Future.delayed(wait);
-      expect(
-        link.connectionStatus.value.status,
-        SubscriptionConnectionStatus.connected,
-      );
-      expect(link.connectionStatus.value.lastError, isNull);
+      // The error is still on the first `connecting` state, and only the
+      // `connected` one clears it.
+      expect(states.first.status, SubscriptionConnectionStatus.connecting);
+      expect(states.first.lastError, isNotNull);
+      expect(states.last.status, SubscriptionConnectionStatus.connected);
+      expect(states.last.lastError, isNull);
       await second.cancel();
       await link.dispose();
     });

@@ -90,6 +90,49 @@ Pick the subscription transport by passing exactly one of `wsUrl`, `sseUrl`, or 
 
 For `sseUrl`, the default is `graphql-sse`'s *distinct connections mode* (one HTTP connection per subscription). Pass `sseSingleConnection: true` for its *single connection mode*, where every subscription shares one reserved event stream — useful over HTTP/1.1, where many open connections to one host can starve ordinary requests. The stream reopens with backoff after a drop and live subscriptions are re-sent on it.
 
+## Connection status
+
+Show the subscription connection to the user with `client.connectionState` (current value) and `client.connectionStateStream` (changes only — it does not replay, so seed a `StreamBuilder` with `initialData`).
+
+| `status` | Meaning |
+| --- | --- |
+| `connecting` | Opening the first connection. |
+| `connected` | WebSocket `connection_ack` received / SSE stream open. |
+| `reconnecting` | The connection dropped and a retry is pending; `attempt` counts consecutive tries. |
+| `disconnected` | Nothing subscribed (initial state, after idle close, or after `dispose`). |
+| `error` | Failed and not retried (rejected credentials, fatal close code, `autoReconnect: false`, or `maxReconnectAttempts` exhausted). |
+
+`lastError` is sticky: it is kept through `connecting` / `reconnecting` / `error` and cleared only when the connection reaches `connected`. A 401/4401 therefore reads `error` → `connecting` (with `lastError` still set while the token refreshes) → `connected`.
+
+```dart
+StreamBuilder<SubscriptionConnectionState>(
+  initialData: client.connectionState,
+  stream: client.connectionStateStream,
+  builder: (context, snapshot) => switch (snapshot.requireData.status) {
+    SubscriptionConnectionStatus.connected => const SizedBox.shrink(),
+    SubscriptionConnectionStatus.connecting => const Text('Connecting…'),
+    SubscriptionConnectionStatus.reconnecting => Text('Reconnecting (${snapshot.requireData.attempt})…'),
+    SubscriptionConnectionStatus.disconnected => const SizedBox.shrink(),
+    SubscriptionConnectionStatus.error => Text('Connection error: ${snapshot.requireData.lastError}'),
+  },
+)
+```
+
+### Per subscription
+
+To show the status of one subscription, pass `onConnectionState` to `client.stream`:
+
+```dart
+client.stream(
+  MessageAdded(),
+  onConnectionState: (state) => setState(() => _chatStatus = state),
+).listen(handleMessage);
+```
+
+It fires for that subscription only (never for queries or mutations) while the returned stream is listened to, starting at `connecting` — or `connected` when it joins a connection that is already up — and ending at `disconnected` once it completes or is cancelled. With `WebSocketLink` and `SseSingleConnectionLink` the subscriptions share one connection, so it follows that connection while the subscription is live. `SseLink` opens one stream per subscription, so there each subscription reports its own. A custom link can report to it by reading `request.subscriptionStatus`.
+
+`WebSocketLink` and `SseSingleConnectionLink` report their one connection. `SseLink` opens one stream per subscription, so it reports an aggregate over subscriptions: `connected` while any stream is open, `error` only when every subscription has failed. A custom `subscriptionLink` is surfaced when it implements `ConnectionStatusSource`; otherwise the state stays `disconnected`.
+
 ## Customizing beyond the constructor
 
 `GraphQLClient`'s constructor covers the common cases (auth, typename injection, logging, HTTP/SSE/WebSocket transports) by building the pipeline internally from the arguments you pass — there is currently no way to hand it a fully custom, pre-assembled `Link` chain (e.g. to swap in `BatchLink` or insert your own middleware). The one exception is the subscription branch: pass `subscriptionLink` to use any `Link` you like in place of the built-in `WebSocketLink`/`SseLink` selection.

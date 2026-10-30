@@ -154,4 +154,148 @@ void main() {
       'GRAPHQL_VALIDATION_FAILED',
     );
   });
+
+  group('connection status', () {
+    Future<void> settle([int ms = 300]) =>
+        Future.delayed(Duration(milliseconds: ms));
+
+    /// Serves a never-ending stream for `/ok` and 500 for anything else.
+    void serveOkAndFail() {
+      server.listen((request) async {
+        await request.drain<void>();
+        if (request.uri.path == '/ok') {
+          request.response.headers.contentType = ContentType(
+            'text',
+            'event-stream',
+          );
+          request.response.bufferOutput = false;
+          request.response.write(': open\n\n');
+          await request.response.flush();
+        } else {
+          request.response.statusCode = 500;
+          await request.response.close();
+        }
+      });
+    }
+
+    test(
+      'open subscription is connected; cancelling is disconnected',
+      () async {
+        serveOkAndFail();
+        final link = SseLink('${url}ok');
+        final sub = link.request(subscription()).listen((_) {});
+        await settle();
+        expect(
+          link.connectionStatus.value.status,
+          SubscriptionConnectionStatus.connected,
+        );
+        await sub.cancel();
+        await settle(100);
+        expect(
+          link.connectionStatus.value.status,
+          SubscriptionConnectionStatus.disconnected,
+        );
+        await link.dispose();
+      },
+    );
+
+    test(
+      'one failing and one open subscription: aggregate connected, each its own state',
+      () async {
+        var n = 0;
+        server.listen((request) async {
+          await request.drain<void>();
+          if (n++ == 0) {
+            request.response.headers.contentType = ContentType(
+              'text',
+              'event-stream',
+            );
+            request.response.bufferOutput = false;
+            request.response.write(': open\n\n');
+            await request.response.flush();
+          } else {
+            request.response.statusCode = 500;
+            await request.response.close();
+          }
+        });
+        final link = SseLink(
+          url,
+          maxReconnectAttempts: 0,
+          reconnectInterval: const Duration(milliseconds: 10),
+        );
+        final goodState = ConnectionStatusNotifier();
+        final badState = ConnectionStatusNotifier();
+        Request withState(ConnectionStatusNotifier n) => Request(
+          operation: subscription().operation,
+          context: Context().withEntry(ConnectionStatusContextEntry(n)),
+        );
+        final good = link.request(withState(goodState)).listen((_) {});
+        await settle(100);
+        final bad = link
+            .request(withState(badState))
+            .listen((_) {}, onError: (_) {});
+        await settle();
+        expect(
+          link.connectionStatus.value.status,
+          SubscriptionConnectionStatus.connected,
+        );
+        expect(goodState.value.status, SubscriptionConnectionStatus.connected);
+        expect(badState.value.status, SubscriptionConnectionStatus.error);
+        await good.cancel();
+        await settle(100);
+        expect(
+          link.connectionStatus.value.status,
+          SubscriptionConnectionStatus.error,
+        );
+        await bad.cancel();
+        await link.dispose();
+      },
+    );
+
+    test('all subscriptions failed is error with lastError', () async {
+      serveOkAndFail();
+      final link = SseLink(
+        '${url}fail',
+        maxReconnectAttempts: 0,
+        reconnectInterval: const Duration(milliseconds: 10),
+      );
+      final sub = link.request(subscription()).listen((_) {}, onError: (_) {});
+      await settle();
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.error,
+      );
+      expect(link.connectionStatus.value.lastError, isNotNull);
+      await sub.cancel();
+      await link.dispose();
+    });
+
+    test('queries do not affect status', () async {
+      server.listen((request) async {
+        await request.drain<void>();
+        request.response.headers.contentType = ContentType(
+          'text',
+          'event-stream',
+        );
+        request.response.write(
+          'event: next\ndata: {"data":{"q":1}}\n\n'
+          'event: complete\n\n',
+        );
+        await request.response.close();
+      });
+      final link = SseLink(url);
+      final query = Request(
+        operation: Operation(
+          document: parseString('query Q { q }'),
+          operationName: 'Q',
+        ),
+      );
+      await link.request(query).toList();
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.disconnected,
+      );
+      await link.dispose();
+    });
+  });
 }

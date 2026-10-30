@@ -7,8 +7,10 @@ import 'package:gql_link/gql_link.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../core/backoff.dart';
+import '../../core/connection_status.dart';
 import '../../core/document_print_cache.dart';
 import '../../core/error.dart' show RevokeTokenException;
+import 'dio_link.dart' show DioLinkCancelTokenContextEntry;
 
 typedef WebSocketPayloadCallback = FutureOr<dynamic> Function();
 
@@ -16,7 +18,7 @@ typedef WebSocketPayloadCallback = FutureOr<dynamic> Function();
 ///
 /// Implements both the modern `graphql-transport-ws` (`graphql-ws`) specification
 /// and legacy `subscriptions-transport-ws` specification.
-class WebSocketLink extends Link {
+class WebSocketLink extends Link implements ConnectionStatusSource {
   final String url;
   final dynamic initialPayload;
   final Iterable<String> subprotocols;
@@ -83,6 +85,19 @@ class WebSocketLink extends Link {
 
   final bool autoReconnect;
   final ResponseParser parser;
+
+  /// Current connection status — see [SubscriptionConnectionStatus].
+  @override
+  final ConnectionStatusNotifier connectionStatus = ConnectionStatusNotifier();
+
+  /// Reports to the link-wide status and mirrors it to every live
+  /// subscription's own notifier (they share this one socket).
+  void _report(SubscriptionConnectionStatus status, [Object? error]) {
+    connectionStatus.report(this, status, error: error);
+    for (final entry in _activeRequests.entries) {
+      entry.value.subscriptionStatus?.report(entry.key, status, error: error);
+    }
+  }
 
   WebSocketChannel? _channel;
   StreamSubscription? _channelSubscription;
@@ -222,6 +237,11 @@ class WebSocketLink extends Link {
       // revoked session) must not leave a half-open channel behind.
       final payload = await _resolvePayload();
       if (_isDisposed) return;
+      // A retry was already reported as `reconnecting` when it was scheduled.
+      if (connectionStatus.value.status !=
+          SubscriptionConnectionStatus.reconnecting) {
+        _report(SubscriptionConnectionStatus.connecting);
+      }
       _channel = WebSocketChannel.connect(
         Uri.parse(url),
         protocols: subprotocols,
@@ -277,6 +297,7 @@ class WebSocketLink extends Link {
   /// Errors and drops every active subscription — used when reconnecting
   /// would just repeat the failure (revoked session, rejected credentials).
   void _failAll(Object error) {
+    _report(SubscriptionConnectionStatus.error, error);
     final controllers = _activeSubscriptions.values.toList();
     _activeSubscriptions.clear();
     _activeRequests.clear();
@@ -370,13 +391,17 @@ class WebSocketLink extends Link {
     }
   }
 
-  void _scheduleReconnect() {
-    if (!autoReconnect ||
-        _isDisposed ||
-        _activeSubscriptions.isEmpty ||
-        _reconnectTimer?.isActive == true) {
+  void _scheduleReconnect([Object? cause]) {
+    if (_isDisposed || _reconnectTimer?.isActive == true) return;
+    if (_activeSubscriptions.isEmpty) {
+      _report(SubscriptionConnectionStatus.disconnected);
       return;
     }
+    if (!autoReconnect) {
+      _report(SubscriptionConnectionStatus.error, cause);
+      return;
+    }
+    _report(SubscriptionConnectionStatus.reconnecting, cause);
     _reconnectTimer = Timer(_reconnectDelay(), _reconnect);
     _reconnectAttempt++;
   }
@@ -391,6 +416,7 @@ class WebSocketLink extends Link {
           _connectFuture == null) {
         _reconnectTimer?.cancel();
         await _dropConnection();
+        if (!_isDisposed) _report(SubscriptionConnectionStatus.disconnected);
       }
     });
   }
@@ -433,6 +459,7 @@ class WebSocketLink extends Link {
 
       if (type == 'connection_ack') {
         _reconnectAttempt = 0;
+        _report(SubscriptionConnectionStatus.connected);
         _ack?.complete(true);
         return;
       }
@@ -475,6 +502,10 @@ class WebSocketLink extends Link {
   }
 
   void _finishOperation(String id, StreamController<Response> controller) {
+    _activeRequests[id]?.subscriptionStatus?.report(
+      id,
+      SubscriptionConnectionStatus.disconnected,
+    );
     controller.close();
     _activeSubscriptions.remove(id);
     _activeRequests.remove(id);
@@ -491,7 +522,7 @@ class WebSocketLink extends Link {
       }
     }
     _stopTimers();
-    _scheduleReconnect();
+    _scheduleReconnect(error);
   }
 
   void _onDone() {
@@ -521,7 +552,9 @@ class WebSocketLink extends Link {
       );
       return;
     }
-    _scheduleReconnect();
+    _scheduleReconnect(
+      'WebSocket closed${closeCode != null ? ' with code $closeCode' : ''}',
+    );
   }
 
   void _reconnect() {
@@ -537,16 +570,40 @@ class WebSocketLink extends Link {
 
     _activeSubscriptions[subId] = controller;
     _activeRequests[subId] = req;
+    final current = connectionStatus.value;
+    req.subscriptionStatus?.report(
+      subId,
+      current.status == SubscriptionConnectionStatus.connected ||
+              current.status == SubscriptionConnectionStatus.reconnecting
+          ? current.status
+          : SubscriptionConnectionStatus.connecting,
+      error: current.lastError,
+    );
     _sendSubscribe(subId, req);
 
-    controller.onCancel = () {
+    var ended = false;
+    void end() {
+      if (ended) return;
+      ended = true;
+      // Null after `_failAll`, which already reported `error` to it.
+      _activeRequests[subId]?.subscriptionStatus?.report(
+        subId,
+        SubscriptionConnectionStatus.disconnected,
+      );
       _sendComplete(subId);
       _sentIds.remove(subId);
       _activeSubscriptions.remove(subId);
       _activeRequests.remove(subId);
       controller.close();
       _scheduleIdleClose();
-    };
+    }
+
+    controller.onCancel = end;
+    // Lets a caller stop a subscription that is waiting on a quiet socket,
+    // through links in between that can't forward a cancel in time.
+    req.context.entry<DioLinkCancelTokenContextEntry>()?.token?.whenCancel.then(
+      (_) => end(),
+    );
 
     return controller.stream;
   }
@@ -604,6 +661,7 @@ class WebSocketLink extends Link {
     _isDisposed = true;
     _reconnectTimer?.cancel();
     _idleTimer?.cancel();
+    _report(SubscriptionConnectionStatus.disconnected);
     final controllers = _activeSubscriptions.values.toList();
     _activeSubscriptions.clear();
     _activeRequests.clear();
@@ -611,5 +669,6 @@ class WebSocketLink extends Link {
       await controller.close();
     }
     await _dropConnection();
+    await connectionStatus.close();
   }
 }

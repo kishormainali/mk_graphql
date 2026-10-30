@@ -18,6 +18,7 @@ import '../core/request.dart';
 import '../core/request_key.dart';
 import '../core/retry_options.dart';
 import '../core/response.dart';
+import '../core/connection_status.dart';
 import '../link/auth/auth_link.dart';
 import '../link/logging/logger.dart';
 import '../link/logging/logger_link.dart';
@@ -49,6 +50,21 @@ import '../link/transport/websocket_link.dart';
 /// [TokenStorage.saveToken]; see also [isAuthenticated].
 class GraphQLClient {
   final Link _pipeline;
+  final ConnectionStatusSource? _connectionStatusSource;
+
+  /// Current state of the subscription connection (WebSocket or SSE), for
+  /// showing connecting / reconnecting / disconnected / error to the user.
+  /// Always `disconnected` when there is no subscription link, or a custom
+  /// `subscriptionLink` that doesn't implement [ConnectionStatusSource].
+  SubscriptionConnectionState get connectionState =>
+      _connectionStatusSource?.connectionStatus.value ??
+      SubscriptionConnectionState.disconnected;
+
+  /// Emits each change of [connectionState]. It does not replay the current
+  /// value — read [connectionState] for that (e.g. as a `StreamBuilder`'s
+  /// `initialData`).
+  Stream<SubscriptionConnectionState> get connectionStateStream =>
+      _connectionStatusSource?.connectionStatus.stream ?? const Stream.empty();
 
   /// The normalized cache backing [FetchPolicy]s and [watchQuery].
   final Cache cache;
@@ -305,7 +321,7 @@ class GraphQLClient {
       maxConcurrentBackgroundRefetches: maxConcurrentBackgroundRefetches,
       loggerOptions: loggerOptions,
       ownedDio: dio == null ? dioInstance : null,
-      pipeline: _buildPipeline(
+      built: _buildPipeline(
         url: url,
         wsUrl: wsUrl,
         sseUrl: sseUrl,
@@ -396,9 +412,10 @@ class GraphQLClient {
     required this.defaultRetry,
     this.maxConcurrentBackgroundRefetches,
     required Dio? ownedDio,
-    required Link pipeline,
+    required ({Link pipeline, ConnectionStatusSource? statusSource}) built,
   }) : _ownedDio = ownedDio,
-       _pipeline = pipeline;
+       _pipeline = built.pipeline,
+       _connectionStatusSource = built.statusSource;
 
   /// Creates a [GraphQLClient] using a custom [Link] pipeline directly.
   GraphQLClient.fromLink(
@@ -411,9 +428,11 @@ class GraphQLClient {
     this.defaultCacheTime,
     this.defaultRetry,
     this.maxConcurrentBackgroundRefetches,
+    ConnectionStatusSource? connectionStatusSource,
   }) : cache = cache ?? InMemoryCache(),
        _ownedDio = null,
-       _pipeline = link;
+       _pipeline = link,
+       _connectionStatusSource = connectionStatusSource;
 
   /// Derives [accessTokenHeader]/`onTokenRefresh`/[onRevokeToken] from
   /// [refreshCallback] so [GraphQLClient] can manage its own auth session via
@@ -587,7 +606,8 @@ class GraphQLClient {
     return {'Authorization': 'Bearer ${newToken.accessToken}'};
   }
 
-  static Link _buildPipeline({
+  static ({Link pipeline, ConnectionStatusSource? statusSource})
+  _buildPipeline({
     required String url,
     String? wsUrl,
     String? sseUrl,
@@ -682,7 +702,12 @@ class GraphQLClient {
       links.add(dioLink);
     }
 
-    return Link.from(links);
+    return (
+      pipeline: Link.from(links),
+      statusSource: subLink is ConnectionStatusSource
+          ? subLink as ConnectionStatusSource
+          : null,
+    );
   }
 
   static bool _isSubscription(gql.Request req) => _operationIs(
@@ -756,12 +781,19 @@ class GraphQLClient {
     GraphQLRequest req,
     gql.Request gqlReq, {
     required bool skipDedup,
-  }) async* {
+  }) {
+    // Returned as-is, not re-yielded through a generator: a subscription's
+    // cancellation must reach the transport without waiting on its next event.
     if (skipDedup || _isMutation(gqlReq) || _isSubscription(gqlReq)) {
-      yield* _pipeline.request(gqlReq);
-      return;
+      return _pipeline.request(gqlReq);
     }
+    return _dedupedRequest(req, gqlReq);
+  }
 
+  Stream<gql.Response> _dedupedRequest(
+    GraphQLRequest req,
+    gql.Request gqlReq,
+  ) async* {
     final key = computeRequestKey(req);
     var future = _inFlight[key];
     final isOwner = future == null;
@@ -829,12 +861,64 @@ class GraphQLClient {
   /// Executes a request and returns a [Stream] of [TData], throwing on errors.
   ///
   /// Supports cancellation via [cancelToken] or [req.cancelToken].
+  ///
+  /// For a subscription, [onConnectionState] is called with that
+  /// subscription's own connection state (`connecting` → `connected`, then
+  /// `reconnecting` / `error` as it drops) for as long as the returned stream
+  /// is listened to. With WebSocket and single-connection SSE it follows the
+  /// shared connection while the subscription is live; with `SseLink` it is
+  /// that subscription's own stream. It never fires for queries or mutations.
+  /// Use [connectionState] for the link-wide state instead.
   Stream<TData> stream<TData, TVars>(
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
+    void Function(SubscriptionConnectionState state)? onConnectionState,
+  }) {
+    if (onConnectionState == null) {
+      return _stream(req, cancelToken: cancelToken);
+    }
+    final notifier = ConnectionStatusNotifier();
+    final data = _stream(
+      req,
+      cancelToken: cancelToken,
+      statusNotifier: notifier,
+    );
+    StreamSubscription<SubscriptionConnectionState>? statusSub;
+    StreamSubscription<TData>? inner;
+    late final StreamController<TData> controller;
+    controller = StreamController<TData>(
+      onListen: () {
+        statusSub = notifier.stream.listen(onConnectionState);
+        inner = data.listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: controller.close,
+        );
+      },
+      onPause: () => inner?.pause(),
+      onResume: () => inner?.resume(),
+      onCancel: () {
+        // Status first and synchronously: cancelling the data stream may not
+        // complete until the subscription's next event.
+        statusSub?.cancel();
+        unawaited(notifier.close());
+        return inner?.cancel();
+      },
+    );
+    return controller.stream;
+  }
+
+  Stream<TData> _stream<TData, TVars>(
+    GraphQLRequest<TData, TVars> req, {
+    CancelToken? cancelToken,
+    ConnectionStatusNotifier? statusNotifier,
   }) {
     final effectiveErrorPolicy = req.errorPolicy ?? defaultErrorPolicy;
-    return request(req, cancelToken: cancelToken)
+    return _request(
+          req,
+          cancelToken: cancelToken,
+          statusNotifier: statusNotifier,
+        )
         .map((response) {
           if (response.data == null ||
               (response.hasErrors &&
@@ -906,6 +990,12 @@ class GraphQLClient {
   Stream<GraphQLResponse<TData>> request<TData, TVars>(
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
+  }) => _request(req, cancelToken: cancelToken);
+
+  Stream<GraphQLResponse<TData>> _request<TData, TVars>(
+    GraphQLRequest<TData, TVars> req, {
+    CancelToken? cancelToken,
+    ConnectionStatusNotifier? statusNotifier,
   }) async* {
     final policy = _resolveFetchPolicy(req, defaultFetchPolicy);
 
@@ -929,7 +1019,11 @@ class GraphQLClient {
       case FetchPolicy.cacheFirst:
         final cached = cache.readQuery(req);
         if (cached == null) {
-          yield* _fetchFromNetwork(req, cancelToken: cancelToken);
+          yield* _fetchFromNetwork(
+            req,
+            cancelToken: cancelToken,
+            statusNotifier: statusNotifier,
+          );
           break;
         }
         final staleTime = req.staleTime ?? defaultStaleTime;
@@ -943,7 +1037,11 @@ class GraphQLClient {
           loading: !isFresh,
         );
         if (isFresh) break;
-        yield* _fetchFromNetwork(req, cancelToken: cancelToken);
+        yield* _fetchFromNetwork(
+          req,
+          cancelToken: cancelToken,
+          statusNotifier: statusNotifier,
+        );
         break;
 
       case FetchPolicy.cacheAndNetwork:
@@ -955,15 +1053,27 @@ class GraphQLClient {
             loading: true,
           );
         }
-        yield* _fetchFromNetwork(req, cancelToken: cancelToken);
+        yield* _fetchFromNetwork(
+          req,
+          cancelToken: cancelToken,
+          statusNotifier: statusNotifier,
+        );
         break;
 
       case FetchPolicy.networkOnly:
-        yield* _fetchFromNetwork(req, cancelToken: cancelToken);
+        yield* _fetchFromNetwork(
+          req,
+          cancelToken: cancelToken,
+          statusNotifier: statusNotifier,
+        );
         break;
 
       case FetchPolicy.noCache:
-        yield* _executeNetworkRequest(req, cancelToken: cancelToken);
+        yield* _executeNetworkRequest(
+          req,
+          cancelToken: cancelToken,
+          statusNotifier: statusNotifier,
+        );
         break;
     }
 
@@ -1223,10 +1333,12 @@ class GraphQLClient {
   Stream<GraphQLResponse<TData>> _fetchFromNetwork<TData, TVars>(
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
+    ConnectionStatusNotifier? statusNotifier,
   }) async* {
     await for (final response in _executeNetworkRequest(
       req,
       cancelToken: cancelToken,
+      statusNotifier: statusNotifier,
     )) {
       if (response.data != null && !response.hasErrors) {
         cache.writeQuery(req, response.data as TData);
@@ -1240,8 +1352,24 @@ class GraphQLClient {
   Stream<GraphQLResponse<TData>> _executeNetworkRequest<TData, TVars>(
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
-  }) async* {
-    final effectiveCancelToken = cancelToken ?? req.cancelToken;
+    ConnectionStatusNotifier? statusNotifier,
+  }) {
+    var effectiveCancelToken = cancelToken ?? req.cancelToken;
+    // A subscription gets its own token (linked to the caller's) so that
+    // cancelling the returned stream tells the transport to stop directly:
+    // intermediate links (`AuthLink`, `LoggerLink`, ...) are `async*`
+    // generators that can't be cancelled while they await the next event.
+    CancelToken? ownToken;
+    if (req.documentNode.definitions.whereType<OperationDefinitionNode>().any(
+      (d) => d.type == OperationType.subscription,
+    )) {
+      ownToken = CancelToken();
+      final callerToken = effectiveCancelToken;
+      callerToken?.whenCancel.then((e) {
+        if (!ownToken!.isCancelled) ownToken.cancel(e.error);
+      });
+      effectiveCancelToken = ownToken;
+    }
     var context = gql.Context().withEntry(
       gql.HttpLinkHeaders(headers: req.headers ?? {}),
     );
@@ -1249,6 +1377,10 @@ class GraphQLClient {
       context = context.withEntry(
         DioLinkCancelTokenContextEntry(effectiveCancelToken),
       );
+    }
+
+    if (statusNotifier != null) {
+      context = context.withEntry(ConnectionStatusContextEntry(statusNotifier));
     }
 
     final gqlReq = gql.Request(
@@ -1269,38 +1401,97 @@ class GraphQLClient {
         req.retry ??
         (_isMutation(gqlReq) || _isSubscription(gqlReq) ? null : defaultRetry);
 
-    var attempt = 1;
-    while (true) {
-      try {
-        await for (final res in _requestThroughPipeline(
-          req,
-          gqlReq,
-          skipDedup: effectiveCancelToken != null,
-        )) {
-          yield GraphQLResponse<TData>(
-            data: res.data != null ? req.parseData(res.data!) : null,
-            errors: mapGraphQLErrors(res.errors),
-            source: ResponseSource.network,
+    // A controller rather than an `async*` generator: a generator can't be
+    // cancelled while it awaits the pipeline's next event, so cancelling a
+    // quiet subscription would hang (and leave it subscribed) until the server
+    // happened to send something. `onCancel` cancels the pipeline
+    // subscription directly, which also tells the transport to stop it.
+    late final StreamController<GraphQLResponse<TData>> controller;
+    StreamSubscription<gql.Response>? current;
+    Completer<void>? attemptDone;
+    var cancelled = false;
+
+    Future<void> consume() {
+      final done = attemptDone = Completer<void>();
+      current =
+          _requestThroughPipeline(
+            req,
+            gqlReq,
+            skipDedup: effectiveCancelToken != null,
+          ).listen(
+            (res) {
+              if (cancelled) return;
+              try {
+                controller.add(
+                  GraphQLResponse<TData>(
+                    data: res.data != null ? req.parseData(res.data!) : null,
+                    errors: mapGraphQLErrors(res.errors),
+                    source: ResponseSource.network,
+                  ),
+                );
+              } catch (e, st) {
+                if (!done.isCompleted) done.completeError(e, st);
+                current?.cancel();
+              }
+            },
+            onError: (Object e, StackTrace st) {
+              if (!done.isCompleted) done.completeError(e, st);
+            },
+            onDone: () {
+              if (!done.isCompleted) done.complete();
+            },
+            cancelOnError: true,
           );
-        }
-        return;
-      } catch (e) {
-        final mapped = GraphQLExceptionExtension.fromLinkException(e);
-        final canRetry =
-            retryOptions != null &&
-            attempt < retryOptions.maxAttempts &&
-            retryOptions.shouldRetry(mapped);
-        if (!canRetry) {
-          yield GraphQLResponse<TData>(
-            linkException: mapped,
-            source: ResponseSource.network,
-          );
-          return;
-        }
-        await Future<void>.delayed(retryOptions.delayForAttempt(attempt));
-        attempt++;
-      }
+      return done.future;
     }
+
+    Future<void> run() async {
+      var attempt = 1;
+      while (!cancelled) {
+        try {
+          await consume();
+          break;
+        } catch (e) {
+          if (cancelled) break;
+          final mapped = GraphQLExceptionExtension.fromLinkException(e);
+          final canRetry =
+              retryOptions != null &&
+              attempt < retryOptions.maxAttempts &&
+              retryOptions.shouldRetry(mapped);
+          if (!canRetry) {
+            controller.add(
+              GraphQLResponse<TData>(
+                linkException: mapped,
+                source: ResponseSource.network,
+              ),
+            );
+            break;
+          }
+          await Future<void>.delayed(retryOptions.delayForAttempt(attempt));
+          attempt++;
+        }
+      }
+      if (!controller.isClosed) await controller.close();
+    }
+
+    controller = StreamController<GraphQLResponse<TData>>(
+      onListen: () => unawaited(run()),
+      onPause: () => current?.pause(),
+      onResume: () => current?.resume(),
+      onCancel: () {
+        cancelled = true;
+        final done = attemptDone;
+        if (done != null && !done.isCompleted) done.complete();
+        if (ownToken != null && !ownToken.isCancelled) {
+          ownToken.cancel('Subscription cancelled');
+        }
+        // Not awaited: the pipeline's generators unwind on their own once
+        // the transport has stopped, and waiting here could hang the caller.
+        unawaited(current?.cancel().catchError((_) {}));
+        return null;
+      },
+    );
+    return controller.stream;
   }
 }
 

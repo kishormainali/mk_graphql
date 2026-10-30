@@ -10,6 +10,7 @@ import 'dio_link.dart';
 import '../auth/auth_link.dart';
 import 'package:token_storage/token_storage.dart';
 import '../../core/backoff.dart';
+import '../../core/connection_status.dart';
 import '../../core/document_print_cache.dart';
 
 /// Terminating [Link] for GraphQL over Server-Sent Events (SSE).
@@ -24,7 +25,7 @@ import '../../core/document_print_cache.dart';
 /// [AuthLink]'s single-flight refresh lock. This link has no refresh logic
 /// of its own on purpose — two independent, non-deduped refresh attempts
 /// racing each other was the bug.
-class SseLink extends Link {
+class SseLink extends Link implements ConnectionStatusSource {
   final String url;
   final dio.Dio client;
   final Map<String, String> defaultHeaders;
@@ -66,6 +67,28 @@ class SseLink extends Link {
   /// client stays theirs to close.
   final bool _ownsClient;
 
+  /// Aggregate status of this link's *subscriptions* (queries and mutations
+  /// are ignored): `connected` while any stream is open, `error` only when
+  /// every subscription has failed.
+  @override
+  final ConnectionStatusNotifier connectionStatus = ConnectionStatusNotifier();
+
+  /// Subscriptions that ended in an error. They stay reported (so the
+  /// aggregate can be `error`) until the next subscription starts.
+  final _errored = <Object>{};
+
+  /// Reports one subscription's status to the aggregate and to that
+  /// subscription's own notifier, if it asked for one.
+  void _report(
+    Request req,
+    Object source,
+    SubscriptionConnectionStatus status, {
+    Object? error,
+  }) {
+    connectionStatus.report(source, status, error: error);
+    req.subscriptionStatus?.report(source, status, error: error);
+  }
+
   SseLink(
     this.url, {
     dio.Dio? client,
@@ -86,6 +109,7 @@ class SseLink extends Link {
   @override
   Future<void> dispose() async {
     if (_ownsClient) client.close();
+    await connectionStatus.close();
   }
 
   @override
@@ -95,6 +119,10 @@ class SseLink extends Link {
     // so a quiet subscription would hold its HTTP connection open
     // indefinitely after the subscriber left. The controller below aborts
     // the connection directly on cancel instead.
+    for (final stale in _errored) {
+      connectionStatus.release(stale);
+    }
+    _errored.clear();
     final token = dio.CancelToken();
     final callerToken = req.context
         .entry<DioLinkCancelTokenContextEntry>()
@@ -128,10 +156,47 @@ class SseLink extends Link {
     final isSubscription = req.operation.document.definitions
         .whereType<OperationDefinitionNode>()
         .any((def) => def.type == OperationType.subscription);
-    final state = _SseState();
+    final state = _SseState()..tracked = isSubscription;
+    try {
+      // `await for`, not `yield*`: the latter forwards errors without
+      // throwing them here, so the catch below would never see one.
+      await for (final response in _runLoop(
+        req,
+        token,
+        state,
+        isSubscription,
+      )) {
+        yield response;
+      }
+    } catch (e) {
+      if (isSubscription && !token.isCancelled) {
+        _errored.add(token);
+        _report(req, token, SubscriptionConnectionStatus.error, error: e);
+      }
+      rethrow;
+    } finally {
+      if (!_errored.contains(token)) {
+        connectionStatus.release(token);
+        req.subscriptionStatus?.report(
+          token,
+          SubscriptionConnectionStatus.disconnected,
+        );
+      }
+    }
+  }
+
+  Stream<Response> _runLoop(
+    Request req,
+    dio.CancelToken token,
+    _SseState state,
+    bool isSubscription,
+  ) async* {
     var attempt = 0;
 
     while (true) {
+      if (state.tracked && state.attempts == 0) {
+        _report(req, token, SubscriptionConnectionStatus.connecting);
+      }
       Object? failure;
       StackTrace? failureStack;
       try {
@@ -157,6 +222,14 @@ class SseLink extends Link {
               originalException: 'SSE stream closed without completing',
               originalStackTrace: failureStack,
             );
+      }
+      if (state.tracked) {
+        _report(
+          req,
+          token,
+          SubscriptionConnectionStatus.reconnecting,
+          error: failure ?? 'SSE stream closed without completing',
+        );
       }
       await Future.any<void>([
         Future<void>.delayed(
@@ -263,6 +336,10 @@ class SseLink extends Link {
         statusCode: statusCode,
         originalException: dioResponse.statusMessage,
       );
+    }
+
+    if (state.tracked) {
+      _report(req, subscriptionToken, SubscriptionConnectionStatus.connected);
     }
 
     final body = dioResponse.data?.stream;
@@ -397,6 +474,10 @@ class _SseState {
 
   /// Bytes arrived on the current connection (so the attempt counter resets).
   bool receivedData = false;
+
+  /// Whether this is a subscription, whose connection feeds
+  /// [SseLink.connectionStatus].
+  bool tracked = false;
 }
 
 /// Whether a failed streaming connection is worth re-opening: a dropped

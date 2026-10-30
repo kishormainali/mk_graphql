@@ -589,4 +589,178 @@ void main() {
       },
     );
   });
+
+  group('WebSocketLink connection status', () {
+    late HttpServer server;
+    late int connections;
+    late String url;
+
+    Request subRequest() => Request(
+      operation: Operation(
+        document: parseString('subscription S { s }'),
+        operationName: 'S',
+      ),
+    );
+
+    /// [onConnection] gets the socket and its 0-based connection index and
+    /// decides what to do after it acks `connection_init` (acks unless
+    /// [ack] is false).
+    Future<void> serve(
+      void Function(WebSocket socket, int index) onConnection, {
+      bool ack = true,
+    }) async {
+      connections = 0;
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      url = 'ws://${server.address.host}:${server.port}';
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(
+          request,
+          protocolSelector: (p) => 'graphql-transport-ws',
+        );
+        final index = connections++;
+        socket.listen((raw) {
+          final m = jsonDecode(raw as String) as Map<String, dynamic>;
+          if (m['type'] == 'connection_init' && ack) {
+            socket.add(jsonEncode({'type': 'connection_ack'}));
+            onConnection(socket, index);
+          }
+        });
+      });
+    }
+
+    List<SubscriptionConnectionStatus> record(WebSocketLink link) {
+      final seen = <SubscriptionConnectionStatus>[];
+      link.connectionStatus.stream.listen((s) => seen.add(s.status));
+      return seen;
+    }
+
+    const wait = Duration(milliseconds: 300);
+
+    test('connects: connecting then connected', () async {
+      await serve((_, __) {});
+      final link = WebSocketLink(url, idleCloseDelay: null);
+      final seen = record(link);
+      final sub = link.request(subRequest()).listen((_) {});
+      await Future.delayed(wait);
+      expect(seen, [
+        SubscriptionConnectionStatus.connecting,
+        SubscriptionConnectionStatus.connected,
+      ]);
+      await sub.cancel();
+      await link.dispose();
+    });
+
+    test('drop then reconnect keeps lastError while reconnecting', () async {
+      await serve((socket, index) {
+        if (index == 0)
+          Future.delayed(const Duration(milliseconds: 30), socket.close);
+      });
+      final link = WebSocketLink(
+        url,
+        reconnectInterval: const Duration(milliseconds: 150),
+        reconnectJitter: 0,
+        idleCloseDelay: null,
+      );
+      final seen = record(link);
+      final sub = link.request(subRequest()).listen((_) {}, onError: (_) {});
+      await Future.delayed(const Duration(milliseconds: 120));
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.reconnecting,
+      );
+      expect(link.connectionStatus.value.lastError, isNotNull);
+      await Future.delayed(wait);
+      expect(seen, [
+        SubscriptionConnectionStatus.connecting,
+        SubscriptionConnectionStatus.connected,
+        SubscriptionConnectionStatus.reconnecting,
+        SubscriptionConnectionStatus.connected,
+      ]);
+      expect(link.connectionStatus.value.lastError, isNull);
+      await sub.cancel();
+      await link.dispose();
+    });
+
+    test('4401 close is error, sticky through the next connecting', () async {
+      await serve((socket, index) {
+        if (index == 0) socket.close(4401, 'Unauthorized');
+      });
+      final link = WebSocketLink(url, idleCloseDelay: null);
+      final seen = record(link);
+      final first = link.request(subRequest()).listen((_) {}, onError: (_) {});
+      await Future.delayed(wait);
+      final state = link.connectionStatus.value;
+      expect(state.status, SubscriptionConnectionStatus.error);
+      expect((state.lastError as ServerException).statusCode, 401);
+      await first.cancel();
+
+      seen.clear();
+      final second = link.request(subRequest()).listen((_) {});
+      await Future.delayed(const Duration(milliseconds: 5));
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.connecting,
+      );
+      expect(link.connectionStatus.value.lastError, isNotNull);
+      await Future.delayed(wait);
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.connected,
+      );
+      expect(link.connectionStatus.value.lastError, isNull);
+      await second.cancel();
+      await link.dispose();
+    });
+
+    test('autoReconnect false: a drop ends in error', () async {
+      await serve((socket, _) => socket.close());
+      final link = WebSocketLink(
+        url,
+        autoReconnect: false,
+        idleCloseDelay: null,
+      );
+      final sub = link.request(subRequest()).listen((_) {}, onError: (_) {});
+      await Future.delayed(wait);
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.error,
+      );
+      await sub.cancel();
+      await link.dispose();
+    });
+
+    test('idle close is disconnected', () async {
+      await serve((_, __) {});
+      final link = WebSocketLink(
+        url,
+        idleCloseDelay: const Duration(milliseconds: 50),
+      );
+      final sub = link.request(subRequest()).listen((_) {});
+      await Future.delayed(const Duration(milliseconds: 150));
+      await sub.cancel();
+      await Future.delayed(wait);
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.disconnected,
+      );
+      expect(link.connectionStatus.value.lastError, isNull);
+      await link.dispose();
+    });
+
+    test('dispose leaves disconnected and closes the stream', () async {
+      await serve((_, __) {});
+      final link = WebSocketLink(url, idleCloseDelay: null);
+      final done = link.connectionStatus.stream.drain<void>();
+      final sub = link.request(subRequest()).listen((_) {});
+      await Future.delayed(const Duration(milliseconds: 150));
+      await link.dispose();
+      await done.timeout(const Duration(seconds: 2));
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.disconnected,
+      );
+      await sub.cancel();
+    });
+  });
 }

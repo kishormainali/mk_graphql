@@ -7,6 +7,7 @@ import 'package:gql_link/gql_link.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../core/backoff.dart';
+import '../../core/connection_status.dart';
 import '../../core/document_print_cache.dart';
 import '../../core/error.dart' show RevokeTokenException;
 
@@ -16,7 +17,7 @@ typedef WebSocketPayloadCallback = FutureOr<dynamic> Function();
 ///
 /// Implements both the modern `graphql-transport-ws` (`graphql-ws`) specification
 /// and legacy `subscriptions-transport-ws` specification.
-class WebSocketLink extends Link {
+class WebSocketLink extends Link implements ConnectionStatusSource {
   final String url;
   final dynamic initialPayload;
   final Iterable<String> subprotocols;
@@ -83,6 +84,13 @@ class WebSocketLink extends Link {
 
   final bool autoReconnect;
   final ResponseParser parser;
+
+  /// Current connection status — see [SubscriptionConnectionStatus].
+  @override
+  final ConnectionStatusNotifier connectionStatus = ConnectionStatusNotifier();
+
+  void _report(SubscriptionConnectionStatus status, [Object? error]) =>
+      connectionStatus.report(this, status, error: error);
 
   WebSocketChannel? _channel;
   StreamSubscription? _channelSubscription;
@@ -222,6 +230,9 @@ class WebSocketLink extends Link {
       // revoked session) must not leave a half-open channel behind.
       final payload = await _resolvePayload();
       if (_isDisposed) return;
+      if (_reconnectAttempt == 0) {
+        _report(SubscriptionConnectionStatus.connecting);
+      }
       _channel = WebSocketChannel.connect(
         Uri.parse(url),
         protocols: subprotocols,
@@ -277,6 +288,7 @@ class WebSocketLink extends Link {
   /// Errors and drops every active subscription — used when reconnecting
   /// would just repeat the failure (revoked session, rejected credentials).
   void _failAll(Object error) {
+    _report(SubscriptionConnectionStatus.error, error);
     final controllers = _activeSubscriptions.values.toList();
     _activeSubscriptions.clear();
     _activeRequests.clear();
@@ -370,13 +382,17 @@ class WebSocketLink extends Link {
     }
   }
 
-  void _scheduleReconnect() {
-    if (!autoReconnect ||
-        _isDisposed ||
-        _activeSubscriptions.isEmpty ||
-        _reconnectTimer?.isActive == true) {
+  void _scheduleReconnect([Object? cause]) {
+    if (_isDisposed || _reconnectTimer?.isActive == true) return;
+    if (_activeSubscriptions.isEmpty) {
+      _report(SubscriptionConnectionStatus.disconnected);
       return;
     }
+    if (!autoReconnect) {
+      _report(SubscriptionConnectionStatus.error, cause);
+      return;
+    }
+    _report(SubscriptionConnectionStatus.reconnecting, cause);
     _reconnectTimer = Timer(_reconnectDelay(), _reconnect);
     _reconnectAttempt++;
   }
@@ -391,6 +407,7 @@ class WebSocketLink extends Link {
           _connectFuture == null) {
         _reconnectTimer?.cancel();
         await _dropConnection();
+        if (!_isDisposed) _report(SubscriptionConnectionStatus.disconnected);
       }
     });
   }
@@ -433,6 +450,7 @@ class WebSocketLink extends Link {
 
       if (type == 'connection_ack') {
         _reconnectAttempt = 0;
+        _report(SubscriptionConnectionStatus.connected);
         _ack?.complete(true);
         return;
       }
@@ -491,7 +509,7 @@ class WebSocketLink extends Link {
       }
     }
     _stopTimers();
-    _scheduleReconnect();
+    _scheduleReconnect(error);
   }
 
   void _onDone() {
@@ -521,7 +539,9 @@ class WebSocketLink extends Link {
       );
       return;
     }
-    _scheduleReconnect();
+    _scheduleReconnect(
+      'WebSocket closed${closeCode != null ? ' with code $closeCode' : ''}',
+    );
   }
 
   void _reconnect() {
@@ -611,5 +631,7 @@ class WebSocketLink extends Link {
       await controller.close();
     }
     await _dropConnection();
+    _report(SubscriptionConnectionStatus.disconnected);
+    await connectionStatus.close();
   }
 }

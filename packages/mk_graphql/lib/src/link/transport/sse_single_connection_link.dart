@@ -7,6 +7,7 @@ import 'package:gql_link/gql_link.dart';
 import 'package:token_storage/token_storage.dart';
 
 import '../../core/backoff.dart';
+import '../../core/connection_status.dart';
 import '../../core/document_print_cache.dart';
 import '../auth/auth_types.dart';
 import 'sse_link.dart';
@@ -34,7 +35,7 @@ import 'sse_link.dart';
 /// with backoff and every live operation is re-sent. 401/403 responses are
 /// surfaced as a [ServerException] — wrap with [AuthLink] (as
 /// `GraphQLClient`'s pipeline does) to refresh the token and re-subscribe.
-class SseSingleConnectionLink extends Link {
+class SseSingleConnectionLink extends Link implements ConnectionStatusSource {
   final String url;
   final dio.Dio client;
   final Map<String, String> defaultHeaders;
@@ -69,6 +70,13 @@ class SseSingleConnectionLink extends Link {
   final Duration? idleCloseDelay;
 
   final bool _ownsClient;
+
+  /// Current connection status — see [SubscriptionConnectionStatus].
+  @override
+  final ConnectionStatusNotifier connectionStatus = ConnectionStatusNotifier();
+
+  void _report(SubscriptionConnectionStatus status, [Object? error]) =>
+      connectionStatus.report(this, status, error: error);
 
   SseSingleConnectionLink(
     this.url, {
@@ -151,9 +159,11 @@ class SseSingleConnectionLink extends Link {
         }
         LinkException? failure;
         var gotData = false;
+        if (attempt == 0) _report(SubscriptionConnectionStatus.connecting);
         try {
           final lines = await _openStream(cancel);
           _streamOpen = true;
+          _report(SubscriptionConnectionStatus.connected);
           _flush();
           await _pump(lines, cancel, onData: () => gotData = true);
           // Ended: the server closed it, it was idle-closed, or it dropped.
@@ -188,6 +198,10 @@ class SseSingleConnectionLink extends Link {
           );
           break;
         }
+        _report(
+          SubscriptionConnectionStatus.reconnecting,
+          failure ?? 'SSE stream closed',
+        );
         await Future<void>.delayed(
           cappedBackoffDelay(
             attempt: attempt,
@@ -202,6 +216,10 @@ class SseSingleConnectionLink extends Link {
       _running = false;
       _token = null;
       _streamOpen = false;
+      if ((_isDisposed || _ops.isEmpty) &&
+          connectionStatus.value.status != SubscriptionConnectionStatus.error) {
+        _report(SubscriptionConnectionStatus.disconnected);
+      }
       // An operation added while the loop was winding down still needs one.
       if (!_isDisposed && _ops.isNotEmpty) _ensureRunning();
     }
@@ -360,6 +378,7 @@ class SseSingleConnectionLink extends Link {
   }
 
   void _failAll(LinkException error) {
+    _report(SubscriptionConnectionStatus.error, error);
     final ops = _ops.values.toList();
     _ops.clear();
     for (final op in ops) {
@@ -497,6 +516,8 @@ class SseSingleConnectionLink extends Link {
       await op.controller.close();
     }
     if (_ownsClient) client.close();
+    _report(SubscriptionConnectionStatus.disconnected);
+    await connectionStatus.close();
   }
 }
 

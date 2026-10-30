@@ -17,6 +17,7 @@ class _Server {
   int puts = 0;
   int gets = 0;
   bool failNextPostWith404 = false;
+  bool failPuts = false;
 
   Future<void> start() async {
     http = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -25,6 +26,11 @@ class _Server {
       switch (r.method) {
         case 'PUT':
           puts++;
+          if (failPuts) {
+            r.response.statusCode = 503;
+            await r.response.close();
+            return;
+          }
           r.response.statusCode = 201;
           r.response.write('tok$puts');
           await r.response.close();
@@ -191,5 +197,89 @@ void main() {
     ]);
     await s.cancel();
     await link.dispose();
+  });
+
+  group('connection status', () {
+    List<SubscriptionConnectionStatus> record(SseSingleConnectionLink link) {
+      final seen = <SubscriptionConnectionStatus>[];
+      link.connectionStatus.stream.listen((s) => seen.add(s.status));
+      return seen;
+    }
+
+    test('connects: connecting then connected', () async {
+      final link = makeLink();
+      final seen = record(link);
+      final s = link.request(sub('A')).listen((_) {});
+      await settle();
+      expect(seen, [
+        SubscriptionConnectionStatus.connecting,
+        SubscriptionConnectionStatus.connected,
+      ]);
+      await s.cancel();
+      await link.dispose();
+    });
+
+    test('stream drop: reconnecting then connected, error cleared', () async {
+      final link = makeLink();
+      final seen = record(link);
+      final s = link.request(sub('A')).listen((_) {});
+      await settle();
+      await server.streams['tok1']!.close();
+      await settle(500);
+      expect(seen, [
+        SubscriptionConnectionStatus.connecting,
+        SubscriptionConnectionStatus.connected,
+        SubscriptionConnectionStatus.reconnecting,
+        SubscriptionConnectionStatus.connected,
+      ]);
+      expect(link.connectionStatus.value.lastError, isNull);
+      await s.cancel();
+      await link.dispose();
+    });
+
+    test('exhausted retries is error and sticky', () async {
+      server.failPuts = true;
+      final link = SseSingleConnectionLink(
+        server.url,
+        reconnectInterval: const Duration(milliseconds: 20),
+        maxReconnectAttempts: 1,
+      );
+      final s = link.request(sub('A')).listen((_) {}, onError: (_) {});
+      await settle(500);
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.error,
+      );
+      expect(link.connectionStatus.value.lastError, isNotNull);
+      await s.cancel();
+      await link.dispose();
+    });
+
+    test('last subscription cancelled is disconnected, not error', () async {
+      final link = makeLink();
+      final s = link.request(sub('A')).listen((_) {});
+      await settle();
+      await s.cancel();
+      await settle(500);
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.disconnected,
+      );
+      expect(link.connectionStatus.value.lastError, isNull);
+      await link.dispose();
+    });
+
+    test('dispose leaves disconnected and closes the stream', () async {
+      final link = makeLink();
+      final done = link.connectionStatus.stream.drain<void>();
+      link.request(sub('A')).listen((_) {});
+      await settle();
+      await link.dispose();
+      await done.timeout(const Duration(seconds: 2));
+      expect(
+        link.connectionStatus.value.status,
+        SubscriptionConnectionStatus.disconnected,
+      );
+    });
   });
 }

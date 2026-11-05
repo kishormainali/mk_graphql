@@ -869,19 +869,31 @@ class GraphQLClient {
   /// shared connection while the subscription is live; with `SseLink` it is
   /// that subscription's own stream. It never fires for queries or mutations.
   /// Use [connectionState] for the link-wide state instead.
+  ///
+  /// For a WebSocket subscription, [resubscribeVariables] is called each time
+  /// the link re-sends the subscription after a reconnect, and its result
+  /// replaces the original variables. Use it for a resumable subscription
+  /// (e.g. one with an `after` cursor) so a reconnect continues from where
+  /// the stream got to instead of replaying events from the original cursor.
   Stream<TData> stream<TData, TVars>(
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
     void Function(SubscriptionConnectionState state)? onConnectionState,
+    Map<String, dynamic> Function()? resubscribeVariables,
   }) {
     if (onConnectionState == null) {
-      return _stream(req, cancelToken: cancelToken);
+      return _stream(
+        req,
+        cancelToken: cancelToken,
+        resubscribeVariables: resubscribeVariables,
+      );
     }
     final notifier = ConnectionStatusNotifier();
     final data = _stream(
       req,
       cancelToken: cancelToken,
       statusNotifier: notifier,
+      resubscribeVariables: resubscribeVariables,
     );
     StreamSubscription<SubscriptionConnectionState>? statusSub;
     StreamSubscription<TData>? inner;
@@ -912,12 +924,14 @@ class GraphQLClient {
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
     ConnectionStatusNotifier? statusNotifier,
+    Map<String, dynamic> Function()? resubscribeVariables,
   }) {
     final effectiveErrorPolicy = req.errorPolicy ?? defaultErrorPolicy;
     return _request(
           req,
           cancelToken: cancelToken,
           statusNotifier: statusNotifier,
+          resubscribeVariables: resubscribeVariables,
         )
         .map((response) {
           if (response.data == null ||
@@ -996,6 +1010,7 @@ class GraphQLClient {
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
     ConnectionStatusNotifier? statusNotifier,
+    Map<String, dynamic> Function()? resubscribeVariables,
   }) async* {
     final policy = _resolveFetchPolicy(req, defaultFetchPolicy);
 
@@ -1023,6 +1038,7 @@ class GraphQLClient {
             req,
             cancelToken: cancelToken,
             statusNotifier: statusNotifier,
+            resubscribeVariables: resubscribeVariables,
           );
           break;
         }
@@ -1041,6 +1057,7 @@ class GraphQLClient {
           req,
           cancelToken: cancelToken,
           statusNotifier: statusNotifier,
+          resubscribeVariables: resubscribeVariables,
         );
         break;
 
@@ -1057,6 +1074,7 @@ class GraphQLClient {
           req,
           cancelToken: cancelToken,
           statusNotifier: statusNotifier,
+          resubscribeVariables: resubscribeVariables,
         );
         break;
 
@@ -1065,6 +1083,7 @@ class GraphQLClient {
           req,
           cancelToken: cancelToken,
           statusNotifier: statusNotifier,
+          resubscribeVariables: resubscribeVariables,
         );
         break;
 
@@ -1073,6 +1092,7 @@ class GraphQLClient {
           req,
           cancelToken: cancelToken,
           statusNotifier: statusNotifier,
+          resubscribeVariables: resubscribeVariables,
         );
         break;
     }
@@ -1334,11 +1354,13 @@ class GraphQLClient {
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
     ConnectionStatusNotifier? statusNotifier,
+    Map<String, dynamic> Function()? resubscribeVariables,
   }) async* {
     await for (final response in _executeNetworkRequest(
       req,
       cancelToken: cancelToken,
       statusNotifier: statusNotifier,
+      resubscribeVariables: resubscribeVariables,
     )) {
       if (response.data != null && !response.hasErrors) {
         cache.writeQuery(req, response.data as TData);
@@ -1353,6 +1375,7 @@ class GraphQLClient {
     GraphQLRequest<TData, TVars> req, {
     CancelToken? cancelToken,
     ConnectionStatusNotifier? statusNotifier,
+    Map<String, dynamic> Function()? resubscribeVariables,
   }) {
     var effectiveCancelToken = cancelToken ?? req.cancelToken;
     // A subscription gets its own token (linked to the caller's) so that
@@ -1381,6 +1404,11 @@ class GraphQLClient {
 
     if (statusNotifier != null) {
       context = context.withEntry(ConnectionStatusContextEntry(statusNotifier));
+    }
+    if (resubscribeVariables != null) {
+      context = context.withEntry(
+        ResubscribeVariablesContextEntry(resubscribeVariables),
+      );
     }
 
     final gqlReq = gql.Request(

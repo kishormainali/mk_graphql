@@ -463,7 +463,7 @@ class SseSingleConnectionLink extends Link implements ConnectionStatusSource {
       'Accept': 'application/json',
     };
 
-    final variables = req.variables;
+    final variables = req.variablesFor(resend: resend);
     final name = req.operation.operationName;
     try {
       await client.post<void>(

@@ -71,6 +71,28 @@ class ConnectionStatusContextEntry extends ContextEntry {
   List<Object?> get fieldsForEquality => [notifier];
 }
 
+/// Request-context entry supplying the variables a transport should
+/// re-send when it resubscribes after a reconnect, instead of the original
+/// ones. See `GraphQLClient.stream(resubscribeVariables:)`.
+class ResubscribeVariablesContextEntry extends ContextEntry {
+  final Map<String, dynamic> Function() variables;
+
+  const ResubscribeVariablesContextEntry(this.variables);
+
+  @override
+  List<Object?> get fieldsForEquality => [variables];
+}
+
+extension ResubscribeRequestVariables on Request {
+  /// The variables to send: the [ResubscribeVariablesContextEntry] result on
+  /// a [resend] (when it was given), else the original [variables].
+  Map<String, dynamic> variablesFor({required bool resend}) =>
+      (resend
+          ? context.entry<ResubscribeVariablesContextEntry>()?.variables()
+          : null) ??
+      variables;
+}
+
 /// The per-subscription status notifier attached to a [Request], if any.
 extension SubscriptionRequestStatus on Request {
   ConnectionStatusNotifier? get subscriptionStatus =>

@@ -427,7 +427,7 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
   /// memory of a `subscribe` sent on the previous, now-dead socket.
   void _resendActiveSubscriptions() {
     for (final entry in _activeRequests.entries) {
-      _sendSubscribeMessage(entry.key, entry.value);
+      _sendSubscribeMessage(entry.key, entry.value, resend: true);
     }
   }
 
@@ -631,8 +631,11 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
         jsonEncode(await _resolvePayload()) != jsonEncode(_connectedPayload);
   }
 
-  void _sendSubscribeMessage(String id, Request req) {
+  void _sendSubscribeMessage(String id, Request req, {bool resend = false}) {
     if (!_connected || _channel == null || !_sentIds.add(id)) return;
+    // A resumable subscription supplies its current variables (e.g. the
+    // advanced cursor) so a reconnect doesn't replay from the original ones.
+    final vars = req.variablesFor(resend: resend);
     final docString = printDocumentCached(req.operation.document);
     _channel!.sink.add(
       jsonEncode({
@@ -642,7 +645,7 @@ class WebSocketLink extends Link implements ConnectionStatusSource {
           'query': docString,
           if (req.operation.operationName != null)
             'operationName': req.operation.operationName,
-          if (req.variables.isNotEmpty) 'variables': req.variables,
+          if (vars.isNotEmpty) 'variables': vars,
         },
       }),
     );

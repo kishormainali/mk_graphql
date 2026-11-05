@@ -133,6 +133,19 @@ It fires for that subscription only (never for queries or mutations) while the r
 
 `WebSocketLink` and `SseSingleConnectionLink` report their one connection. `SseLink` opens one stream per subscription, so it reports an aggregate over subscriptions: `connected` while any stream is open, `error` only when every subscription has failed. A custom `subscriptionLink` is surfaced when it implements `ConnectionStatusSource`; otherwise the state stays `disconnected`.
 
+## Resuming a subscription after a reconnect
+
+When a transport reconnects it re-sends each live subscription with its *original* variables. For a resumable subscription (one with an `after` cursor, say) that replays everything since the original cursor. Pass `resubscribeVariables` to `client.stream` and the link calls it on every re-send, using the result in place of the original variables:
+
+```dart
+client.stream(
+  MessageAdded(after: cursor),
+  resubscribeVariables: () => {'after': state.cursor},
+).listen(handleMessage);
+```
+
+It applies to `WebSocketLink`, `SseLink` and `SseSingleConnectionLink`, and only to re-sends — the first send uses the request's own variables. The map must use the operation's JSON variable names.
+
 ## Customizing beyond the constructor
 
 `GraphQLClient`'s constructor covers the common cases (auth, typename injection, logging, HTTP/SSE/WebSocket transports) by building the pipeline internally from the arguments you pass — there is currently no way to hand it a fully custom, pre-assembled `Link` chain (e.g. to swap in `BatchLink` or insert your own middleware). The one exception is the subscription branch: pass `subscriptionLink` to use any `Link` you like in place of the built-in `WebSocketLink`/`SseLink` selection.

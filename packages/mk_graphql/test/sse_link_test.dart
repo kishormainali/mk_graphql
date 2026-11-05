@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -60,6 +61,52 @@ void main() {
     ]);
     expect(connections, 2);
     expect(lastEventIds, [null, '7']);
+  });
+
+  test('a reconnect sends the resubscribeVariables result', () async {
+    var connections = 0;
+    final bodies = <dynamic>[];
+    server.listen((request) async {
+      connections++;
+      bodies.add(
+        jsonDecode(await utf8.decoder.bind(request).join())['variables'],
+      );
+      request.response.headers.contentType = ContentType(
+        'text',
+        'event-stream',
+      );
+      request.response.write(
+        connections == 1
+            ? 'event: next\ndata: {"data":{"s":1}}\n\n'
+            : 'event: complete\n\n',
+      );
+      await request.response.close();
+    });
+
+    var cursor = 'c0';
+    final link = SseLink(
+      url,
+      reconnectInterval: const Duration(milliseconds: 10),
+    );
+    final req = Request(
+      operation: Operation(
+        document: parseString('subscription S(\$after: String) { s }'),
+        operationName: 'S',
+      ),
+      variables: const {'after': 'c0'},
+      context: Context().withEntry(
+        ResubscribeVariablesContextEntry(() => {'after': cursor}),
+      ),
+    );
+    await link.request(req).map((r) {
+      cursor = 'c5'; // the consumer advances as events arrive
+      return r;
+    }).toList();
+
+    expect(bodies, [
+      {'after': 'c0'},
+      {'after': 'c5'},
+    ]);
   });
 
   test('cancelling the subscription closes the connection', () async {

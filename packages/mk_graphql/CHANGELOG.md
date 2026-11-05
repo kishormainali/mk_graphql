@@ -1,3 +1,7 @@
+## 1.4.1
+
+- **Fix**: a reconnect no longer replays a subscription from its original variables. `WebSocketLink`, `SseLink` and `SseSingleConnectionLink` re-send every live subscription after a drop with the variables it started with, so a resumable subscription (e.g. an `after` cursor) re-delivered events the consumer had already handled. New `client.stream(req, resubscribeVariables: () => {...})` supplies the current variables on each re-send (via the new `ResubscribeVariablesContextEntry`); without it behavior is unchanged.
+
 ## 1.4.0
 
 - **Feature**: subscription connection status. `GraphQLClient.connectionState` and `connectionStateStream` report `connecting`, `connected`, `reconnecting`, `disconnected` or `error` for the WebSocket / SSE subscription transport, with the last error (kept until the next successful connect) and the consecutive reconnect attempt count. `WebSocketLink`, `SseSingleConnectionLink` and `SseLink` implement the new `ConnectionStatusSource`; `SseLink` reports an aggregate over its per-subscription streams. A custom `subscriptionLink` is surfaced when it implements `ConnectionStatusSource`, otherwise the state stays `disconnected`.

@@ -158,6 +158,64 @@ void main() {
     );
   });
 
+  group('WebSocketLink resubscribe variables', () {
+    late HttpServer server;
+
+    tearDown(() => server.close(force: true));
+
+    test('reconnect resends variables from resubscribeVariables', () async {
+      final subscribeVars = <Map<String, dynamic>?>[];
+      var connections = 0;
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        final index = connections++;
+        socket.listen((event) {
+          final m = jsonDecode(event as String) as Map<String, dynamic>;
+          if (m['type'] == 'connection_init') {
+            socket.add(jsonEncode({'type': 'connection_ack'}));
+          } else if (m['type'] == 'subscribe') {
+            subscribeVars.add(
+              m['payload']['variables'] as Map<String, dynamic>?,
+            );
+            if (index == 0) socket.close();
+          }
+        });
+      });
+
+      final link = WebSocketLink(
+        'ws://${server.address.host}:${server.port}',
+        reconnectInterval: const Duration(milliseconds: 20),
+        reconnectJitter: 0,
+      );
+      var cursor = 'c0';
+      final request = Request(
+        operation: Operation(
+          document: parseString('subscription S(\$after: String) { s }'),
+          operationName: 'S',
+        ),
+        variables: const {'after': 'c0'},
+        context: Context().withEntry(
+          ResubscribeVariablesContextEntry(() => {'after': cursor}),
+        ),
+      );
+      final sub = link.request(request).listen((_) {}, onError: (_) {});
+      cursor = 'c5'; // the consumer advanced before the drop
+
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (subscribeVars.length < 2 && DateTime.now().isBefore(deadline)) {
+        await Future.delayed(const Duration(milliseconds: 20));
+      }
+      await sub.cancel();
+      await link.dispose();
+
+      expect(subscribeVars, [
+        {'after': 'c0'},
+        {'after': 'c5'},
+      ]);
+    });
+  });
+
   group('WebSocketLink authentication', () {
     late HttpServer server;
     late String url;

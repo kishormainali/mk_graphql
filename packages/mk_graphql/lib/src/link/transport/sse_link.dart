@@ -286,7 +286,8 @@ class SseLink extends Link implements ConnectionStatusSource {
 
     final queryString = printDocumentCached(req.operation.document);
     final operationName = req.operation.operationName;
-    final variables = req.variables;
+    // A reconnect resumes from the caller's current variables, if given.
+    final variables = req.variablesFor(resend: reconnecting);
 
     final isQuery = req.operation.document.definitions
         .whereType<OperationDefinitionNode>()

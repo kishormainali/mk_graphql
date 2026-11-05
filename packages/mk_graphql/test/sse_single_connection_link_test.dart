@@ -14,6 +14,7 @@ class _Server {
   final streams = <String, HttpResponse>{};
   final posted = <String, List<String>>{}; // token -> operation ids
   final deleted = <String>[];
+  final variables = <dynamic>[];
   int puts = 0;
   int gets = 0;
   bool failNextPostWith404 = false;
@@ -50,6 +51,7 @@ class _Server {
             await r.response.close();
             return;
           }
+          variables.add(body['variables']);
           (posted[token!] ??= []).add(id);
           r.response.statusCode = 202;
           await r.response.close();
@@ -180,6 +182,33 @@ void main() {
 
     expect(server.puts, 2);
     expect(got, hasLength(2)); // re-sent on the new stream
+    await s.cancel();
+    await link.dispose();
+  });
+
+  test('a re-send after a drop uses resubscribeVariables', () async {
+    final link = makeLink();
+    var cursor = 'c0';
+    final req = Request(
+      operation: Operation(
+        document: parseString('subscription A(\$after: String) { s }'),
+        operationName: 'A',
+      ),
+      variables: const {'after': 'c0'},
+      context: Context().withEntry(
+        ResubscribeVariablesContextEntry(() => {'after': cursor}),
+      ),
+    );
+    final s = link.request(req).listen((_) {});
+    await settle();
+    cursor = 'c5';
+    await server.streams['tok1']!.close();
+    await settle(500);
+
+    expect(server.variables, [
+      {'after': 'c0'},
+      {'after': 'c5'},
+    ]);
     await s.cancel();
     await link.dispose();
   });

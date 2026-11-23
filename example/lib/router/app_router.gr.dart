@@ -14,7 +14,7 @@ import 'package:auto_route/auto_route.dart' as _i4;
 import 'package:example/features/anime/anime_details_page.dart' as _i1;
 import 'package:example/features/anime/anime_list_page.dart' as _i2;
 import 'package:example/features/optimizations/optimizations_page.dart' as _i3;
-import 'package:flutter/material.dart' as _i5;
+import 'package:material_ui/material_ui.dart' as _i5;
 
 /// generated route for
 /// [_i1.AnimeDetailsPage]

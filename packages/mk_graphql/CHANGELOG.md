@@ -1,3 +1,8 @@
+## 1.5.0
+
+- **Behavior change**: minimum supported versions are now Flutter 3.47 and Dart 3.11 (was Flutter 3.35 / Dart 3.9).
+- **Chore**: dependencies updated to their latest compatible versions (`hive_ce` 2.24, `token_storage` 1.2.2, `dio`, …). The example app now uses `material_ui` and builds with the current `auto_route`, `freezed` and `build_runner`.
+
 ## 1.4.1
 
 - **Fix**: a reconnect no longer replays a subscription from its original variables. `WebSocketLink`, `SseLink` and `SseSingleConnectionLink` re-send every live subscription after a drop with the variables it started with, so a resumable subscription (e.g. an `after` cursor) re-delivered events the consumer had already handled. New `client.stream(req, resubscribeVariables: () => {...})` supplies the current variables on each re-send (via the new `ResubscribeVariablesContextEntry`); without it behavior is unchanged.

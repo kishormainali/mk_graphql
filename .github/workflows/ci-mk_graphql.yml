@@ -2,17 +2,22 @@ name: CI (mk_graphql)
 
 on:
   push:
-    branches: [main]
+    # Branches only. Tag pushes are releases; publish-mk_graphql.yml
+    # verifies the tagged package on its own.
+    branches: ['**']
     paths:
       - 'packages/mk_graphql/**'
       - 'pubspec.yaml'
       - '.github/workflows/ci-mk_graphql.yml'
   pull_request:
-    branches: [main]
     paths:
       - 'packages/mk_graphql/**'
       - 'pubspec.yaml'
       - '.github/workflows/ci-mk_graphql.yml'
+
+concurrency:
+  group: ci-mk_graphql-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -21,10 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The workspace also contains Flutter packages, so resolving it needs
+      # Flutter's pub (which bundles a full Dart SDK).
       - uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: stable
+          flutter-version: 3.47.9
           cache: true
+      - run: flutter --version
 
       - name: Install workspace dependencies
         run: flutter pub get

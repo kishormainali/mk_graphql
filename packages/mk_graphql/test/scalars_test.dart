@@ -1,5 +1,5 @@
 import 'package:mk_graphql/mk_graphql.dart';
-import 'package:test/test.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('DateTimeScalarConverter: response -> local, request -> UTC', () {

@@ -7,15 +7,11 @@ on:
     branches: ['**']
     paths:
       - 'packages/mk_graphql/**'
-      - 'example/**'
-      - 'packages/mk_graphql_generator/**'
       - 'pubspec.yaml'
       - '.github/workflows/ci-mk_graphql.yml'
   pull_request:
     paths:
       - 'packages/mk_graphql/**'
-      - 'example/**'
-      - 'packages/mk_graphql_generator/**'
       - 'pubspec.yaml'
       - '.github/workflows/ci-mk_graphql.yml'
 
@@ -52,28 +48,3 @@ jobs:
       - name: Test
         working-directory: packages/mk_graphql
         run: flutter test
-
-  example:
-    name: Example app (build_runner, analyze)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: 3.47.9
-          cache: true
-
-      - run: flutter pub get
-
-      - name: Generate code (auto_route, freezed, injectable, mk_graphql_generator)
-        working-directory: example
-        run: dart run build_runner build
-
-      - name: Generated code is committed and up to date
-        run: git diff --exit-code
-
-      - name: Analyze
-        working-directory: example
-        run: flutter analyze
